@@ -15,7 +15,7 @@
  */
 import './dist-fresh.mjs'   // fails loudly on a stale dist
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../dist/index.js'
@@ -27,6 +27,7 @@ function check(name, ok, detail = '') {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const homeDir = process.cwd()
 
 /** Boot the plugin with a fake transport and a state file we control. */
 function boot({ state = {}, config = {} } = {}) {
@@ -37,8 +38,16 @@ function boot({ state = {}, config = {} } = {}) {
   const transport = createFakeTransport(config.fake ?? {})
   const logs = []
   const listeners = {}
+  // Minimal service stubs: without them runTurn throws at its first check and no test can
+  // reach anything below it — which is how the tenant provisioning went unobserved. They
+  // throw where a real service would do work, so a test still sees the failure.
+  const stubs = {
+    agents: { create: async () => { throw new Error('fake: agents.create is not implemented') }, resume: async () => { throw new Error('fake: agents.resume is not implemented') } },
+    sessions: { flush: async () => {} },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'fake', model: 'fake' }) },
+  }
   const ctx = {
-    get: () => undefined,
+    get: (name) => stubs[name],
     effect: (fn) => fn(),
     on: (name, handler) => { (listeners[name] ??= []).push(handler); return () => {} },
     logger: { info: (l) => logs.push(String(l)) },
@@ -352,6 +361,54 @@ function boot({ state = {}, config = {} } = {}) {
   t.transport.deliver(t.transport.message({ text: '이거 사용량 줄여줘' }))
   await sleep(250)
   check('a sentence containing the word is still a turn', t.transport.historyCalls.length === 1, `${t.transport.historyCalls.length} turn(s)`)
+  t.done()
+}
+
+// 21. Tenant isolation: a conversation group gets its own directory.
+{
+  const tenants = mkdtempSync(join(tmpdir(), 'tenants-'))
+  const template = mkdtempSync(join(tmpdir(), 'tpl-'))
+  writeFileSync(join(template, 'SOUL.md'), 'tenant persona\n')
+  const t = boot({
+    config: { targetChannels: ['*'], tenantIsolation: true, tenantChannels: { C1: 'acme', C2: 'globex' }, tenantRoot: tenants, tenantTemplateDir: template },
+    state: { sessions: { 'C1:t1': 'slack-a', 'C2:t1': 'slack-b' } },
+  })
+  await sleep(80)
+  // The read scope decides per conversation: the same path is inside for one tenant and
+  // outside for another, which is the whole point.
+  const exec = (name, args, sessionId) => ({ name, arguments: args, agent: { session: { header: { id: sessionId } } } })
+  check('a tenant reads inside its own directory', t.gate(exec('read', { file_path: join(tenants, 'acme', 'notes.md') }, 'slack-a')) === 'delegated')
+  const crossed = t.gate(exec('read', { file_path: join(tenants, 'globex', 'notes.md') }, 'slack-a'))
+  check('a tenant cannot read another tenant\'s directory', crossed?.kind === 'deny', JSON.stringify(crossed))
+  check('the crossing is logged', t.logs.some((l) => /read outside the sandbox denied/.test(l)))
+  check('an unmapped conversation with no default stays shared', (() => {
+    const other = t.gate(exec('read', { file_path: join(homeDir, 'AGENTS.md') }, 'slack-unmapped'))
+    return other === 'delegated'
+  })(), 'the shared home is still readable when no tenant is assigned')
+  rmSync(tenants, { recursive: true, force: true })
+  rmSync(template, { recursive: true, force: true })
+  t.done()
+}
+
+// 22. A tenant directory is marked and seeded, so it does not inherit the home's persona.
+{
+  const tenants = mkdtempSync(join(tmpdir(), 'tenants-'))
+  const template = mkdtempSync(join(tmpdir(), 'tpl-'))
+  writeFileSync(join(template, 'SOUL.md'), 'tenant persona\n')
+  writeFileSync(join(template, 'notes.txt'), 'ignored\n')
+  const t = boot({
+    config: { targetChannels: ['*'], tenantIsolation: true, tenantChannels: { C_ALLOWED: 'acme' }, tenantRoot: tenants, tenantTemplateDir: template },
+  })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '안녕' }))
+  await sleep(400)
+  check('the tenant directory exists after a message', existsSync(join(tenants, 'acme')), join(tenants, 'acme'))
+  check('it carries the marker that stops the instruction loader climbing out', existsSync(join(tenants, 'acme', '.deepbot-root')))
+  check('the template persona is seeded', existsSync(join(tenants, 'acme', 'SOUL.md')), readFileSync(join(tenants, 'acme', 'SOUL.md'), 'utf8').trim())
+  check('non-markdown template files are not copied', !existsSync(join(tenants, 'acme', 'notes.txt')))
+  check('creation and seeding are logged', t.logs.some((l) => /tenant acme created at/.test(l)) && t.logs.some((l) => /tenant acme seeded from/.test(l)))
+  rmSync(tenants, { recursive: true, force: true })
+  rmSync(template, { recursive: true, force: true })
   t.done()
 }
 

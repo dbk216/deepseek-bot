@@ -151,6 +151,14 @@ const DEFAULTS = {
   readScopeTools: ['read', 'read_image', 'grep', 'glob'],
   readScopeRoots: [],          // default: the agent home plus temp, see readRoots()
   readScopeAllowTemp: true,
+  // Tenant isolation: one workspace per conversation group, so a tenant's notes, session
+  // files and recall index are its own. Off by default, which keeps the single shared home
+  // this deployment already runs on.
+  tenantIsolation: false,
+  tenantChannels: {},          // key (or channel) → tenant name
+  tenantDefault: undefined,    // tenant for an unmapped key, or undefined for the shared home
+  tenantRoot: undefined,       // default: <home>/tenants
+  tenantTemplateDir: undefined, // copied into a new tenant's directory (its persona, notes)
   approvalTimeoutMs: 600000,
   approveWords: ['허용', '승인', '응', 'ㅇㅇ', 'yes', 'allow', 'ok', 'ㅇ'],
   denyWords: ['거부', '아니', '안돼', 'no', 'deny', 'ㄴㄴ'],
@@ -377,6 +385,49 @@ export function apply(ctx, config) {
   // Session resume is bound to the working directory: adoption compares the
   // recorded cwd. It must be a stable value, so it is resolved exactly once.
   let cwdPromise = null
+  /**
+   * Which tenant a conversation belongs to, or null for the shared home.
+   *
+   * The key is the conversation (`channel:thread`) or, in the scenario harness, the
+   * scenario's own session name — so the map can name either and a test can exercise the
+   * same path production uses.
+   */
+  function tenantOf(key: string | null): string | null {
+    if (cfg.tenantIsolation !== true || key === null || key === '') return null
+    const map = (cfg.tenantChannels ?? {}) as Record<string, string>
+    if (typeof map[key] === 'string') return map[key]
+    const channel = key.split(':')[0]
+    if (typeof map[channel] === 'string') return map[channel]
+    return typeof cfg.tenantDefault === 'string' && cfg.tenantDefault !== '' ? cfg.tenantDefault : null
+  }
+
+  /** The directory a conversation works in: its tenant's, or the shared home. */
+  async function cwdFor(key: string | null): Promise<string> {
+    const tenant = tenantOf(key)
+    if (tenant === null) return await sessionCwd()
+    const root = typeof cfg.tenantRoot === 'string' && cfg.tenantRoot !== ''
+      ? cfg.tenantRoot
+      : join(await sessionCwd(), 'tenants')
+    const dir = join(root, tenant)
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+      // The marker stops the instruction loader climbing out of the tenant directory —
+      // without it a tenant inherits whatever AGENTS.md is above it, which is exactly the
+      // crossing this feature exists to prevent.
+      writeFileSync(join(dir, '.deepbot-root'), `deepbot tenant ${tenant}\n`)
+      const template = cfg.tenantTemplateDir
+      if (typeof template === 'string' && template !== '' && existsSync(template)) {
+        for (const name of readdirSync(template)) {
+          if (!name.endsWith('.md')) continue
+          writeFileSync(join(dir, name), readFileSync(join(template, name)))
+        }
+        log(`tenant ${tenant} seeded from ${template}`)
+      }
+      log(`tenant ${tenant} created at ${dir}`)
+    }
+    return dir
+  }
+
   async function sessionCwd() {
     if (cwdPromise === null) {
       cwdPromise = (async () => {
@@ -901,7 +952,17 @@ export function apply(ctx, config) {
     // glob and grep default to the workspace; an absolute pattern is the way out of it.
     if (typeof args.pattern === 'string' && args.pattern.startsWith('/')) candidates.push(args.pattern)
     if (candidates.length === 0) return null
-    const roots = resolvedCwd.value === null ? [] as string[] : readRootsSync()
+    // With isolation on, the readable roots are the *speaking conversation's* directory:
+    // one tenant's turn must not read another's files, and the shared home would allow it.
+    const sessionId = exec?.agent?.session?.header?.id ?? exec?.agent?.session?.id
+    const sessionKey = typeof sessionId === 'string'
+      ? Object.keys(state.sessions).find((k) => state.sessions[k] === sessionId) ?? null
+      : null
+    const tenant = tenantOf(sessionKey)
+    const roots = resolvedCwd.value === null
+      ? [] as string[]
+      : tenant !== null? [join(typeof cfg.tenantRoot === 'string' && cfg.tenantRoot !== '' ? cfg.tenantRoot : join(resolvedCwd.value, 'tenants'), tenant)]
+        : readRootsSync()
     if (roots.length === 0) return null
     for (const candidate of candidates) {
       if (!isInside(candidate, roots)) {
@@ -963,7 +1024,10 @@ export function apply(ctx, config) {
     // The same selection is used for create and resume.
     const selection = defaultModel.currentSelection()
     const agentOptions = { provider: selection.provider, model: selection.model }
-    const cwd = await sessionCwd()
+    // The conversation's own directory — the tenant's when isolation is on.
+      const tenant = tenantOf(sessionKey)
+      const cwd = await cwdFor(sessionKey)
+      if (tenant !== null) log(`tenant ${tenant}: turn in ${cwd}`)
 
     // ── Session composition ────────────────────────────────────────────────
     // Everything above this line is a session shell. The capabilities — the tool
