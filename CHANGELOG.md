@@ -13,6 +13,12 @@ the caveat about version numbers is at the bottom.
   turn. Tokens only: the harness exposes no price, and the summary says so rather than
   inventing one.
 
+- **Prompt-injection detection.** Fetched material is scanned for instruction-like text and
+  annotated at the point of use, and the finding is logged. A mitigation, not a boundary —
+  the read scope, the sandbox and the approval gate are what decide.
+- Scenario steps can carry `history` and `attachText`, so an injection can arrive through
+  the same channel a platform would deliver it through.
+
 ### Fixed
 
 - A debounced state write could be lost when the plugin unloaded. Found by checking a

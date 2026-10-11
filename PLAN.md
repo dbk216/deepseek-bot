@@ -283,7 +283,7 @@ configuration.
 | 8 | **Note hygiene** | Notes duplicate until the budget silently truncates them | Dedupe and expiry pass, plus the existing budget check | The persona check stays clean across a week of use |
 | 9 | **Multi-tenant memory** | One instance = one memory; B2B needs per-org separation | Session and memory scoping per channel or workspace entity | Two channels cannot see each other's notes |
 | 10 | **Ops** | Log rotation, backup/restore, crash-loop detection, a Linux/systemd install | Service-layer additions | A restore reproduces a home; the installer works on Linux |
-| 11 | **Prompt-injection defence** | Fetched material is framed as content and nothing enforces it | Keep the framing, flag instruction-like content in fetched material | A channel message saying "ignore your instructions" does not change behaviour |
+| 11 | **Prompt-injection defence** ✅ done (detection + framing; the fences decide) | Fetched material is framed as content and nothing enforces it | Keep the framing, flag instruction-like content in fetched material | A channel message saying "ignore your instructions" does not change behaviour |
 | 12 | **Releases** | No version, no changelog, no artifact | Semver, CHANGELOG, a tag per milestone | A tagged release installs from a clean clone |
 
 ### M7.2 Vision — what was found while scoping it

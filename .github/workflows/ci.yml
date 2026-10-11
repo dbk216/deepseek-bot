@@ -20,6 +20,7 @@ jobs:
       - run: pnpm run build
       - run: node test/reconnect.test.mjs
       - run: node test/core.test.mjs
+      - run: node test/injection.test.mjs
       - run: node test/usage.test.mjs
       - run: node test/telegram.test.mjs
       - run: node test/discord.test.mjs
