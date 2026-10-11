@@ -370,6 +370,27 @@ The rule worth knowing when changing this code lives in `progress.ts`, tested wi
 an agent or a platform (`test/progress.test.mjs`, 18 checks): create once, edit after,
 never leave it behind. An orphaned "working on it" is worse than no progress at all.
 
+## What it costs
+
+Ask in the conversation — `사용량`, `토큰`, `usage`, `얼마나 썼어` — and the bot answers from
+durable totals without starting a turn:
+
+```
+이 대화: 7턴 · 입력 112,220 (캐시 61%) · 출력 3,441
+전체 (4개 대화): 31턴 · 입력 480,113 (캐시 58%) · 출력 20,441
+금액은 하네스가 모델 단가를 노출하지 않아 계산하지 않습니다 — 토큰만 보고합니다.
+```
+
+Tokens come from the harness's `tokenUsage` session projection, which reports **cumulative**
+totals for a session. The tracker stores the last snapshot per session and adds only the
+growth, so the running total per conversation is correct after a restart and across
+sessions. A session whose totals go down — compaction, or a different log — is treated as a
+new baseline rather than a negative delta.
+
+Money is deliberately absent. The pi-ai adapter says it plainly: "The harness never reads
+pi-ai's cost metadata — replay.ts zeroes it and no consumer reports spend". A price table
+here would be a number nobody could check, so the summary says tokens and says why.
+
 ## Stopping a running turn
 
 A turn can take minutes, and until now there was no way to interrupt one. Say

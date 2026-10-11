@@ -329,6 +329,32 @@ function boot({ state = {}, config = {} } = {}) {
   t.done()
 }
 
+// 20. A usage request is answered from the durable totals, without starting a turn.
+{
+  const t = boot({
+    state: {
+      sessions: { 'C_ALLOWED:t1': 'slack-abc' },
+      usage: {
+        conversations: { 'C_ALLOWED:t1': { turns: 7, uncached: 3000, cached: 7000, written: 0, output: 500, lastAt: 1 } },
+        sessions: {},
+      },
+    },
+  })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '사용량' }))
+  await sleep(200)
+  const reply = String(t.transport.posted.map((p) => p.text).join('\n'))
+  check('a usage request starts no turn', t.transport.historyCalls.length === 0, `${t.transport.historyCalls.length} turn(s)`)
+  check('it reports the conversation totals', /이 대화: 7턴/.test(reply), reply.split('\n')[0] ?? '')
+  check('it reports the cache share', /캐시 70%/.test(reply))
+  check('it refuses to invent a price', /토큰만/.test(reply))
+  check('it is logged', t.logs.some((l) => /usage requested in C_ALLOWED:t1/.test(l)))
+  t.transport.deliver(t.transport.message({ text: '이거 사용량 줄여줘' }))
+  await sleep(250)
+  check('a sentence containing the word is still a turn', t.transport.historyCalls.length === 1, `${t.transport.historyCalls.length} turn(s)`)
+  t.done()
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

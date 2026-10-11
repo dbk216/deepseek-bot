@@ -25,6 +25,7 @@
   "include": [
     "index.ts",
     "progress.ts",
+    "usage.ts",
     "transports/**/*.ts",
     "types/**/*.ts",
     "tools/**/*.ts"

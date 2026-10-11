@@ -3,6 +3,23 @@
 Notable changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the caveat about version numbers is at the bottom.
 
+
+## Unreleased
+
+### Added
+
+- **Usage reporting.** Ask `사용량` / `토큰` / `usage` in a conversation and the bot answers
+  from durable totals — turns, input tokens and the cache-read share — without starting a
+  turn. Tokens only: the harness exposes no price, and the summary says so rather than
+  inventing one.
+
+### Fixed
+
+- A debounced state write could be lost when the plugin unloaded. Found by checking a
+  five-step scenario for its usage totals and finding one turn instead of two: the pending
+  timer never fired. The state is flushed on unload now.
+
+
 ## 0.2.0 — 2026-10-10
 
 M6 and M7 from [PLAN.md](PLAN.md), plus the release work: TypeScript, three transports,

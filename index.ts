@@ -54,6 +54,7 @@ import { createSlackTransport } from './transports/slack.js'
 import { createTelegramTransport } from './transports/telegram.js'
 import { createDiscordTransport } from './transports/discord.js'
 import { createProgressTracker } from './progress.js'
+import { createUsageTracker, emptyUsageStore } from './usage.js'
 import type { SlackHistoryResponse } from './types/slack.js'
 import type { InboundMessage } from './types/transport.js'
 import type { Origin, TurnOutcome, TurnSummary } from './types/core.js'
@@ -122,6 +123,9 @@ const DEFAULTS = {
   // way to interrupt it, which for a chat agent is the difference between a
   // colleague and a runaway process.
   cancelWords: ['그만', '중단', '취소', '멈춰', 'stop', 'cancel'],
+  // A whole message that asks what this has cost so far. Answered from the durable totals,
+  // so it does not start a turn and does not depend on the model.
+  usageWords: ['사용량', '비용', '토큰', 'usage', '얼마나 썼어'],
   // A progress edit is a message edit against a rate-limited API, so the message
   // says roughly what is happening, not every step of it.
   progressUpdateMs: 2500,
@@ -299,7 +303,7 @@ export function apply(ctx, config) {
   }
   let saveTimer = null
   function loadState() {
-    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {} }
+    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, usage: emptyUsageStore() }
     try {
       const raw = JSON.parse(readFileSync(STATE, 'utf8'))
       return {
@@ -310,9 +314,27 @@ export function apply(ctx, config) {
         // already has.
         standing: raw.standing ?? {},
         history: raw.history ?? {},
+        usage: raw.usage ?? emptyUsageStore(),
       }
-    } catch { return { sessions: {}, seen: {}, standing: {}, history: {} } }
+    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, usage: emptyUsageStore() } }
   }
+  /**
+   * Persist now, cancelling any pending debounced write.
+   *
+   * `saveState` coalesces rapid writes with a timer, which is right for a burst of
+   * messages and wrong at the end: the scenario runner showed a five-step run whose usage
+   * totals held one turn, because the pending write never fired before the plugin
+   * unloaded. Anything debounced has to be flushed on the way out.
+   */
+  function saveStateNow() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+    try {
+      const cutoff = Date.now() - 24 * 3600 * 1000
+      for (const [k, v] of Object.entries(state.seen) as Array<[string, number]>) if (v < cutoff) delete state.seen[k]
+      writeFileSync(STATE, JSON.stringify(state, null, 1))
+    } catch (e) { log('state write failed', String(e)) }
+  }
+
   function saveState() {
     if (saveTimer) return
     saveTimer = setTimeout(() => {
@@ -553,6 +575,10 @@ export function apply(ctx, config) {
     label: cfg.progressText,
     log,
   })
+
+  // Token accounting. The store is the state file's `usage` section, so the numbers are
+  // the same after a restart.
+  const usageTracker = createUsageTracker({ store: state.usage })
 
   /** When each conversation's current turn started, for the progress threshold. */
   const turnStartedAt = new Map<string, number>()
@@ -1099,6 +1125,10 @@ export function apply(ctx, config) {
           const total = cached + uncached + (usage.cacheWriteTokens ?? 0)
           const pct = total > 0 ? Math.round((cached / total) * 100) : 0
           log(`tokens: input ${total} (${pct}% cache-read) uncached ${uncached} output ${usage.outputTokens ?? 0}`)
+          // Keep the conversation's running total: the projection is cumulative, so the
+          // tracker adds only what this turn grew.
+          usageTracker.record(sessionKey ?? sessionId ?? 'unknown', sessionId ?? 'unknown', usage)
+          saveState()
         }
       } catch (e) { log(`token readout failed: ${String(e?.message ?? e)}`) }
       const outcome = summarize(agent.session, firstSeq)
@@ -1225,6 +1255,14 @@ export function apply(ctx, config) {
       log(`approval in ${key} answered: ${allowed ? 'allowed-once' : 'rejected'} after ${Math.round((Date.now() - pending.askedAt) / 1000)}s`)
       pending.resolve(allowed ? 'allowed-once' : 'rejected')
       await transport.post({ channel, threadTs }, allowed ? '허용했습니다 — 계속 진행합니다.' : '거부했습니다.')
+      return
+    }
+
+    // Asking what this has cost is not a turn either: it is answered from the durable
+    // totals, so it costs nothing and works even while the model is busy.
+    if (wordIn(prompt, cfg.usageWords)) {
+      log(`usage requested in ${key}`)
+      await transport.post({ channel, threadTs }, usageTracker.summary(key))
       return
     }
 
@@ -1731,6 +1769,7 @@ export function apply(ctx, config) {
     if (healthTimer === null) healthTimer = setInterval(writeHealth, cfg.heartbeatMs)
     return () => {
       stopped = true
+      saveStateNow()                     // a debounced write must not be lost on unload
       if (healthTimer !== null) clearInterval(healthTimer)
       health.connected = false
       writeHealth()
