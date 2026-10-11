@@ -99,4 +99,7 @@ opens) — ask the agent to search its own history and see whether it can.
 
 - **No browser.** Link reading is an HTTP fetch: no JavaScript execution and no interaction,
   so a page that renders its content client-side arrives empty. A headless browser would need
-  a browser engine in the deployment, which is not there.
+  a browser engine in the deployment, which is not there. The fetch is bounded by the tool
+  gate (scheme, metadata service, optional allowlist), but its output is not run through the
+  injection guard — that covers channel history, attachments and material arriving in a
+  prompt, not a tool result.

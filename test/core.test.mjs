@@ -412,6 +412,42 @@ function boot({ state = {}, config = {} } = {}) {
   t.done()
 }
 
+// 23. The fetch tool is bounded: scheme, the metadata service, and an optional allowlist.
+{
+  const t = boot({})
+  await sleep(80)
+  const fetch = (url) => t.gate({ name: 'fetch', arguments: { url }, agent: { session: { header: { id: 's' } } } })
+  check('an https page is fetchable', fetch('https://example.com/docs') === 'delegated')
+  check('an http page is fetchable', fetch('http://127.0.0.1:8899/page.html') === 'delegated', 'loopback stays allowed — a self-hosted wiki is a legitimate target')
+  const file = fetch('file:///etc/passwd')
+  check('a file URL is refused', file?.kind === 'deny', JSON.stringify(file))
+  check('and the reason names the scheme', /only http and https/.test(String(file?.reason)), String(file?.reason).slice(0, 70))
+  const metadata = fetch('http://169.254.169.254/latest/meta-data/iam/security-credentials/')
+  check('the cloud metadata service is refused', metadata?.kind === 'deny', JSON.stringify(metadata))
+  check('and the reason says what it is', /answers with credentials/.test(String(metadata?.reason)), String(metadata?.reason).slice(0, 80))
+  check('the GCP metadata name is refused too', fetch('http://metadata.google.internal/computeMetadata/v1/')?.kind === 'deny')
+  check('another link-local address is refused', fetch('http://169.254.10.10/x')?.kind === 'deny')
+  const broken = fetch('not a url')
+  check('an unparseable url is refused rather than passed through', broken?.kind === 'deny', JSON.stringify(broken))
+  check('fetch refusals are logged', t.logs.some((l) => /fetch denied/.test(l)))
+  check('another tool is not affected', t.gate({ name: 'grep', arguments: { pattern: 'x' }, agent: { session: { header: { id: 's' } } } }) === 'delegated')
+  t.done()
+}
+
+// 24. An allowlist, when configured, is the whole reachable web.
+{
+  const t = boot({ config: { targetChannels: ['*'], fetchAllowedHosts: ['example.com'] } })
+  await sleep(80)
+  const fetch = (url) => t.gate({ name: 'fetch', arguments: { url }, agent: { session: { header: { id: 's' } } } })
+  check('an allowlisted host is fetchable', fetch('https://example.com/x') === 'delegated')
+  check('a subdomain of an allowlisted host is fetchable', fetch('https://docs.example.com/x') === 'delegated')
+  const other = fetch('https://evil.test/x')
+  check('any other host is refused', other?.kind === 'deny', JSON.stringify(other))
+  check('and the reason names the allowlist', /allowlist/.test(String(other.reason)), String(other?.reason).slice(0, 70))
+  check('a lookalike domain is not accepted as a subdomain', fetch('https://notexample.com/x')?.kind === 'deny')
+  t.done()
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

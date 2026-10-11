@@ -159,6 +159,11 @@ const DEFAULTS = {
   tenantDefault: undefined,    // tenant for an unmapped key, or undefined for the shared home
   tenantRoot: undefined,       // default: <home>/tenants
   tenantTemplateDir: undefined, // copied into a new tenant's directory (its persona, notes)
+  // What the agent may fetch. The `fetch` tool runs in the harness, not in the sandbox
+  // runner, so "inside the sandbox" needed its own policy: only http(s), never the cloud
+  // metadata service, and an optional allowlist.
+  fetchPolicy: true,
+  fetchAllowedHosts: [],       // empty means any public host
   approvalTimeoutMs: 600000,
   approveWords: ['허용', '승인', '응', 'ㅇㅇ', 'yes', 'allow', 'ok', 'ㅇ'],
   denyWords: ['거부', '아니', '안돼', 'no', 'deny', 'ㄴㄴ'],
@@ -931,6 +936,8 @@ export function apply(ctx, config) {
       try {
         const denied = readScopeDecision(exec)
         if (denied !== null) return denied
+        const unfetchable = fetchDecision(exec)
+        if (unfetchable !== null) return unfetchable
         const ask = destructiveDecision(exec)
         if (ask !== null) return ask
         return next()
@@ -972,6 +979,44 @@ export function apply(ctx, config) {
           reason: `reading outside the workspace (${roots[0]}) is not allowed. Ask the user to put the file there, or to paste its contents.`,
         }
       }
+    }
+    return null
+  }
+
+  /**
+   * Addresses that answer with credentials rather than content. A fetch tool that can reach
+   * them turns "summarize this page" into a way to hand out an instance's keys.
+   */
+  const METADATA_HOSTS = new Set([
+    '169.254.169.254',            // AWS, Azure, GCP, DigitalOcean
+    'metadata.google.internal',
+    'fd00:ec2::254',
+    '100.100.100.200',            // Alibaba Cloud
+    'metadata',
+  ])
+
+  /** Bound a fetch: scheme, metadata service, optional allowlist. Null defers. */
+  function fetchDecision(exec): { kind: string; reason: string } | null {
+    if (cfg.fetchPolicy !== true) return null
+    const name = exec?.name ?? exec?.toolName
+    if (name !== 'fetch') return null
+    const url = String(exec?.arguments?.url ?? '')
+    if (url === '') return null
+    let parsed: URL
+    try { parsed = new URL(url) } catch { return { kind: 'deny', reason: `that URL could not be parsed: ${url.slice(0, 120)}` } }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      log(`fetch denied: scheme ${parsed.protocol}`)
+      return { kind: 'deny', reason: `only http and https can be fetched, not ${parsed.protocol}` }
+    }
+    const host = parsed.hostname.toLowerCase()
+    if (METADATA_HOSTS.has(host) || host.startsWith('169.254.')) {
+      log(`fetch denied: metadata address ${host}`)
+      return { kind: 'deny', reason: 'that address is the cloud metadata service, which answers with credentials rather than content' }
+    }
+    const allowed = Array.isArray(cfg.fetchAllowedHosts) ? cfg.fetchAllowedHosts.filter((h: unknown): h is string => typeof h === 'string' && h !== '') : []
+    if (allowed.length > 0 && !allowed.some((entry: string) => host === entry.toLowerCase() || host.endsWith('.' + entry.toLowerCase()))) {
+      log(`fetch denied: ${host} is not in the allowlist`)
+      return { kind: 'deny', reason: `${host} is not in the configured fetch allowlist` }
     }
     return null
   }

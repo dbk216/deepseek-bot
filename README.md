@@ -392,9 +392,26 @@ no form filling, so a page that renders its content client-side arrives empty. T
 limit and it is in [limitations](docs/limitations.md) rather than glossed over. Search is
 also composed (`dsh-web-search-deepseek`) and needs `DEEPSEEK_API_KEY`.
 
-One boundary worth stating: the injection guard covers channel history, attachments and
+**It runs with bounds, because "in the sandbox" needed its own policy.** The `fetch` tool
+runs in the harness rather than under the sandbox runner, so the tool gate bounds it:
+
+```yaml
+- id: deepbot
+  config:
+    fetchPolicy: true            # default
+    fetchAllowedHosts: []        # empty means any public host; e.g. [example.com]
+```
+
+Only `http` and `https` are fetchable; `file://` and the rest are refused with the scheme
+named. The **cloud metadata service** is refused outright (`169.254.169.254`,
+`metadata.google.internal`, `fd00:ec2::254`, `100.100.100.200`, and the link-local range) —
+it answers with credentials rather than content, and a reader that can reach it turns
+"summarize this page" into a way to hand out an instance's keys. An allowlist, when set,
+is the whole reachable web; a lookalike domain is not accepted as a subdomain.
+
+One boundary still worth stating: the injection guard covers channel history, attachments and
 pages that arrive as material. The `fetch` tool's own output goes straight into the model's
-context, so it is not annotated — the model treated the fixture's "Rollback window" line as
+context and is not annotated — the model treated the fixture's "Rollback window" line as
 document content rather than an instruction on its own, but that is the model's judgement,
 not a fence.
 
