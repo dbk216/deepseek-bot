@@ -370,6 +370,34 @@ The rule worth knowing when changing this code lives in `progress.ts`, tested wi
 an agent or a platform (`test/progress.test.mjs`, 18 checks): create once, edit after,
 never leave it behind. An orphaned "working on it" is worse than no progress at all.
 
+## Opening a link
+
+The agent has the harness's `fetch` tool, so a URL in the conversation is something it can
+actually read:
+
+> 이 URL 열어서 배포 코드명 알려줘. 어느 URL 에서 읽었는지도 적어줘.
+> http://127.0.0.1:8899/page.html
+
+```
+배포 코드명은 ORBITAL-9f2c 입니다.
+읽은 URL: http://127.0.0.1:8899/page.html
+```
+
+Verified against a page served locally whose fact appears nowhere in the prompt
+(`test:scenario:browser`, 2 steps): the answer carries both the fact and its source, because
+the only way to have the fact is to have fetched the page.
+
+**What this is not:** a browser. It is an HTTP fetch — no JavaScript execution, no clicking,
+no form filling, so a page that renders its content client-side arrives empty. That is a real
+limit and it is in [limitations](docs/limitations.md) rather than glossed over. Search is
+also composed (`dsh-web-search-deepseek`) and needs `DEEPSEEK_API_KEY`.
+
+One boundary worth stating: the injection guard covers channel history, attachments and
+pages that arrive as material. The `fetch` tool's own output goes straight into the model's
+context, so it is not annotated — the model treated the fixture's "Rollback window" line as
+document content rather than an instruction on its own, but that is the model's judgement,
+not a fence.
+
 ## One workspace per tenant
 
 By default every conversation shares the agent's home: one persona, one set of notes, one

@@ -64,7 +64,8 @@
     "test:approval-gate": "node test/run-scenario.mjs test/scenarios/approval-gate.json",
     "test:usage": "node test/usage.test.mjs",
     "test:injection": "node test/injection.test.mjs",
-    "test:scenario:tenant": "node test/run-scenario.mjs test/scenarios/tenant.json"
+    "test:scenario:tenant": "node test/run-scenario.mjs test/scenarios/tenant.json",
+    "test:scenario:browser": "node test/run-scenario.mjs test/scenarios/browser.json"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

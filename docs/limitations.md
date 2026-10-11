@@ -96,3 +96,7 @@ sqlite3 "$DB" "select count(*) from persisted_docs where persisted_docs match 's
 If the counts stay at zero after the gateway has handled and flushed turns, the
 index is not reconciling (see the note in `docs/harness-api-notes.md` about how it
 opens) — ask the agent to search its own history and see whether it can.
+
+- **No browser.** Link reading is an HTTP fetch: no JavaScript execution and no interaction,
+  so a page that renders its content client-side arrives empty. A headless browser would need
+  a browser engine in the deployment, which is not there.

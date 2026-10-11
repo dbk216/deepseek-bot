@@ -19,6 +19,9 @@ the caveat about version numbers is at the bottom.
 - Scenario steps can carry `history` and `attachText`, so an injection can arrive through
   the same channel a platform would deliver it through.
 
+- **Link reading, verified.** The harness's `fetch` tool opens a URL from the conversation;
+  a scenario against a locally served page proves the fact and the citation both come from
+  the page and not the prompt. Not a browser: no JavaScript, no clicking.
 - **Per-tenant workspaces.** `tenantIsolation` gives each conversation group its own
   directory — persona, notes, attachments and recall index — and the read scope follows the
   speaker, so one tenant cannot read another's files.
