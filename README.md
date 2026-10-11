@@ -1,7 +1,14 @@
 # deepbot
 
-**Version 0.2.0** · [changelog](CHANGELOG.md) · verified by 207 unit checks,
-8 scenario suites and a live gateway. Runs on DeepSeek Harness `0.2.0-rc.2`.
+**Your memory, on DeepSeek Harness** — a self-hosted AI teammate that remembers
+your threads, reads the links you send it, drafts your documents, and asks before it
+deletes anything.
+
+**Version 0.2.0** · [changelog](CHANGELOG.md) · runs on DeepSeek Harness `0.2.0-rc.2`
+
+Every claim below is pinned by a test that runs on each change (`pnpm test`), by a scenario
+run against a real model, or by the live gateway — and where something is *not* verified it
+says so instead of implying otherwise.
 
 **A standalone, always-on agent built on [DeepSeek Harness](https://github.com/deepseek-ai).**
 The harness ships the runtime; this is the *agent edition* of it — a long-running
