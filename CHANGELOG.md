@@ -19,6 +19,10 @@ the caveat about version numbers is at the bottom.
 - Scenario steps can carry `history` and `attachText`, so an injection can arrive through
   the same channel a platform would deliver it through.
 
+- **Per-tenant workspaces.** `tenantIsolation` gives each conversation group its own
+  directory — persona, notes, attachments and recall index — and the read scope follows the
+  speaker, so one tenant cannot read another's files.
+
 ### Fixed
 
 - A debounced state write could be lost when the plugin unloaded. Found by checking a

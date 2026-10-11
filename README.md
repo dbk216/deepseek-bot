@@ -370,6 +370,43 @@ The rule worth knowing when changing this code lives in `progress.ts`, tested wi
 an agent or a platform (`test/progress.test.mjs`, 18 checks): create once, edit after,
 never leave it behind. An orphaned "working on it" is worse than no progress at all.
 
+## One workspace per tenant
+
+By default every conversation shares the agent's home: one persona, one set of notes, one
+recall index. For a deployment serving more than one customer that is the wrong default, so
+isolation is one config away:
+
+```yaml
+- id: deepbot
+  config:
+    tenantIsolation: true
+    tenantChannels:
+      'C0123ABCD': acme        # key or channel → tenant
+      'C0456EFGH': globex
+    tenantRoot: <home>/tenants   # default
+    tenantTemplateDir: ./agent   # its persona, copied on creation
+```
+
+A tenant's directory is created on its **first message** — provisioning belongs to the
+message, not to a turn that happened to succeed — with a `.deepbot-root` marker so the
+instruction loader cannot climb out and hand it the home's `AGENTS.md`, and seeded from the
+template if one is configured. Without a template a tenant simply has no persona, which is
+the honest default.
+
+The read scope follows the speaker: the readable roots become the speaking conversation's
+directory rather than the shared home, so a tenant reading another tenant's notes is refused
+and the refusal names what it *is* allowed to read.
+
+Verified with two tenants and a model (`test:scenario:tenant`, 6 steps): one writes a file
+into its own workspace; the other cannot read it by name, cannot find it in its own
+directory, and cannot reach it by walking up and across (`../acme/...`) — the shell refuses
+that with `Operation not permitted`, and the `read` tool refuses it because the path is
+outside its roots. The canary value never appears in an answer.
+
+**A YAML trap worth knowing:** a key containing a colon must be quoted. `scenario:T1: acme`
+parses as the key `scenario` with the value `T1: acme`, so isolation silently does nothing —
+which is exactly what happened the first time this was tested.
+
 ## Text that tries to give orders
 
 Channel history, attachments and pages are fetched material, and anyone can put an

@@ -63,7 +63,8 @@
     "test:discord": "node test/discord.test.mjs",
     "test:approval-gate": "node test/run-scenario.mjs test/scenarios/approval-gate.json",
     "test:usage": "node test/usage.test.mjs",
-    "test:injection": "node test/injection.test.mjs"
+    "test:injection": "node test/injection.test.mjs",
+    "test:scenario:tenant": "node test/run-scenario.mjs test/scenarios/tenant.json"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
