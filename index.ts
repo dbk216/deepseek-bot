@@ -165,6 +165,9 @@ const DEFAULTS = {
   fetchPolicy: true,
   fetchAllowedHosts: [],       // empty means any public host
   approvalTimeoutMs: 600000,
+  // A thread is shared, so the person who typed 허용 is not necessarily the person who asked.
+  // With this on, only the requester's decision counts; anybody else is told whose it is.
+  approvalRequireSameUser: true,
   approveWords: ['허용', '승인', '응', 'ㅇㅇ', 'yes', 'allow', 'ok', 'ㅇ'],
   denyWords: ['거부', '아니', '안돼', 'no', 'deny', 'ㄴㄴ'],
   progressAfterMs: 8000,
@@ -637,6 +640,16 @@ export function apply(ctx, config) {
   // the same after a restart.
   const usageTracker = createUsageTracker({ store: state.usage })
 
+  /**
+   * Who asked, per conversation.
+   *
+   * The approval listener runs outside the turn, so the requester has to be remembered where
+   * the turn begins rather than passed through the request. Cleared is not needed: the newest
+   * requester is the one a pending request belongs to, and a stale entry is only read while a
+   * request is pending.
+   */
+  const requesterOf = new Map<string, string>()
+
   /** When each conversation's current turn started, for the progress threshold. */
   const turnStartedAt = new Map<string, number>()
 
@@ -675,7 +688,13 @@ export function apply(ctx, config) {
    * conversation that turn belongs to. Holding the resolver here is what lets an
    * ordinary message ("허용") settle it instead of being read as a new turn.
    */
-  const pendingApprovals = new Map<string, { resolve: (outcome: string) => void; askedAt: number; reason: string }>()
+  const pendingApprovals = new Map<string, {
+    resolve: (outcome: string) => void
+    askedAt: number
+    reason: string
+    /** Who asked. A decision from anybody else is refused while `approvalRequireSameUser`. */
+    user?: string
+  }>()
 
   function wordIn(text: string, words: string[]): boolean {
     const normalised = text.trim().toLowerCase().replace(/[.!?~,\s]+$/u, '')
@@ -697,6 +716,11 @@ export function apply(ctx, config) {
     if (pending === undefined) {
       log(`an approval button was pressed in ${key} but nothing is pending`)
       await transport.post(targetFromKey(key), '이미 처리된 요청입니다.')
+      return
+    }
+    if (pending.user !== undefined && cfg.approvalRequireSameUser === true && action.user !== pending.user) {
+      log(`approval in ${key} refused: ${action.user} is not the requester (${pending.user})`)
+      await transport.post(targetFromKey(key), '이 요청을 승인할 수 있는 사람이 아닙니다 — 요청한 사람이 직접 답해주세요.')
       return
     }
     pendingApprovals.delete(key)
@@ -782,7 +806,8 @@ export function apply(ctx, config) {
    * then sat there with the answerer never called. `agent.ctx` is the scope the seam
    * dispatches into, so the answerer is registered per turn there.
    */
-  async function answerApprovalRequest(request, key, target) {
+  async function answerApprovalRequest(request, key, target, explicitRequester?: string) {
+    const requester = explicitRequester ?? requesterOf.get(key)
     try {
       if (pendingApprovals.has(key)) {
         log(`approval requested in ${key} while one is already pending — failing closed`)
@@ -814,6 +839,7 @@ export function apply(ctx, config) {
         pendingApprovals.set(key, {
           askedAt: Date.now(),
           reason,
+          user: requester,
           resolve: (outcome) => { clearTimeout(timer); resolve(outcome) },
         })
       })
@@ -1368,12 +1394,21 @@ export function apply(ctx, config) {
     const threadTs = target.threadTs
     const key = threadTs === null ? channel : `${channel}:${threadTs}`
     const prompt = message.text.slice(0, cfg.maxPromptChars)
+      // Remembered here because the approval listener runs outside the turn.
+      if (message.user !== '') requesterOf.set(key, message.user)
     if (!prompt) return
 
     // A pending approval turns the next message into a decision, so it is consumed
     // here rather than starting a turn the human did not ask for.
     const pending = pendingApprovals.get(key)
     if (pending !== undefined && (wordIn(prompt, cfg.approveWords) || wordIn(prompt, cfg.denyWords))) {
+        // A thread is shared: the person typing 허용 is not necessarily the person who asked,
+        // and approving somebody else's destructive command is not theirs to make.
+        if (pending.user !== undefined && cfg.approvalRequireSameUser === true && message.user !== pending.user) {
+          log(`approval in ${key} refused: ${message.user} is not the requester (${pending.user})`)
+          await transport.post({ channel, threadTs }, '이 요청을 승인할 수 있는 사람이 아닙니다 — 요청한 사람이 직접 답해주세요.')
+          return
+        }
       const allowed = wordIn(prompt, cfg.approveWords)
       pendingApprovals.delete(key)
       log(`approval in ${key} answered: ${allowed ? 'allowed-once' : 'rejected'} after ${Math.round((Date.now() - pending.askedAt) / 1000)}s`)
@@ -1717,6 +1752,7 @@ export function apply(ctx, config) {
         // fetched material, which is the only place an injection can arrive from.
         const stepHistory = typeof step.history === 'string' ? step.history : ''
         const stepText = typeof step.attachText === 'string' ? await textForStep(step.attachText) : ''
+        requesterOf.set(scenarioKey, `scenario:${name}`)
         const turn = withTimeout(runTurn(step.say, sessions[name], null, stepHistory, stepText, scenarioKey, stepImages), cfg.runTimeoutMs)
         const cancelTimer = typeof step.cancelAfterMs === 'number' && step.cancelAfterMs > 0
           ? setTimeout(() => cancelRunning(scenarioKey, 'scenario'), step.cancelAfterMs)

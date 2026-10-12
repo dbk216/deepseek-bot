@@ -448,6 +448,35 @@ function boot({ state = {}, config = {} } = {}) {
   t.done()
 }
 
+// 25. QA: can somebody else answer an approval that was not theirs?
+// A thread is shared. If a decision is bound to the conversation rather than to the person
+// who asked, anybody in the thread can authorise a destructive command that somebody else
+// requested. This is the pair that matters: the third party is refused, and the requester
+// still gets through — a check that only proves refusal would pass on a broken feature.
+{
+  const t = boot({ state: { sessions: { 'C_ALLOWED:t1': 'slack-abc' } } })
+  await sleep(60)
+  // The requester is recorded where a turn begins, so the flow has to start like a real one.
+  t.transport.deliver(t.transport.message({ text: 'ping', user: 'U_OWNER' }))
+  await sleep(250)
+  const outcome = t.askApproval('slack-abc')
+  await sleep(150)
+
+  t.transport.deliver(t.transport.message({ text: '허용', user: 'U_SOMEONE_ELSE' }))
+  await sleep(250)
+  check('a third party in the same thread cannot approve',
+    await Promise.race([outcome, sleep(60).then(() => 'pending')]) !== 'allowed-once', 'still pending, as it should be')
+  check('and they are told whose request it is', t.transport.posted.some((p) => /승인할 수 있는 사람이 아닙니다/.test(p.text)),
+    JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 26))))
+  check('the refusal is logged with both users',
+    t.logs.some((l) => /refused: U_SOMEONE_ELSE is not the requester \(U_OWNER\)/.test(l)),
+    t.logs.filter((l) => /refused/.test(l)).join(' | ').slice(0, 140))
+
+  t.transport.deliver(t.transport.message({ text: '허용', user: 'U_OWNER' }))
+  check('the requester can still approve it', await outcome === 'allowed-once', await outcome)
+  t.done()
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)
