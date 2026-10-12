@@ -20,6 +20,8 @@
  * Exits 0 when every step passed, 1 when a step failed, 2 on setup problems.
  */
 
+import './dist-fresh.mjs'   // a scenario must not run a stale build
+
 import { spawn } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'

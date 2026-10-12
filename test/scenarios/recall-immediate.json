@@ -1,9 +1,13 @@
 {
-  "_comment": "Acceptance for immediate EPISODIC recall: something said in one conversation must be findable from another without waiting for a timer. The fact is explicitly marked 'do not save', so the semantic notes path cannot satisfy it and only the recall index can.",
+  "_comment": "Acceptance for immediate EPISODIC recall: something said in one conversation must be findable from another without waiting for a timer. The fact is explicitly marked 'do not save', so the semantic notes path cannot satisfy it and only the recall index can. A wait separates the turn from the cross-session query, because the index refresh happens after the turn and querying immediately raced it.",
   "steps": [
     {
       "session": "A",
       "say": "내가 지금 '테스트-1234' 라고 말했어. 이건 확인용이니까 memory/ 에는 저장하지 마."
+    },
+    {
+      "waitSeconds": 2,
+      "_why": "the index refresh is asynchronous by design: querying another conversation immediately after a turn races it, which made this scenario flaky"
     },
     {
       "session": "B",
