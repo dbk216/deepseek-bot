@@ -163,6 +163,10 @@ const DEFAULTS = {
   tenantDefault: undefined,    // tenant for an unmapped key, or undefined for the shared home
   tenantRoot: undefined,       // default: <home>/tenants
   tenantTemplateDir: undefined, // copied into a new tenant's directory (its persona, notes)
+  // Per-tenant behaviour, not just storage: which tools the agent gets, which permission
+  // preset its session runs under, which model answers, and where its persona comes from.
+  // A tenant with no entry here uses the deployment's own settings.
+  tenantPolicies: {},          // { acme: { preset, permission, model: { provider, model }, persona } }
   // What the agent may fetch. The `fetch` tool runs in the harness, not in the sandbox
   // runner, so "inside the sandbox" needed its own policy: only http(s), never the cloud
   // metadata service, and an optional allowlist.
@@ -454,6 +458,19 @@ export function apply(ctx, config) {
     return typeof cfg.tenantDefault === 'string' && cfg.tenantDefault !== '' ? cfg.tenantDefault : null
   }
 
+  /** What this tenant is allowed to be, beyond its own directory. */
+  function tenantPolicy(tenant: string | null): {
+    preset?: string
+    permission?: string
+    model?: { provider?: string; model?: string }
+    persona?: string
+  } {
+    if (tenant === null) return {}
+    const policies = (cfg.tenantPolicies ?? {}) as Record<string, Record<string, unknown>>
+    const policy = policies[tenant]
+    return policy !== undefined && policy !== null ? policy as Record<string, never> : {}
+  }
+
   /** The directory a conversation works in: its tenant's, or the shared home. */
   async function cwdFor(key: string | null): Promise<string> {
     const tenant = tenantOf(key)
@@ -468,7 +485,8 @@ export function apply(ctx, config) {
       // without it a tenant inherits whatever AGENTS.md is above it, which is exactly the
       // crossing this feature exists to prevent.
       writeFileSync(join(dir, '.deepbot-root'), `deepbot tenant ${tenant}\n`)
-      const template = cfg.tenantTemplateDir
+      const policy = tenantPolicy(tenant)
+      const template = typeof policy.persona === 'string' && policy.persona !== '' ? policy.persona : cfg.tenantTemplateDir
       if (typeof template === 'string' && template !== '' && existsSync(template)) {
         for (const name of readdirSync(template)) {
           if (!name.endsWith('.md')) continue
@@ -1152,7 +1170,17 @@ export function apply(ctx, config) {
 
     // The same selection is used for create and resume.
     const selection = defaultModel.currentSelection()
-    const agentOptions = { provider: selection.provider, model: selection.model }
+    // The same selection is used for create and resume — unless this conversation's tenant
+    // names its own, which is what a per-tenant policy is for.
+    const tenantForModel = tenantOf(sessionKey)
+    const policyForModel = tenantPolicy(tenantForModel)
+    if (policyForModel.model?.provider !== undefined || policyForModel.model?.model !== undefined) {
+      log(`tenant ${tenantForModel}: model ${policyForModel.model?.provider ?? selection.provider}/${policyForModel.model?.model ?? selection.model} instead of the deployment default ${selection.provider}/${selection.model}`)
+    }
+    const agentOptions = {
+      provider: policyForModel.model?.provider ?? selection.provider,
+      model: policyForModel.model?.model ?? selection.model,
+    }
     // The conversation's own directory — the tenant's when isolation is on.
       const tenant = tenantOf(sessionKey)
       const cwd = await cwdFor(sessionKey)
@@ -1172,22 +1200,25 @@ export function apply(ctx, config) {
     // with `if (cfg.agentPreset && agentPresets)`, so a missing service or a typo
     // produced an agent with zero tools and no error — the original symptom,
     // reproducible by configuration.
+    const policy = tenantPolicy(tenant)
+    const presetName = policy.preset ?? cfg.agentPreset
+    const permissionName = policy.permission ?? cfg.permissionPreset
     let presetId = null
-    if (cfg.agentPreset) {
+    if (presetName) {
       if (!agentPresets) throw new Error('deepbot: agentPreset is configured but the agentPresets service is not composed — the agent would have no tools')
       // Only validate a preset this deployment actually named. Passing `undefined`
       // through resolve() looks up the literal string "undefined" and throws, and
       // leaving permissionPreset unset is the documented way to accept the
       // deployment's own default.
-      if (cfg.permissionPreset !== undefined) {
-        try { permissionPresets?.resolve?.(cfg.permissionPreset) }
-        catch (e) { throw new Error(`deepbot: unknown permission preset ${JSON.stringify(cfg.permissionPreset)} — ${String(e?.message ?? e)}`) }
+      if (permissionName !== undefined) {
+        try { permissionPresets?.resolve?.(permissionName) }
+        catch (e) { throw new Error(`deepbot: unknown permission preset ${JSON.stringify(permissionName)}${tenant !== null ? ` for tenant ${tenant}` : ''} — ${String(e?.message ?? e)}`) }
       }
       try {
-        const record = await agentPresets.resolve(cfg.agentPreset)
-        presetId = record?.id ?? cfg.agentPreset
+        const record = await agentPresets.resolve(presetName)
+        presetId = record?.id ?? presetName
       } catch (e) {
-        throw new Error(`deepbot: could not resolve agent preset ${JSON.stringify(cfg.agentPreset)} — ${String(e?.message ?? e)}`)
+        throw new Error(`deepbot: could not resolve agent preset ${JSON.stringify(presetName)}${tenant !== null ? ` for tenant ${tenant}` : ''} — ${String(e?.message ?? e)}`)
       }
     }
     // Only Symbol.asyncDispose exists on this lease; there is no dispose().
@@ -1271,8 +1302,6 @@ export function apply(ctx, config) {
         // than relying on the service happening to return a real Promise.
         await Promise.resolve(scope?.[Symbol.asyncDispose]?.()).then(() => {}, () => {})
       throw new Error('deepbot: agents.create/resume did not return an Agent')
-        runningTurns.delete(turnKey)
-    }
 
     // Post-attach steps, in the reference implementation's order.
     if (workspace?.attachSession && sessionId) {
@@ -1292,6 +1321,19 @@ export function apply(ctx, config) {
     // Register before the turn starts, so a message arriving a second later can
     // stop it. The timeout uses the same path: a timeout that only stops the
     // *waiting* leaves the agent running, writing to the session, and eventually
+      // A tenant that names a permission preset gets it applied to its session. The
+      // deployment's own preset is not touched here: that is the deployment's business.
+      if (tenant !== null && typeof policy.permission === 'string' && policy.permission !== '' && permissionPresets?.set) {
+        try {
+          permissionPresets.set(agent.session, policy.permission)
+          log(`tenant ${tenant}: session permission preset ${policy.permission}`)
+        } catch (e) {
+          log(`tenant ${tenant}: could not apply permission preset ${policy.permission} — ${String((e as Error)?.message ?? e)}`)
+        }
+      }
+        runningTurns.delete(turnKey)
+    }
+
     // delivering an answer nobody is waiting for any more.
       // The agent exists now, so cancellation can reach it — and the turn may have been
       // stopped while the agent was being created, which is a stop a human asked for.

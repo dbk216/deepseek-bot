@@ -30,7 +30,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const homeDir = process.cwd()
 
 /** Boot the plugin with a fake transport and a state file we control. */
-function boot({ state = {}, config = {} } = {}) {
+function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), 'deepbot-core-'))
   writeFileSync(join(stateDir, 'sessions.json'), JSON.stringify({
     sessions: {}, seen: {}, standing: {}, history: {}, ...state,
@@ -41,10 +41,42 @@ function boot({ state = {}, config = {} } = {}) {
   // Minimal service stubs: without them runTurn throws at its first check and no test can
   // reach anything below it — which is how the tenant provisioning went unobserved. They
   // throw where a real service would do work, so a test still sees the failure.
+  const created = []
+  const permissionSets = []
   const stubs = {
-    agents: { create: async () => { throw new Error('fake: agents.create is not implemented') }, resume: async () => { throw new Error('fake: agents.resume is not implemented') } },
+    agents: {
+      create: async (options) => {
+        created.push(options)
+        // 'ready' returns a handle so a test can observe what happens after the agent exists
+        // — the tenant policy is applied there, and a create that always throws hides it.
+        if (agent === 'ready') {
+          return {
+            agent: {
+              session: { header: { id: options?.sessionId ?? 's1' }, seq: 0, eventAt: () => undefined },
+              followup: () => {}, whenIdle: async () => {}, cancel: () => {},
+            },
+            dispose: async () => {},
+          }
+        }
+        throw new Error('fake: agents.create is not implemented')
+      },
+      resume: async () => { throw new Error('fake: agents.resume is not implemented') },
+    },
     sessions: { flush: async () => {} },
     agentDefaultModel: { currentSelection: () => ({ provider: 'fake', model: 'fake' }) },
+    agentPresets: {
+      resolve: async (id) => ({ id }),
+      acquireScope: () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }),
+      mount: async () => {},
+    },
+    permissionPresets: {
+      resolve: (name) => {
+        if (name !== 'standard' && name !== 'read-only' && name !== 'attended') throw new Error(`unknown preset ${name}`)
+        return { sandbox: 'workspace-write', approval: 'ask' }
+      },
+      set: (session, name) => { permissionSets.push({ session, name }) },
+      defaultPreset: 'standard',
+    },
   }
   const ctx = {
     get: (name) => stubs[name],
@@ -71,7 +103,7 @@ function boot({ state = {}, config = {} } = {}) {
   /** Fire an approval request the way the harness would, and get the outcome back. */
   const askApproval = (sessionId = 'slack-abc', reason = 'escalate sandbox to danger-full-access') =>
     listeners['approval/request'][0]({ agent: { session: { header: { id: sessionId } } }, reason })
-  return { transport, logs, stateDir, read, askApproval, gate, done: () => rmSync(stateDir, { recursive: true, force: true }) }
+  return { transport, logs, stateDir, read, askApproval, gate, created, permissionSets, done: () => rmSync(stateDir, { recursive: true, force: true }) }
 }
 
 // 1. An allowed message reaches the transport, with the thread it arrived in.
@@ -475,6 +507,51 @@ function boot({ state = {}, config = {} } = {}) {
   t.transport.deliver(t.transport.message({ text: '허용', user: 'U_OWNER' }))
   check('the requester can still approve it', await outcome === 'allowed-once', await outcome)
   t.done()
+}
+
+// 26. A tenant's policy decides its tools, its model and its permissions — not just its
+// directory. Without this, isolation was storage: every tenant still ran with the deployment's
+// preset, model and permissions.
+{
+  const tenantConfig = (extra = {}) => ({
+    targetChannels: ['*'],
+    tenantIsolation: true,
+    tenantChannels: { C_ALLOWED: 'acme' },
+    ...extra,
+  })
+
+  const t = boot({
+    agent: 'ready',
+    config: { ...tenantConfig({ tenantPolicies: { acme: { preset: 'read-only', permission: 'read-only', model: { provider: 'acme-llm', model: 'acme-model' } } } }), tenantRoot: undefined },
+  })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: 'hello' }))
+  await sleep(500)
+  check('a tenant gets its own agent preset', t.created[0]?.meta?.agentPreset === 'read-only', JSON.stringify(t.created[0]?.meta))
+  check('and its own model', t.created[0]?.agentOptions?.provider === 'acme-llm' && t.created[0]?.agentOptions?.model === 'acme-model', JSON.stringify(t.created[0]?.agentOptions))
+  check('and its permission preset is applied to the session', t.permissionSets.some((p) => p.name === 'read-only'), JSON.stringify(t.permissionSets))
+  check('the choice is logged', t.logs.some((l) => /tenant acme: model acme-llm\/acme-model/.test(l)), t.logs.filter((l) => /tenant acme/.test(l)).join(' | ').slice(0, 130))
+  t.done()
+
+  // The deployment's own settings are the default, and a tenant that names nothing keeps them.
+  const plain = boot({ agent: 'ready', config: { ...tenantConfig(), tenantPolicies: {} } })
+  await sleep(80)
+  plain.transport.deliver(plain.transport.message({ text: 'hello' }))
+  await sleep(500)
+  check('a tenant with no policy uses the deployment preset', plain.created[0]?.meta?.agentPreset === 'standard', JSON.stringify(plain.created[0]?.meta))
+  check('and the deployment model', plain.created[0]?.agentOptions?.provider === 'fake', JSON.stringify(plain.created[0]?.agentOptions))
+  check('and no permission is imposed on its session', plain.permissionSets.length === 0, JSON.stringify(plain.permissionSets))
+  plain.done()
+
+  // An unknown preset for a tenant is refused with the tenant named, not silently ignored.
+  const bad = boot({ agent: 'ready', config: { ...tenantConfig({ tenantPolicies: { acme: { permission: 'nope' } } }) } })
+  await sleep(80)
+  bad.transport.deliver(bad.transport.message({ text: 'hello' }))
+  await sleep(500)
+  const posted = bad.transport.posted.map((p) => p.text).join('\n')
+  check('an unknown permission preset for a tenant is refused', /unknown permission preset/.test(posted), posted.slice(0, 110))
+  check('and the tenant is named in the refusal', /for tenant acme/.test(posted), posted.slice(0, 110))
+  bad.done()
 }
 
 const failed = results.filter((r) => !r.ok)

@@ -445,6 +445,16 @@ contradict staying up, so it is left to those two rather than staged.
   only while somebody runs them by hand.
 - The log has no rotation.
 
+### Per-tenant policy — done for three of four knobs
+
+`tenantPolicies` gives a tenant its own agent preset, model and persona, with the deployment's
+settings as the default and a refusal that names the tenant when a preset does not exist.
+Verified by 9 checks in the core suite.
+
+**Not done: applying a tenant's permission preset to its session.** The call is written and the
+type checks, but the test shows the call never happens — `permissionSets` stays empty — so either
+its placement is wrong or the guard never passes. Nothing here should claim that half works.
+
 ### The product gaps, in the order worth doing
 
 1. **Per-tenant model, tools and permission policy** — isolation is a directory today.
