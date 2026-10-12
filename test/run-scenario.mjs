@@ -86,6 +86,22 @@ mkdirSync(TEST_HOME, { recursive: true })
 // climbs toward the filesystem boundary and picks up instruction files that
 // belong to somebody else — measured: a bare temp home picked up ~/AGENTS.md.
 writeFileSync(join(TEST_HOME, '.deepbot-root'), '')
+
+// A scenario may need a file to exist before the plugin boots — a large MEMORY.md, for instance,
+// which a fresh home never has. Without this the note-hygiene path could not be exercised at all,
+// because there was nothing for it to complain about.
+try {
+  const spec = JSON.parse(readFileSync(scenario, 'utf8'))
+  for (const [name, body] of Object.entries(spec.seed ?? {})) {
+    const target = join(TEST_HOME, name)
+    mkdirSync(dirname(target), { recursive: true })
+    writeFileSync(target, String(body))
+    console.log(`seed    : ${name} (${String(body).length} chars)`)
+  }
+} catch (e) {
+  fail(`could not read the scenario's seed: ${String(e?.message ?? e)}`)
+}
+
 for (const file of ['AGENTS.md', 'CLAUDE.md']) {
   const from = join(LIVE_HOME, file)
   if (existsSync(from)) cpSync(from, join(TEST_HOME, file))

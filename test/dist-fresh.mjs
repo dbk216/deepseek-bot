@@ -27,8 +27,8 @@ function fail(message) {
 let sourceText
 try {
   sourceText = readFileSync(source, 'utf8')
-} catch {
-  fail('index.ts is missing — this is not the plugin any more')
+} catch (e) {
+  fail(`could not read index.ts: ${String(e?.message ?? e)}`)
 }
 
 // An edit that truncates the source is the failure this exists for: 2113 lines became 0, and
@@ -41,8 +41,10 @@ let built
 try {
   built = readFileSync(dist, 'utf8')
   statSync(dist)
-} catch {
-  fail('dist/index.js is missing — run: pnpm run build')
+} catch (e) {
+  // Reported with its cause: run inside a loop right after a build this failed three times and the
+  // only thing visible was the last line of a stack trace, which is not a diagnosis.
+  fail(`could not read dist/index.js: ${String(e?.message ?? e)}`)
 }
 
 if (statSync(dist).mtimeMs + 1 < statSync(source).mtimeMs) {

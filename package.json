@@ -76,7 +76,8 @@
     "test:recall-context": "node test/recall-context.test.mjs",
     "build:check": "node test/dist-fresh.mjs",
     "test:scenario:recall-decision": "node test/run-scenario.mjs test/scenarios/recall-decision.json",
-    "test:notes": "node test/notes.test.mjs"
+    "test:notes": "node test/notes.test.mjs",
+    "test:scenario:notes-hygiene": "node test/run-scenario.mjs test/scenarios/notes-hygiene.json"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
