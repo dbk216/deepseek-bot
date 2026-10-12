@@ -10,7 +10,13 @@
  * It never starts a turn: everything it posts is posted *by the bot*, which the adapter
  * ignores by design — and one of the checks is that it is indeed ignored.
  *
- * Run: node tools/qa-slack.mjs [--channel <id|name>]
+ * Cleanup works by **snapshot**, not by bookkeeping. The first version tracked the messages
+ * the script posted itself — and the transport posts three when a body needs chunking, so
+ * those were never tracked and never deleted. It left three parts of a 9000-character
+ * alphabet in a real channel, twice. Everything the bot says after the run starts is now
+ * deleted, however it was sent, and a message from a person is never touched.
+ *
+ * Run: node tools/qa-slack.mjs [--channel <id|name>] [--keep]
  */
 import { readFileSync, existsSync } from 'node:fs'
 import { createSlackTransport } from '../dist/transports/slack.js'
@@ -53,21 +59,48 @@ if (channel === undefined) {
   channel = found.id
 }
 
-const posted = []
+const keep = args.includes('--keep')
+const me = await api('auth.test')
+const botId = me.user_id
+
+/** The newest message in the channel right now: anything after it belongs to this run. */
+async function newestTs() {
+  const h = await api('conversations.history', { channel, limit: 1 })
+  return Number(h.messages?.[0]?.ts ?? 0)
+}
+const baseline = await newestTs()
+
 async function post(text) {
   const r = await api('chat.postMessage', { channel, text, unfurl_links: false })
   if (r.ok !== true) throw new Error(`chat.postMessage: ${r.error}`)
-  posted.push(r.ts)
   return r.ts
 }
 
+/**
+ * Delete every message the bot said after this run began — including the ones the transport
+ * sent on its own, which is where the first version leaked. A person's message is never
+ * touched, even if a test posted right above it.
+ */
 async function cleanup() {
-  let deleted = 0
-  for (const ts of posted) {
-    const r = await api('chat.delete', { channel, ts })
+  if (keep) { console.log('  cleanup: skipped (--keep)'); return }
+  const h = await api('conversations.history', { channel, limit: 100, oldest: String(Math.max(0, baseline - 1)) })
+  let deleted = 0, considered = 0
+  for (const m of [...(h.messages ?? [])].reverse()) {
+    if (m.user !== botId && m.bot_id !== botId) continue
+    considered++
+    const r = await api('chat.delete', { channel, ts: m.ts })
     if (r.ok === true) deleted++
+    else console.log(`  cleanup: could not delete ${m.ts} (${r.error})`)
   }
-  console.log(`  cleanup: ${deleted}/${posted.length} messages deleted`)
+  console.log(`  cleanup: ${deleted}/${considered} bot messages deleted`)
+  const after = await api('conversations.history', { channel, limit: 20, oldest: String(Math.max(0, baseline - 1)) })
+  const left = (after.messages ?? []).filter((m) => m.user === botId || m.bot_id === botId).length
+  console.log(`  cleanup: ${left} left behind${left === 0 ? ' ✓' : ' ✗'}`)
+}
+
+// An interrupted run must not leak either.
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => { cleanup().then(() => process.exit(130), () => process.exit(130)) })
 }
 
 // ── 1. the token and the identity, the way the transport uses them ─────────
