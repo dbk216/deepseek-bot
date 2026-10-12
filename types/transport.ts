@@ -102,6 +102,9 @@ export interface Transport {
     onAction?: (action: ActionEvent) => void
   }): Promise<void>
 
+  /** A link to a conversation, when the platform can build one. */
+  permalinkFor?(target: Target, label?: string): string | null
+
   /** Upload a local file into the conversation, when the platform supports it. */
   uploadFile?(target: Target, filePath: string, title?: string): Promise<boolean>
 

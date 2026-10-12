@@ -298,6 +298,7 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
     const me = await api.slackGet<SlackAuthTestResponse>(botToken as string, 'auth.test')
     if (!me.ok) throw new Error(`deepbot: auth.test failed (${me.error}) — check the bot token`)
     botUserId = me.user_id ?? null
+    workspaceUrl = typeof (me as { url?: string }).url === 'string' ? String((me as { url?: string }).url) : null
     return { name: me.user ?? 'unknown', id: me.user_id ?? '', team: me.team }
   }
 
@@ -381,6 +382,8 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
   }
 
   let onMessage: ((message: InboundMessage) => void) | null = null
+  // From auth.test, so a thread reference can be a real link rather than plain text.
+  let workspaceUrl: string | null = null
 
   async function connectInternal(): Promise<void> {
     if (stopped) return
@@ -534,10 +537,25 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
     }
   }
 
+  /**
+   * A permalink for a conversation.
+   *
+   * Slack renders its own `<#C…>` mention, but someone who writes "#random" gets plain text, and a
+   * model citing a thread has no way to know its URL. The workspace host comes from auth.test and the
+   * channel and timestamp are already known, so the link can be built rather than guessed.
+   */
+  function permalinkFor(target: Target, label?: string): string | null {
+    if (workspaceUrl === null || !target.channel) return null
+    const ts = typeof target.threadTs === 'string' && target.threadTs !== '' ? target.threadTs : null
+    if (ts === null) return null
+    return `<${workspaceUrl.replace(/\/$/, '')}/archives/${target.channel}/p${ts.replace('.', '')}|${label ?? 'this thread'}>`
+  }
+
   return {
     identity,
     authenticate,
     ready,
+    permalinkFor,
     uploadFile,
     // Slack's own interactive components are block actions, which this adapter does not
     // handle; a request here is answered by a reply in the thread instead.
