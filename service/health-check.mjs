@@ -1,5 +1,5 @@
-import { spawnSync } from 'node:child_process'
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
 /**
  * deepbot health probe.
  *
