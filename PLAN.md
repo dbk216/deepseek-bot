@@ -529,6 +529,19 @@ Three ways forward, and the recommendation is the third:
 With C the claim to test is *"an expression whose words overlap ranks above exact-substring
 matching"* — not *"it finds synonyms"*, which it does not.
 
+### The recall indexer is still JavaScript (raised by the user)
+
+`recall/deepbot-recall.mjs` is `.mjs` while everything else moved to TypeScript in M6-0, and the round
+that changed its ranking touched the `.mjs` file — so the inconsistency is being compounded rather
+than closed. Porting it means: `recall/deepbot-recall.ts`, compiled to `dist/recall/`, wired through
+`tsconfig.json` and the `tsc` build, with the existing CLI contract kept (`index | search | recent |
+show | sessions`) and the ranking test in `test/recall.test.mjs` still passing unchanged — that test
+is the port's acceptance criterion, since it drives the CLI as a subprocess.
+
+Note the trap this path already caused once: the plugin resolves the indexer relative to its own
+module, so a `dist/` build produced `dist/recall/…`, which does not exist — recall went quietly
+stale. `recallScriptPath()` handles it; the port has to keep that working.
+
 ### The product gaps, in the order worth doing
 
 1. **Per-tenant model, tools and permission policy** — isolation is a directory today.
