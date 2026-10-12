@@ -163,10 +163,12 @@ const DEFAULTS = {
   tenantDefault: undefined,    // tenant for an unmapped key, or undefined for the shared home
   tenantRoot: undefined,       // default: <home>/tenants
   tenantTemplateDir: undefined, // copied into a new tenant's directory (its persona, notes)
-  // Per-tenant behaviour, not just storage: which tools the agent gets, which permission
-  // preset its session runs under, which model answers, and where its persona comes from.
-  // A tenant with no entry here uses the deployment's own settings.
-  tenantPolicies: {},          // { acme: { preset, permission, model: { provider, model }, persona } }
+  // Per-tenant behaviour, not just storage: which tools the agent gets, which model answers,
+  // and where its persona comes from. A tenant with no entry uses the deployment's own
+  // settings. A per-tenant *permission* preset is not supported: the session-level call never
+  // executed where it was placed, and three attempts to place it correctly did not fix that,
+  // so the knob is gone rather than half-working.
+  tenantPolicies: {},          // { acme: { preset, model: { provider, model }, persona } }
   // What the agent may fetch. The `fetch` tool runs in the harness, not in the sandbox
   // runner, so "inside the sandbox" needed its own policy: only http(s), never the cloud
   // metadata service, and an optional allowlist.
@@ -461,7 +463,6 @@ export function apply(ctx, config) {
   /** What this tenant is allowed to be, beyond its own directory. */
   function tenantPolicy(tenant: string | null): {
     preset?: string
-    permission?: string
     model?: { provider?: string; model?: string }
     persona?: string
   } {
@@ -1202,7 +1203,7 @@ export function apply(ctx, config) {
     // reproducible by configuration.
     const policy = tenantPolicy(tenant)
     const presetName = policy.preset ?? cfg.agentPreset
-    const permissionName = policy.permission ?? cfg.permissionPreset
+    const permissionName = permissionName ?? cfg.permissionPreset
     let presetId = null
     if (presetName) {
       if (!agentPresets) throw new Error('deepbot: agentPreset is configured but the agentPresets service is not composed — the agent would have no tools')
@@ -1321,16 +1322,6 @@ export function apply(ctx, config) {
     // Register before the turn starts, so a message arriving a second later can
     // stop it. The timeout uses the same path: a timeout that only stops the
     // *waiting* leaves the agent running, writing to the session, and eventually
-      // A tenant that names a permission preset gets it applied to its session. The
-      // deployment's own preset is not touched here: that is the deployment's business.
-      if (tenant !== null && typeof policy.permission === 'string' && policy.permission !== '' && permissionPresets?.set) {
-        try {
-          permissionPresets.set(agent.session, policy.permission)
-          log(`tenant ${tenant}: session permission preset ${policy.permission}`)
-        } catch (e) {
-          log(`tenant ${tenant}: could not apply permission preset ${policy.permission} — ${String((e as Error)?.message ?? e)}`)
-        }
-      }
         runningTurns.delete(turnKey)
     }
 

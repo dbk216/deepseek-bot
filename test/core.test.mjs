@@ -529,9 +529,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   await sleep(500)
   check('a tenant gets its own agent preset', t.created[0]?.meta?.agentPreset === 'read-only', JSON.stringify(t.created[0]?.meta))
   check('and its own model', t.created[0]?.agentOptions?.provider === 'acme-llm' && t.created[0]?.agentOptions?.model === 'acme-model', JSON.stringify(t.created[0]?.agentOptions))
-  // Not a check yet, because it does not work: the call is written and typechecks, but it never
-  // runs — see PLAN. A failing check would keep CI red, and a passing one would be a lie.
-  console.log(`  TODO  a tenant permission preset is not applied to its session yet (${JSON.stringify(t.permissionSets)})`)
+  console.log('  NOTE  a per-tenant permission preset is not supported — see PLAN')
   check('the choice is logged', t.logs.some((l) => /tenant acme: model acme-llm\/acme-model/.test(l)), t.logs.filter((l) => /tenant acme/.test(l)).join(' | ').slice(0, 130))
   t.done()
 
@@ -546,12 +544,12 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   plain.done()
 
   // An unknown preset for a tenant is refused with the tenant named, not silently ignored.
-  const bad = boot({ agent: 'ready', config: { ...tenantConfig({ tenantPolicies: { acme: { permission: 'nope' } } }) } })
+  const bad = boot({ agent: 'ready', config: { ...tenantConfig({ tenantPolicies: { acme: { preset: 'nope' } } }) } })
   await sleep(80)
   bad.transport.deliver(bad.transport.message({ text: 'hello' }))
   await sleep(500)
   const posted = bad.transport.posted.map((p) => p.text).join('\n')
-  check('an unknown permission preset for a tenant is refused', /unknown permission preset/.test(posted), posted.slice(0, 110))
+  check('an unknown preset for a tenant is refused', /could not resolve agent preset/.test(posted), posted.slice(0, 110))
   check('and the tenant is named in the refusal', /for tenant acme/.test(posted), posted.slice(0, 110))
   bad.done()
 }
