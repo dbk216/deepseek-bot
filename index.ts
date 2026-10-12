@@ -669,16 +669,29 @@ export function apply(ctx, config) {
    * asking to stop go through here, so there is one place where cancellation
    * happens and one place to look when it does not.
    */
-  const runningTurns = new Map<string, { cancel: (reason: string) => void; cause: string | null }>()
+  const runningTurns = new Map<string, {
+    cancel: (reason: string) => void
+    cause: string | null
+    /** False while the agent is still being created: then the turn cannot report itself. */
+    prepared: boolean
+  }>()
 
   /** @returns whether anything was actually running. */
-  function cancelRunning(key: string, reason: string): boolean {
+  /**
+   * Stop the turn in a conversation.
+   *
+   * The status matters to the caller, not just the yes/no. A turn that is still being created
+   * cannot report its own cancellation — there is no agent yet and no placeholder to replace —
+   * so the person who asked it to stop would otherwise get nothing at all. `preparing` says
+   * that, and the caller answers for it.
+   */
+  function cancelRunning(key: string, reason: string): 'none' | 'preparing' | 'running' {
     const entry = runningTurns.get(key)
-    if (entry === undefined) return false
-    log(`cancelling the running turn in ${key} (${reason})`)
+    if (entry === undefined) return 'none'
+    log(`cancelling the ${entry.prepared ? 'running' : 'starting'} turn in ${key} (${reason})`)
     entry.cause = reason
     entry.cancel(reason)
-    return true
+    return entry.prepared ? 'running' : 'preparing'
   }
 
   /**
@@ -1186,8 +1199,14 @@ export function apply(ctx, config) {
       // conversation looking idle, so two quick messages started two agents in one thread and
       // a stop request answered "nothing is running". Found by the failure-injection sweep.
       const turnKey = sessionKey ?? sessionId ?? ''
-      const turnState: { cause: string | null; cancel: (reason: string) => void } = {
+      const turnState: {
+        cause: string | null
+        /** True once an agent exists: only then can the turn report its own cancellation. */
+        prepared: boolean
+        cancel: (reason: string) => void
+      } = {
         cause: null,
+        prepared: false,
         cancel: (reason) => { turnState.cause = reason },   // upgraded once the agent exists
       }
       runningTurns.set(turnKey, turnState)
@@ -1231,6 +1250,7 @@ export function apply(ctx, config) {
     // delivering an answer nobody is waiting for any more.
       // The agent exists now, so cancellation can reach it — and the turn may have been
       // stopped while the agent was being created, which is a stop a human asked for.
+      turnState.prepared = true
       turnState.cancel = (reason) => {
         turnState.cause = reason
         try { agent.cancel?.(reason) } catch (e) { log(`agent.cancel failed: ${String(e?.message ?? e)}`) }
@@ -1447,11 +1467,17 @@ export function apply(ctx, config) {
     // stop, which is better than starting a turn to say so.
     if (isCancelRequest(prompt)) {
       const stopped = cancelRunning(key, 'user')
-      log(`cancel requested in ${key} — ${stopped ? 'stopped the running turn' : 'nothing was running'}`)
-      // When a turn was stopped, that turn reports it — it holds the progress
-      // placeholder, so the placeholder becomes the report instead of leaving a
-      // second message behind.
-      if (!stopped) await transport.post({ channel, threadTs }, '지금 돌고 있는 작업이 없습니다.')
+      log(`cancel requested in ${key} — ${stopped === 'none' ? 'nothing was running' : `stopped a ${stopped} turn`}`)
+      // A running turn reports its own cancellation: it holds the progress placeholder, so
+      // the placeholder becomes the report rather than leaving a second message behind.
+      // A turn that is still being created has no placeholder and no agent, so nothing would
+      // ever be said — found by the failure-injection sweep, where a create that never
+      // resolved left the stop request completely silent.
+      if (stopped !== 'running') {
+        await transport.post({ channel, threadTs }, stopped === 'none'
+          ? '지금 돌고 있는 작업이 없습니다.'
+          : '중단했습니다 — 시작 중이던 작업을 멈췄습니다.')
+      }
       return
     }
 
