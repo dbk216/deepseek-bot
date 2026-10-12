@@ -437,6 +437,12 @@ isolation is one config away:
       'C0456EFGH': globex
     tenantRoot: <home>/tenants   # default
     tenantTemplateDir: ./agent   # its persona, copied on creation
+
+**A per-tenant *permission* preset is not supported.** `tenantPolicies` carries an agent preset,
+a model and a persona, all verified. A `permission` key is read into the policy but the
+session-level call that would apply it never executes — a log placed immediately before it
+printed nothing, so execution does not reach that line — and the check for it is a `TODO` in
+`test/core.test.mjs` rather than a passing one. Treat that key as unsupported.
 ```
 
 A tenant's directory is created on its **first message** — provisioning belongs to the
