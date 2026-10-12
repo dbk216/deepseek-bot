@@ -23,6 +23,7 @@ jobs:
       - run: node test/slack.test.mjs
       - run: node test/edges.test.mjs
       - run: node test/failures.test.mjs
+      - run: node test/resources.test.mjs
       - run: node test/injection.test.mjs
       - run: node test/usage.test.mjs
       - run: node test/telegram.test.mjs

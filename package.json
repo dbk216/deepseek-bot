@@ -42,7 +42,7 @@
     }
   },
   "scripts": {
-    "test": "node test/reconnect.test.mjs && node test/core.test.mjs && node test/slack.test.mjs && node test/edges.test.mjs && node test/failures.test.mjs && node test/usage.test.mjs && node test/injection.test.mjs && node test/telegram.test.mjs && node test/discord.test.mjs && node test/progress.test.mjs && node test/confined-runner.test.mjs && node test/delivery.test.mjs && node test/history.test.mjs && node test/attachments.test.mjs && node test/persona-check.test.mjs && node test/watch.test.mjs && node test/secrets.test.mjs .",
+    "test": "node test/reconnect.test.mjs && node test/core.test.mjs && node test/slack.test.mjs && node test/edges.test.mjs && node test/failures.test.mjs && node test/resources.test.mjs && node test/usage.test.mjs && node test/injection.test.mjs && node test/telegram.test.mjs && node test/discord.test.mjs && node test/progress.test.mjs && node test/confined-runner.test.mjs && node test/delivery.test.mjs && node test/history.test.mjs && node test/attachments.test.mjs && node test/persona-check.test.mjs && node test/watch.test.mjs && node test/secrets.test.mjs .",
     "test:scenario": "node test/run-scenario.mjs",
     "health": "node service/health-check.mjs --status",
     "test:restart": "node test/run-scenario.mjs test/scenarios/restart-1.json --dump /tmp/sessions.json && node test/run-scenario.mjs test/scenarios/restart-2.json --seed /tmp/sessions.json",
@@ -70,7 +70,8 @@
     "test:slack": "node test/slack.test.mjs",
     "qa:slack": "node tools/qa-slack.mjs",
     "test:edges": "node test/edges.test.mjs",
-    "test:failures": "node test/failures.test.mjs"
+    "test:failures": "node test/failures.test.mjs",
+    "test:resources": "node test/resources.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

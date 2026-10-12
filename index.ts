@@ -135,6 +135,10 @@ const DEFAULTS = {
   // had one. With an answerer the request reaches the thread and a human decides;
   // without a conversation to ask in, the outcome stays `unavailable`.
   approvalAnswerer: true,
+  // How long a conversation's bookkeeping is kept: its session mapping, standing digest,
+  // history cursor and usage totals. A busy workspace otherwise accumulates one entry per
+  // thread forever and rewrites all of it on every turn.
+  stateRetentionDays: 30,
   // Commands that destroy things inside the workspace, where the sandbox does not
   // interfere. The sandbox cannot help here — deleting the agent's own notes is a
   // legitimate operation — so a human decides. Empty disables the gate.
@@ -320,7 +324,7 @@ export function apply(ctx, config) {
   }
   let saveTimer = null
   function loadState() {
-    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, usage: emptyUsageStore() }
+    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, usage: emptyUsageStore() }
     try {
       const raw = JSON.parse(readFileSync(STATE, 'utf8'))
       return {
@@ -331,10 +335,53 @@ export function apply(ctx, config) {
         // already has.
         standing: raw.standing ?? {},
         history: raw.history ?? {},
+        touched: raw.touched ?? {},
         usage: raw.usage ?? emptyUsageStore(),
       }
-    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, usage: emptyUsageStore() } }
+    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, usage: emptyUsageStore() } }
   }
+  /**
+   * Drop what has gone quiet.
+   *
+   * Dedupe entries expire after a day. Everything else used to live forever: one session
+   * mapping, standing digest, history cursor and usage total per thread ever seen, rewritten
+   * on every turn. Found by the resource sweep — 400 conversations from 200 days ago were
+   * still there, and the state file grew rather than shrank.
+   *
+   * An entry with no timestamp at all is kept: not knowing when something was last used is
+   * not a reason to delete it.
+   */
+  function pruneState() {
+    const now = Date.now()
+    const seenCutoff = now - 24 * 3600 * 1000
+    for (const [k, v] of Object.entries(state.seen) as Array<[string, number]>) if (v < seenCutoff) delete state.seen[k]
+
+    const days = Number(cfg.stateRetentionDays) > 0 ? Number(cfg.stateRetentionDays) : 30
+    const retentionCutoff = now - days * 24 * 3600 * 1000
+    const conversations = (state.usage?.conversations ?? {}) as Record<string, { lastAt?: number; lastSessionId?: string }>
+    let dropped = 0
+    for (const key of new Set([...Object.keys(state.sessions), ...Object.keys(state.touched ?? {})])) {
+      const touchedAt = Number(state.touched?.[key] ?? conversations[key]?.lastAt ?? NaN)
+      if (!Number.isFinite(touchedAt) || touchedAt >= retentionCutoff) continue
+      delete state.sessions[key]
+      delete state.standing[key]
+      delete state.history[key]
+      if (state.touched) delete state.touched[key]
+      delete conversations[key]
+      dropped++
+    }
+    // Usage snapshots are keyed by session, so they can only be pruned against the sessions the
+    // surviving conversations still point at.
+    const live = new Set(Object.values(conversations).map((c) => c.lastSessionId).filter((id): id is string => typeof id === 'string'))
+    const snapshots = state.usage?.sessions ?? {}
+    for (const sessionId of Object.keys(snapshots)) {
+      if (live.has(sessionId)) continue
+      // A snapshot for a session nobody points at any more is dead weight.
+      if (dropped > 0) delete snapshots[sessionId]
+    }
+    if (dropped > 0) log(`state pruned: ${dropped} conversation(s) quiet for more than ${days} days`)
+  }
+
   /**
    * Persist now, cancelling any pending debounced write.
    *
@@ -346,8 +393,7 @@ export function apply(ctx, config) {
   function saveStateNow() {
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
     try {
-      const cutoff = Date.now() - 24 * 3600 * 1000
-      for (const [k, v] of Object.entries(state.seen) as Array<[string, number]>) if (v < cutoff) delete state.seen[k]
+      pruneState()
       writeFileSync(STATE, JSON.stringify(state, null, 1))
     } catch (e) { log('state write failed', String(e)) }
   }
@@ -357,8 +403,7 @@ export function apply(ctx, config) {
     saveTimer = setTimeout(() => {
       saveTimer = null
       try {
-        const cutoff = Date.now() - 24 * 3600 * 1000
-        for (const [k, v] of Object.entries(state.seen) as Array<[string, number]>) if (v < cutoff) delete state.seen[k]
+        pruneState()
         writeFileSync(STATE, JSON.stringify(state, null, 1))
       } catch (e) { log('state write failed', String(e)) }
     }, 500)
@@ -1433,6 +1478,7 @@ export function apply(ctx, config) {
     const prompt = message.text.slice(0, cfg.maxPromptChars)
       // Remembered here because the approval listener runs outside the turn.
       if (message.user !== '') requesterOf.set(key, message.user)
+      state.touched[key] = Date.now()
     if (!prompt) return
 
     // A pending approval turns the next message into a decision, so it is consumed

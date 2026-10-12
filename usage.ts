@@ -22,6 +22,8 @@ export interface TokenSnapshot {
 }
 
 export interface ConversationTotals {
+  /** The newest session this conversation ran in, so older snapshots can be dropped. */
+  lastSessionId?: string
   turns: number
   uncached: number
   cached: number
@@ -78,6 +80,7 @@ export function createUsageTracker(options: UsageOptions) {
       totals.written += delta('cacheWriteTokens')
       totals.output += delta('outputTokens')
       totals.lastAt = now()
+      totals.lastSessionId = sessionId
       store.conversations[key] = totals
       store.sessions[sessionId] = current
     },
