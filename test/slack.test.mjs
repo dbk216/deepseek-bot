@@ -12,6 +12,9 @@
  * Run: node test/slack.test.mjs
  */
 import './dist-fresh.mjs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createSlackTransport } from '../dist/transports/slack.js'
 
 const results = []
@@ -26,9 +29,19 @@ function stubSlack(options = {}) {
   const realFetch = globalThis.fetch
   globalThis.fetch = async (url, init = {}) => {
     const method = String(url).split('/api/')[1] ?? ''
-    const body = init.body === undefined ? {} : JSON.parse(String(init.body))
+    // The upload URL takes raw bytes, so the body is not always JSON — parsing it unconditionally
+    // threw inside this stub and the transport reported failure.
+    const raw = init.body === undefined ? '' : String(init.body)
+    const body = raw.startsWith('{') ? JSON.parse(raw) : {}
     calls.push({ method, body })
     const ok = options.fail?.includes(method) !== true
+    // The file APIs answer with their own shapes; the chain below is for chat calls.
+    if (ok && method === 'files.getUploadURLExternal') {
+      return { ok: true, status: 200, json: async () => ({ ok: true, upload_url: 'https://upload.example/u/1', file_id: 'F1' }), text: async () => '' }
+    }
+    if (ok && method === 'files.completeUploadExternal') {
+      return { ok: true, status: 200, json: async () => ({ ok: true, files: [{ id: 'F1' }] }), text: async () => '' }
+    }
     const json = ok
       // chat.update answers with the same ts it updated; chat.postMessage with a new one.
       ? { ok: true, ts: method === 'chat.update' ? body.ts : `ts-${calls.length}`, channel: body.channel ?? 'C1' }
@@ -169,6 +182,29 @@ function transportFor(api) {
   const body2 = api2.calls.find((c) => c.method === 'chat.postMessage')?.body?.text ?? ''
   check('a bare URL is left for Slack to link', body2.includes('https://example.com/b') && !body2.includes('<https://example.com/b'), body2.slice(0, 70))
   check('a local path is left as text, because it cannot be a link', body2.includes('/Users/x/note.docx'), body2.slice(-40))
+}
+
+// 9. A document is uploaded rather than named: a local path cannot be clicked, so the file travels.
+{
+  const api = stubSlack()
+  const t = transportFor(api)
+  await t.authenticate()
+  const dir = mkdtempSync(join(tmpdir(), 'deepbot-upload-'))
+  const file = join(dir, 'report.docx')
+  const bytes = 'pretend docx bytes'
+  writeFileSync(file, bytes)
+  const ok = await t.uploadFile({ channel: 'C1', threadTs: '111.222' }, file, 'the report')
+  const names = api.calls.map((c) => c.method)
+  const started = api.calls.find((c) => c.method === 'files.getUploadURLExternal')
+  const done = api.calls.find((c) => c.method === 'files.completeUploadExternal')
+  api.restore()
+  check('uploading asks for a URL first', names.includes('files.getUploadURLExternal'), names.join(', '))
+  check('and names the file and its size', started?.body?.filename === 'report.docx' && started?.body?.length === bytes.length, JSON.stringify(started?.body))
+  check('the bytes go to the URL it was given', names.filter((x) => x === '').length === 1, names.join(', '))
+  check('and it is completed into the thread', done?.body?.channel_id === 'C1' && done?.body?.thread_ts === '111.222', JSON.stringify(done?.body))
+  check('with the title asked for', done?.body?.files?.[0]?.title === 'the report', JSON.stringify(done?.body?.files))
+  check('and reports success', ok === true, String(ok))
+  rmSync(dir, { recursive: true, force: true })
 }
 
 const failed = results.filter((r) => !r.ok)
