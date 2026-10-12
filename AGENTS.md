@@ -1,68 +1,82 @@
 # AGENTS.md — working in this repository
 
-Written for an agent that is about to change this deployment. It is short on purpose: every line
-below cost something to learn.
+For an agent about to change this deployment. Four principles, adapted from
+[andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills) (MIT), each one
+followed by what it cost to learn here.
 
-## What this is
+## 1. Think before coding
 
-`deepbot` is a bundle plugin for DeepSeek Harness that puts an always-on agent in Slack (with
-Telegram and Discord behind the same transport seam), plus the profiles, scripts and launchd jobs
-that run it. The live deployment is on this machine; the harness is at
-`/Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh`.
+Don't assume. Don't hide confusion. Surface tradeoffs.
 
-## Before you commit anything
+- **State the assumption you are about to act on.** An anchor you have not read, a symbol you have
+  not grepped, a behaviour you believe exists. Three rounds were spent editing a function whose name
+  was guessed; `grep -n` found it in one command.
+- **Do not build on a claim you have not checked.** Two features were "done" because the code
+  typechecked, and neither ran: one block sat after a `throw`, another inside a branch that never
+  executes. A typecheck does not catch dead code.
+- **Push back with the simpler option.** "No per-conversation serialization exists; collisions are
+  absorbed by the adapter's retry" was found by reading rather than by assuming the design was wrong.
+- **Say when something is unverified** — in the commit message, in `PLAN.md`, or as a `TODO` printed
+  by the suite that would otherwise check it. Never leave it implied.
 
-1. `pnpm run typecheck` **and** `pnpm test` — both, every time. One commit went out with a type error
-   because only the second was checked.
-2. If a change can break behaviour a test does not cover, run the scenario for it:
-   `node test/run-scenario.mjs test/scenarios/<name>.json`. These need a model and are not in CI;
-   `service/run-scenarios.sh` runs the whole set daily.
-3. The live bot must keep working. Restart it after a build:
-   `launchctl kickstart -k gui/$(id -u)/ai.deepbot.gateway`, then
-   `node ~/.dsh/service/health-check.mjs --status`.
+## 2. Simplicity first
 
-## How to edit files here
+Minimum that solves the problem. Nothing speculative.
 
-The failures in this repository have come from editing, not from design:
+- **No new runtime dependencies.** The plugin imports nothing from `node_modules`; adding one is a
+  decision, not an implementation detail. Semantic recall was solved as lexical scoring for this
+  reason, and the limitation is written down instead of hidden.
+- **No knob that does not work.** A per-tenant `permission` key was read and never used, so it was
+  removed rather than documented as supported. A half-working option is worse than a missing one.
+- **Prefer the smaller change.** A one-line ranking fix beat a new search subsystem; a directory per
+  tenant beat a new storage layer.
 
-- **Find by substring, never by guessing an anchor.** `grep -n` first, then edit. Guessed anchors
-  matched nothing, or matched a comment instead of the line.
-- **Replace whole lines.** A partial replacement once truncated a function call and crashed a suite;
-  a blanket `policy.permission` → `permissionName` replace rewrote a *declaration*.
-- **Assert before you write, and restore on failure.** Write the shape check, then the edit, then
-  gate on typecheck and tests, and if either fails put the file back. Six mistakes were caught this
-  way; the one that reached `origin` was the one where only one gate was checked.
-- **Typechecking does not catch dead code.** A block inserted after a `throw`, and another inside a
-  branch that never runs, both typechecked perfectly and did nothing.
+## 3. Surgical changes
 
-## Writing tests
+Touch only what you must. Clean up only your own mess.
 
-A test that passes for the wrong reason is worse than a failing one. Three were found here:
+- **Replace whole lines, found by substring.** A partial replacement truncated a call and crashed a
+  suite; a blanket `policy.permission` → `permissionName` replace rewrote a *declaration* and two
+  commits left with a type error.
+- **Do not improve adjacent code.** The scan rewrote an unrelated `permissionName` line, and adding
+  the rotation call put an import above a shebang, breaking a job this deployment depends on.
+- **Remove what your change orphans, and nothing else.** Dead code found earlier stays until asked.
 
-- a fixture whose expected winner was also the newest row, so it would pass on recency alone;
-- a stub `agentPresets.resolve` that accepted any id, so the refusal path was never entered;
-- a scenario that asserted a tool *choice* rather than the artifact.
+## 4. Goal-driven execution
 
-State the claim, then make the fixture unable to satisfy it by accident.
+Define success criteria. Loop until verified.
 
-## What is deliberately not here
+- **Write the check before the fix.** The third-party-approval gap was *proved* by a failing test
+  before any code changed; the state-growth defect was proved by seeding 400 stale conversations.
+- **Gate on both: `pnpm run typecheck` and `pnpm test`.** One commit reached `origin` with a type
+  error because only the tests were checked. Assert the shape, edit, gate, and restore on failure —
+  six mistakes were caught this way, and the only one that escaped was the one with a single gate.
+- **A test that passes for the wrong reason is worse than a failing one.** Three were found here: a
+  fixture whose winner was also the newest row, a stub that accepted any id so a refusal path was
+  never entered, and a scenario asserting a tool *choice* rather than the artifact. Make the fixture
+  unable to satisfy the claim by accident.
+- **Verify where it runs.** `node test/run-scenario.mjs test/scenarios/<name>.json` against a real
+  model (not in CI; `service/run-scenarios.sh` runs the set daily), then restart the live bot and
+  read `node ~/.dsh/service/health-check.mjs --status`.
 
-- **No runtime dependencies.** The plugin resolves nothing from `node_modules`. Adding one is a
-  decision, not an implementation detail.
-- **Dist facts are read, not assumed.** The harness ships no `.d.ts`; `types/dsh.ts` is hand-written
-  from the READMEs and verified by running. DSH packages cannot be imported from this plugin.
-- **Claims are pinned or they are not made.** Anything the README asserts has a test, a scenario, or
-  a live check behind it, and anything unverified says so — in `docs/limitations.md`, in `PLAN.md`,
-  or printed as a `TODO` by the suite that would otherwise check it.
+## Facts worth knowing
+
+- The harness ships **no `.d.ts`**; `types/dsh.ts` is hand-written from the READMEs and verified by
+  running. DSH packages cannot be imported from this plugin — service calls only.
+- Session logs are `session.v4.jsonl.zstd`, one zstd frame per write, split on `28 B5 2F FD`.
+- Profiles live outside the repository (`~/.dsh/profiles/`); a `config:` block **replaces the whole
+  config**, so a new `- id: deepbot` row must restate every setting it means to keep.
+- `test/profile.test.mjs` checks the composed posture, because profile edits have silently changed
+  it three times.
 
 ## Map
 
 | path | what |
 |---|---|
-| `index.ts` | the adapter: core orchestration, policy gates, prompt assembly |
+| `index.ts` | the adapter: orchestration, policy gates, prompt assembly |
 | `transports/` | Slack, Telegram, Discord, attachments — the platform seam |
-| `recall/` | the session index (JavaScript today; see PLAN for the TypeScript port) |
+| `recall/` | the session index (JavaScript today; the TypeScript port is in `PLAN.md`) |
 | `service/` | runner, gateway, health, rotation, scenario schedule |
-| `test/` | unit suites (`*.test.mjs`), scenarios, fixtures |
-| `docs/` | API notes, limitations, research |
+| `test/` | unit suites, scenarios, fixtures |
+| `docs/` | API notes, limitations |
 | `PLAN.md` | what is done, what is next, and what is unverified |
