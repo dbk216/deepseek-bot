@@ -12,8 +12,8 @@
  * The factory takes the adapter's small host surface — config, logger, and the
  * one async value it needs, the session directory. Everything else is Slack's.
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { join, basename } from 'node:path'
 import type {
   SlackAuthTestResponse, SlackConnectionResponse, SlackEnvelope, SlackEvent, SlackFile,
   SlackHistoryResponse, SlackMember, SlackMembersResponse, SlackMessage,
@@ -498,10 +498,47 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
     return first
   }
 
+  /**
+   * Upload a file and attach it to the conversation.
+   *
+   * This is what makes a document clickable: a local path cannot be linked from Slack — there is
+   * nothing to link to on the reader's machine — so the file has to travel. The API is three calls:
+   * ask for an upload URL, send the bytes to it, then complete the upload against the channel.
+   */
+  async function uploadFile(target: Target, filePath: string, title?: string): Promise<boolean> {
+    try {
+      const bytes = readFileSync(filePath)
+      const name = basename(filePath)
+      const started = await api.slackPost<{ ok: boolean; upload_url?: string; file_id?: string; error?: string }>(
+        requireToken(), 'files.getUploadURLExternal', { filename: name, length: bytes.length })
+      if (started.ok !== true || started.upload_url === undefined || started.file_id === undefined) {
+        log(`upload failed at getUploadURLExternal: ${started.error ?? 'no url'}`)
+        return false
+      }
+      const put = await fetch(started.upload_url, { method: 'POST', body: bytes })
+      if (put.ok !== true && put.status !== 200) {
+        log(`upload failed sending bytes: HTTP ${put.status}`)
+        return false
+      }
+      const done = await api.slackPost<{ ok: boolean; error?: string }>(requireToken(), 'files.completeUploadExternal', {
+        files: [{ id: started.file_id, title: title ?? name }],
+        channel_id: target.channel,
+        ...(typeof target.threadTs === 'string' && target.threadTs !== '' ? { thread_ts: target.threadTs } : {}),
+      })
+      if (done.ok !== true) { log(`upload failed at completeUploadExternal: ${done.error ?? 'unknown'}`); return false }
+      log(`uploaded ${name} (${bytes.length} bytes) to ${target.channel}`)
+      return true
+    } catch (e) {
+      log(`upload failed: ${String((e as Error)?.message ?? e)}`)
+      return false
+    }
+  }
+
   return {
     identity,
     authenticate,
     ready,
+    uploadFile,
     // Slack's own interactive components are block actions, which this adapter does not
     // handle; a request here is answered by a reply in the thread instead.
     supportsButtons: false,

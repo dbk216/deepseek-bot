@@ -102,6 +102,9 @@ export interface Transport {
     onAction?: (action: ActionEvent) => void
   }): Promise<void>
 
+  /** Upload a local file into the conversation, when the platform supports it. */
+  uploadFile?(target: Target, filePath: string, title?: string): Promise<boolean>
+
   /** Whether this transport can render buttons. */
   readonly supportsButtons: boolean
 
