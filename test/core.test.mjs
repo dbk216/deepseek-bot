@@ -556,6 +556,19 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   bad.done()
 }
 
+// 27. The conversation's own link reaches the model. It has to use the ready-agent mode: the
+// preamble is built after an agent exists, and the default stub throws at create, so nothing below
+// that line runs — which is why an earlier attempt saw no log and looked like a broken wiring.
+{
+  const t = boot({ agent: 'ready' })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: 'ping' }))
+  await sleep(400)
+  check('the thread permalink is provided', t.logs.some((l) => /thread permalink provided/.test(l)),
+    t.logs.filter((l) => /link:/.test(l)).join(' | ').slice(0, 90) || '(no link log)')
+  t.done()
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

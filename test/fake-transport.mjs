@@ -20,6 +20,10 @@ export function createFakeTransport(options = {}) {
   let socket = true
 
   return {
+    // The platform's link for a conversation; the plugin asks when it knows the origin.
+    permalinkFor: (target, label) => (target?.threadTs
+      ? `<https://ws.example/archives/${target.channel}/p${String(target.threadTs).replace('.', '')}|${label ?? 'this thread'}>`
+      : null),
     // ── recorded interactions ───────────────────────────────────────────────
     posted,
     historyCalls,
