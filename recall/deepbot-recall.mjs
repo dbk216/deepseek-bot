@@ -308,7 +308,19 @@ switch (command) {
     const query = argv[1]
     if (!query) { console.error('usage: deepbot-recall.mjs search <query>'); process.exit(2) }
     const limit = Number(flag('limit', 20))
-    const hits = loadIndex(flag('index', INDEX_DEFAULT)).filter((r) => r.text.toLowerCase().includes(query.toLowerCase()))
+    // Rank by how many query words a passage contains, not by substring order: a passage that
+    // shares the words is more likely to be what was meant, and the index order is just time.
+    // Lexical, not semantic — it does not find synonyms, and the README says so.
+    const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 1)
+    const hits = loadIndex(flag('index', INDEX_DEFAULT))
+      .map((r) => {
+        const text = r.text.toLowerCase()
+        const score = words.reduce((n, w) => n + (text.includes(w) ? 1 : 0), 0)
+        return { r, score }
+      })
+      .filter((h) => h.score > 0)
+      .sort((a, b) => b.score - a.score || b.r.ts - a.r.ts)
+      .map((h) => h.r)
     console.log(`${hits.length} match(es) for ${JSON.stringify(query)}`)
     for (const r of hits.slice(0, limit)) {
       console.log(`  [${fmtTime(r.ts)}] ${r.role} (${r.sessionId})`)
