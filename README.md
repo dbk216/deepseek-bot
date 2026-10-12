@@ -399,6 +399,15 @@ no form filling, so a page that renders its content client-side arrives empty. T
 limit and it is in [limitations](docs/limitations.md) rather than glossed over. Search is
 also composed (`dsh-web-search-deepseek`) and needs `DEEPSEEK_API_KEY`.
 
+**Reading JavaScript-rendered pages is a decision that has not been taken, and it breaks a rule.**
+It needs a browser engine in the deployment, which means the first runtime dependency this project
+would have — hundreds of megabytes, a supply-chain surface, and platform-specific binaries to keep
+current. The rule has been worth keeping: it is why the plugin resolves nothing from `node_modules`,
+and why this deployment is a directory and a profile rather than a container. So the decision is
+recorded rather than assumed, and the condition to revisit it is concrete: a page a user actually
+needs that arrives empty, more than once. Until then a client-rendered page is answered honestly —
+the fetch reports what it received, and an empty body is reported as empty.
+
 **It runs with bounds, because "in the sandbox" needed its own policy.** The `fetch` tool
 runs in the harness rather than under the sandbox runner, so the tool gate bounds it:
 
