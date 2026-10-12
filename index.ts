@@ -586,6 +586,14 @@ export function apply(ctx, config) {
         '{"id":"<short-id>","name":"…","command":"<shell command>","intervalSeconds":300,"channel":"' + origin.channel + '","rateLimitMinutes":30}',
         'then tell the user what you will watch and how often.',
       ].join('\n'))
+
+      // The conversation's own link, so a reference to it can be clickable. Slack links its own
+      // <#C…> mention, but a description of a thread stays text without this.
+      const threadLink = typeof transport.permalinkFor === 'function' ? transport.permalinkFor({ channel: origin.channel, threadTs: origin.threadTs }, 'this thread') : null
+      if (typeof threadLink === 'string' && threadLink !== '') {
+        standing.push(`[this thread's link] ${threadLink}`)
+        log('link: thread permalink provided to the model')
+      }
     }
     // Which directory is writable, stated plainly. Measured: asked to create a
     // file in "홈 디렉터리", the agent read that as the OS home, correctly decided
