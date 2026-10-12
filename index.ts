@@ -1182,10 +1182,20 @@ export function apply(ctx, config) {
     let handle
     let sessionId = existingSessionId ?? `slack-${randomUUID()}`   // stands in for brandString(...)
     activeTurns.add(sessionId)
+      // Register the turn *before* the agent exists. A create still in flight left the
+      // conversation looking idle, so two quick messages started two agents in one thread and
+      // a stop request answered "nothing is running". Found by the failure-injection sweep.
+      const turnKey = sessionKey ?? sessionId ?? ''
+      const turnState: { cause: string | null; cancel: (reason: string) => void } = {
+        cause: null,
+        cancel: (reason) => { turnState.cause = reason },   // upgraded once the agent exists
+      }
+      runningTurns.set(turnKey, turnState)
     try {
       handle = await adopt(existingSessionId)
     } catch (e) {
       activeTurns.delete(sessionId)
+        runningTurns.delete(turnKey)
       // AsyncDisposable yields a PromiseLike, which has no .catch: resolve it first rather
         // than relying on the service happening to return a real Promise.
         await Promise.resolve(scope?.[Symbol.asyncDispose]?.()).then(() => {}, () => {})
@@ -1197,6 +1207,7 @@ export function apply(ctx, config) {
         // than relying on the service happening to return a real Promise.
         await Promise.resolve(scope?.[Symbol.asyncDispose]?.()).then(() => {}, () => {})
       throw new Error('deepbot: agents.create/resume did not return an Agent')
+        runningTurns.delete(turnKey)
     }
 
     // Post-attach steps, in the reference implementation's order.
@@ -1218,15 +1229,17 @@ export function apply(ctx, config) {
     // stop it. The timeout uses the same path: a timeout that only stops the
     // *waiting* leaves the agent running, writing to the session, and eventually
     // delivering an answer nobody is waiting for any more.
-    const turnKey = sessionKey ?? sessionId ?? ''
-    const turnState = {
-      cause: null as string | null,
-      cancel: (reason: string) => {
+      // The agent exists now, so cancellation can reach it — and the turn may have been
+      // stopped while the agent was being created, which is a stop a human asked for.
+      turnState.cancel = (reason) => {
+        turnState.cause = reason
         try { agent.cancel?.(reason) } catch (e) { log(`agent.cancel failed: ${String(e?.message ?? e)}`) }
-      },
-    }
-    runningTurns.set(turnKey, turnState)
-    const turnTimeout = setTimeout(() => { cancelRunning(turnKey, 'timed out') }, cfg.runTimeoutMs)
+      }
+      if (turnState.cause !== null) {
+        log(`turn in ${turnKey} was stopped before it started (${turnState.cause})`)
+        return { text: '', reason: { kind: 'cancelled', cause: turnState.cause }, toolsUsed: [], sessionId }
+      }
+      const turnTimeout = setTimeout(() => { cancelRunning(turnKey, 'timed out') }, cfg.runTimeoutMs)
 
     // Progress lives here, not in the Slack message handler, for the same reason the
     // recall refresh does: this is the one place every caller passes through. Armed

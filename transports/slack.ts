@@ -270,15 +270,22 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
   async function authenticate(): Promise<void> {
     botToken = await credential(cfg.botTokenRef)
     appToken = await credential(cfg.appTokenRef)
-    if (!botToken) throw new Error(`deepbot: credential ${cfg.botTokenRef} not found`)
-    if (!appToken) throw new Error(`deepbot: credential ${cfg.appTokenRef} not found`)
+    // Say which reference was looked up, and say when there is no reference at all: a
+    // misconfigured deployment was told "credential undefined not found", which names nothing.
+    if (!botToken) throw new Error(cfg.botTokenRef ? `deepbot: credential ${cfg.botTokenRef} not found` : 'deepbot: no botTokenRef is configured')
+    if (!appToken) throw new Error(cfg.appTokenRef ? `deepbot: credential ${cfg.appTokenRef} not found` : 'deepbot: no appTokenRef is configured')
   }
 
   /** Whether a Slack client exists in this run at all; the delivery watcher asks. */
-  function ready(): boolean { return botToken !== null && appToken !== null }
+  // Truthiness, not `!== null`: a credential service that resolves to `undefined` left the
+  // token as undefined, and `undefined !== null` is true — so `ready()` reported a transport
+  // that would have sent `Bearer undefined`. Found by the failure-injection sweep.
+  function ready(): boolean {
+    return typeof botToken === 'string' && botToken !== '' && typeof appToken === 'string' && appToken !== ''
+  }
 
   function requireToken(): string {
-    if (botToken === null) throw new Error('slack transport is not authenticated')
+    if (typeof botToken !== 'string' || botToken === '') throw new Error('slack transport is not authenticated')
     return botToken
   }
 

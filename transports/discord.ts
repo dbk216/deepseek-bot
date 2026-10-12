@@ -94,10 +94,13 @@ export function createDiscordTransport(host: DiscordHost): DiscordTransport {
     token = await credential(cfg.discordTokenRef)
     if (!token) throw new Error(`deepbot: credential ${cfg.discordTokenRef} not found`)
   }
-  function ready(): boolean { return token !== null }
+  // Truthiness, not `!== null`: a credential service resolving to `undefined` made
+  // `undefined !== null` true, so the transport reported itself ready and would have sent
+  // the literal string "undefined" as a token. Found by the failure-injection sweep.
+  function ready(): boolean { return typeof token === 'string' && token !== '' }
   function hasSocket(): boolean { return connected }
   function requireToken(): string {
-    if (token === null) throw new Error('discord transport is not authenticated')
+    if (typeof token !== 'string' || token === '') throw new Error('discord transport is not authenticated')
     return token
   }
 
