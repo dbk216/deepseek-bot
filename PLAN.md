@@ -1,6 +1,24 @@
 # deepbot — plan
 
-### ⚠️ 진행 중 차단: 시나리오 로더가 플러그인을 import 하지 못한다 (라운드 42-43)
+### ⚠️ 차단 규명 진행 (라운드 44 추가)
+
+번들 해석 경로를 **끝까지 확인했고, 모두 정상**이었다:
+
+- 프로필 `package.json`: `dependencies: { deepbot: "link:/Users/someone/deepbot" }` +
+  `dsh.profile.bundles: [dsh-base, dsh-web-app, dsh-experimental-schedule-bundle, deepbot]`
+  — **agent·agent-test 두 프로필이 완전히 동일** ✗ (차이가 없으므로 프로필 문제가 아니다)
+- `~/.dsh/profiles/<p>/node_modules/deepbot` → `../../../../deepbot` (저장소) ✓
+  그 링크를 통해 **`dist/recallContext.js` 가 보인다** ✓
+- 저장소 `package.json`: `dsh.bundle.patch: ./cordis.patch.yml`, `main: dist/index.js` ✓
+- `node -e "import(<저장소>/dist/index.js)"` → **성공** ✓
+- `dsh --profile agent-test --port 19597` 직접 기동 → **오류 출력 없음** ✗ (결정적이지 않음:
+  플러그인 로그는 stdout이 아니라 자기 stateDir 로그로 간다)
+
+**다음 프로브**: 시나리오 실행의 게이트웨이 출력을 **tail로 자르지 말고 전문**으로 읽거나, 그 실행의
+`plugin-state/deepbot.log` 를 확인할 것. "failed to import"의 **원인 문자열**이 거기 있어야 한다.
+`timeout 25 "$DSH" --profile agent-test --port 19597 --no-open 2>&1 | head -60` 처럼 **필터 없이** 볼 것.
+
+## 다음 세션 지시 (사용자 지정 · 순서 고정)
 
 시나리오 실행이 **매번** `deepbot (deepbot): failed to import` 로 실패한다(3회 재현). 확인된 사실:
 
