@@ -1,22 +1,64 @@
 /**
- * Refuse to test a stale build.
+ * Refuse to test a build that cannot be a plugin.
  *
- * The tests load `dist/`, and `tsc --noEmit` after an edit leaves it behind. That
- * mistake has cost two debugging cycles in this repository — each time the symptom was
- * a feature that appeared not to work while the source was correct. Importing this
- * first turns it into one clear sentence.
+ * Two mistakes motivated this and the second one was expensive. `tsc --noEmit` after an edit
+ * leaves `dist` behind, so the guard compares modification times — and modification time is all
+ * it compared, which let a *newer* build through even when that build was not a plugin at all.
+ *
+ * What happened: an edit emptied `index.ts` to zero lines, the two commits that followed carried
+ * it (a typecheck of an empty module succeeds), `dist/index.js` became `export {}`, and the
+ * harness answered every boot with "failed to import". The live bot only survived because its
+ * process predated the damage. Two days went into hunting a loader bug that was this.
+ *
+ * So the guard checks content now: the source is not near-empty, the entry has exports, and every
+ * published module exists. Imported by the test files, and runnable on its own with `pnpm run build:check`.
  */
-import { statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const dist = fileURLToPath(new URL('../dist/index.js', import.meta.url))
 const source = fileURLToPath(new URL('../index.ts', import.meta.url))
-try {
-  if (statSync(dist).mtimeMs + 1 < statSync(source).mtimeMs) {
-    console.error('\n  dist/index.js is older than index.ts — run: pnpm run build\n')
-    process.exit(1)
-  }
-} catch {
-  console.error('\n  dist/index.js is missing — run: pnpm run build\n')
+
+function fail(message) {
+  console.error(`\n  ${message}\n`)
   process.exit(1)
+}
+
+let sourceText
+try {
+  sourceText = readFileSync(source, 'utf8')
+} catch {
+  fail('index.ts is missing — this is not the plugin any more')
+}
+
+// An edit that truncates the source is the failure this exists for: 2113 lines became 0, and
+// nothing else noticed.
+if (sourceText.trim().length < 1000) {
+  fail(`index.ts is ${sourceText.trim().length} characters — it looks truncated, not edited. Restore it from git.`)
+}
+
+let built
+try {
+  built = readFileSync(dist, 'utf8')
+  statSync(dist)
+} catch {
+  fail('dist/index.js is missing — run: pnpm run build')
+}
+
+if (statSync(dist).mtimeMs + 1 < statSync(source).mtimeMs) {
+  fail('dist/index.js is older than index.ts — run: pnpm run build')
+}
+
+const exportLines = built.split('\n').filter((line) => line.startsWith('export'))
+if (exportLines.length === 0 || built.trim() === 'export {};') {
+  fail('dist/index.js has no exports — the harness will say "failed to import". Run: pnpm run build')
+}
+
+// Every module the plugin imports from its own directory must have been published next to it;
+// a missing one shows up as a load failure in the harness, which reports it without a reason.
+const published = new Set(readdirSync(new URL('../dist/', import.meta.url)).filter((f) => f.endsWith('.js')))
+for (const match of sourceText.matchAll(/from '\.\/([\w.-]+)\.js'/g)) {
+  if (!published.has(`${match[1]}.js`)) {
+    fail(`index.ts imports ./${match[1]}.js but dist/${match[1]}.js does not exist — run: pnpm run build`)
+  }
 }
