@@ -455,6 +455,25 @@ Verified by 9 checks in the core suite.
 type checks, but the test shows the call never happens — `permissionSets` stays empty — so either
 its placement is wrong or the guard never passes. Nothing here should claim that half works.
 
+### Semantic recall — what the reconnaissance found (round 24)
+
+The index is a plain-text JSONL file and `search` greps it, so it finds exact substrings and
+nothing else. The harness cannot supply the missing part: the only storage packages it ships are
+`dsh-storage`, `dsh-storage-domain` and `dsh-storage-json` — there is no embedding, vector or
+recall service, and a plugin cannot call the model route itself (the key lives in encrypted
+credentials, which is why every verification in this repository goes through the harness).
+
+Three ways forward, and the recommendation is the third:
+
+| | approach | cost | note |
+|---|---|---|---|
+| A | embed through the model route | medium | the plugin cannot call the model; only a two-step delegation through the agent |
+| B | a local embedding model | large | a runtime dependency, which this project has kept at zero |
+| **C** | **lexical scoring** — tokenize, store term frequencies, rank by overlap with length normalisation (BM25-ish) | small | no new dependency, genuinely better than substring matching, and honest: it is lexical, not semantic |
+
+With C the claim to test is *"an expression whose words overlap ranks above exact-substring
+matching"* — not *"it finds synonyms"*, which it does not.
+
 ### The product gaps, in the order worth doing
 
 1. **Per-tenant model, tools and permission policy** — isolation is a directory today.
