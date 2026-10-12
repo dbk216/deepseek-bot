@@ -49,7 +49,7 @@ async function api(method, body) {
 }
 
 // ── which channel ──────────────────────────────────────────────────────────
-const DEFAULT_CHANNEL = process.env.DEEPBOT_QA_CHANNEL ?? 'hope-lab'
+const DEFAULT_CHANNEL = process.env.DEEPBOT_QA_CHANNEL ?? 'C0EXAMPLE01'   // hope-lab, by id: a name lookup missed it
 
 /** Resolve a channel name or id, and refuse to guess: the first run picked one and posted into it. */
 async function resolveChannel(name) {
