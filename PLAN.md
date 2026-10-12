@@ -409,6 +409,27 @@ scenario can put material in.
 **Resources.** Gateway memory and log growth across a long run; where the log has no cap.
 **End to end.** A fresh clone install; restart continuity; the recall index after a restart.
 
+### Harness gaps the sweep found — all three closed
+
+- `dist-fresh` guards the scenario runner now, not just the test files (verified by touching
+  dist backwards and watching a run refuse).
+- The scenario suite runs unattended: `service/run-scenarios.sh`, installed as
+  `ai.deepbot.scenarios` (daily at 09:30), with a report at `~/.dsh/slack-state/scenario-report.txt`
+  and a lock so two runs cannot share the profile's state file. Verified end to end: launchd
+  ran it once at 8/8.
+- The logs rotate: `service/rotate-logs.sh` from the health job, in place, keeping two archives.
+
+### The sweep so far
+
+Done: live Slack payloads (`qa:slack`, 9/9 — three defects fixed), text and input edges
+(`edges`, 19 — whitespace and zero-width messages fixed, symlink escapes pinned), failure
+injection (`failures`, 13 — a stop during a turn's creation was silent), the three transports'
+readiness (`ready()` tested `!== null`), a third party answering an approval, restart continuity
+(session mapping and index survive, hash-identical).
+
+Still open: long-run resource growth, a request during a live socket drop, and the product gaps
+in the list above.
+
 ### Harness gaps this session found and did not fix
 
 - `dist-fresh` guards test files only, so a scenario can run a stale build — it did, twice.

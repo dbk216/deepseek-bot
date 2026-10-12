@@ -9,7 +9,7 @@
  */
 import './dist-fresh.mjs'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../dist/index.js'
@@ -37,6 +37,14 @@ function boot({ state = {}, config = {} } = {}) {
   apply(ctx, { targetChannels: ['C_ALLOWED'], stateDir, transportFactory: () => transport, progressAfterMs: 50, ...config })
   return {
     transport, logs,
+    /** Run the pre-execute gate the way the harness would. */
+    gate: (exec) => {
+      const handlers = listeners['tools/pre-execute'] ?? []
+      if (handlers.length === 0) return 'no gate'
+      let delegated = false
+      const decision = handlers[0](exec, () => { delegated = true; return { kind: 'allow' } })
+      return delegated ? 'delegated' : decision
+    },
     read: () => JSON.parse(readFileSync(join(stateDir, 'sessions.json'), 'utf8')),
     done: () => rmSync(stateDir, { recursive: true, force: true }),
   }
@@ -165,6 +173,39 @@ function boot({ state = {}, config = {} } = {}) {
   rmSync(dir, { recursive: true, force: true })
   check('a broken scenario file exits non-zero', run.status !== 0, `status ${run.status}`)
   check('and says what is wrong rather than hanging', /json|JSON|parse|not found|scenario/i.test(`${run.stdout}${run.stderr}`), `${run.stdout}${run.stderr}`.trim().split('\n').slice(-1)[0]?.slice(0, 100))
+}
+
+// 10. A link inside the workspace that points outside it is not inside it.
+// The read scope resolves the real path when the path exists, which is the whole defence
+// against this: a name that looks local and reads a system file.
+{
+  const root = mkdtempSync(join(tmpdir(), 'deepbot-links-'))
+  writeFileSync(join(root, 'notes.md'), 'local notes\n')
+  let linked = ''
+  try {
+    symlinkSync('/etc/hosts', join(root, 'escape'))
+    symlinkSync('/etc', join(root, 'etc-link'))
+  } catch (e) { linked = String(e?.message ?? e) }
+
+  const t = boot({ config: { targetChannels: ['*'], readScopeRoots: [root] } })
+  await sleep(80)
+  const gate = (name, args) => t.gate ? t.gate({ name, arguments: args, agent: { session: { header: { id: 's' } } } }) : 'no gate'
+  check('a local file is readable', gate('read', { file_path: join(root, 'notes.md') }) === 'delegated',
+    JSON.stringify(gate('read', { file_path: join(root, 'notes.md') })))
+  if (linked === '') {
+    const absolute = gate('read', { file_path: join(root, 'escape') })
+    check('a link to a system file is refused', absolute?.kind === 'deny', JSON.stringify(absolute))
+    const relative = gate('read', { file_path: 'escape' })
+    check('and a relative path through it is refused too', relative?.kind === 'deny', JSON.stringify(relative))
+    const throughDir = gate('read', { file_path: join(root, 'etc-link', 'hosts') })
+    check('a link to a directory does not let its contents through', throughDir?.kind === 'deny', JSON.stringify(throughDir))
+    const listing = gate('glob', { pattern: '*.md', path: join(root, 'etc-link') })
+    check('and neither does a glob rooted there', listing?.kind === 'deny', JSON.stringify(listing))
+  } else {
+    check('symlinks could be created for this check', false, linked)
+  }
+  rmSync(root, { recursive: true, force: true })
+  t.done()
 }
 
 const failed = results.filter((r) => !r.ok)
