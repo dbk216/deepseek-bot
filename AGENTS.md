@@ -48,6 +48,9 @@ Define success criteria. Loop until verified.
 
 - **Write the check before the fix.** The third-party-approval gap was *proved* by a failing test
   before any code changed; the state-growth defect was proved by seeding 400 stale conversations.
+- **Never pipe a suite into `head` in a gate.** `node test/x.mjs | head -3` closes the pipe, node dies
+  of EPIPE, and the exit status says 1 for a suite that passed. Four rounds went into chasing a
+  "flaky guard" that was this. Run suites with output to a file and read the exit code.
 - **Gate on both: `pnpm run typecheck` and `pnpm test`.** One commit reached `origin` with a type
   error because only the tests were checked. Assert the shape, edit, gate, and restore on failure —
   six mistakes were caught this way, and the only one that escaped was the one with a single gate.
