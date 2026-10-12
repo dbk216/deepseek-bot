@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 #!/usr/bin/env node
 /**
  * deepbot health probe.
@@ -26,6 +27,16 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 
 const args = process.argv.slice(2)
+
+// Maintenance that belongs to the schedule rather than to a person: the launchd captures and
+// the plugin's log have no cap (598 KB and 85 KB when the rotation was added), and nothing
+// else empties them. Only on a scheduled run — a manual --status read should not rewrite logs.
+if (!args.includes('--status') && !args.includes('--no-rotate')) {
+  const script = new URL('./rotate-logs.sh', import.meta.url).pathname
+  const out = spawnSync(script, [], { encoding: 'utf8' })
+  for (const line of `${out.stdout ?? ''}`.split('\n')) if (line.trim() !== '') console.log(line)
+  if (out.status !== 0) console.error(`rotate-logs exited ${out.status}: ${out.stderr ?? ''}`.trim())
+}
 const statusOnly = args.includes('--status')
 const dryRun = args.includes('--dry-run')
 

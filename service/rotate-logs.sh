@@ -29,12 +29,16 @@ done
 [ -d "$DIR" ] || { echo "rotate-logs: no such directory: $DIR" >&2; exit 1; }
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
+# A second rotation in the same second would overwrite the first archive: the timestamp is
+# the whole name. Fold in the pid and a counter so two runs never collide.
+uniq=0
 rotated=0
 for file in "$DIR"/*.log; do
   [ -e "$file" ] || continue
   size=$(wc -c < "$file" | tr -d ' ')
   if [ "$size" -le "$MAX" ]; then continue; fi
-  target="${file}.${stamp}.gz"
+  uniq=$((uniq + 1))
+  target="${file}.${stamp}-$$-${uniq}.gz"
   if [ "$DRY" = 1 ]; then
     echo "  would rotate $(basename "$file") ($(( size / 1024 )) KB → $(basename "$target"))"
     rotated=$((rotated + 1))
