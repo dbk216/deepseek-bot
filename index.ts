@@ -55,6 +55,7 @@ import { createTelegramTransport } from './transports/telegram.js'
 import { createDiscordTransport } from './transports/discord.js'
 import { createProgressTracker } from './progress.js'
 import { createUsageTracker, emptyUsageStore } from './usage.js'
+import { createRecallContext } from './recallContext.js'
 import { guardFetchedText } from './injection.js'
 import type { SlackHistoryResponse } from './types/slack.js'
 import type { InboundMessage } from './types/transport.js'
@@ -568,7 +569,7 @@ export function apply(ctx, config) {
    * duplicated AGENTS.md (measured: 7,625 characters per turn on top of the
    * harness's own 3,634) and left a copy in every historical turn.
    */
-  async function contextPreamble(origin = null, historyText = '', attachmentText = '', sessionKey = null) {
+  async function contextPreamble(origin = null, historyText = '', attachmentText = '', sessionKey = null, prompt = '') {
     if (!cfg.injectInstructions) return { preamble: '', instructions: 0, memory: 0 }
     const cwd = await sessionCwd()
 
@@ -603,6 +604,17 @@ export function apply(ctx, config) {
     if (includeStanding) parts.push(standingText)
     if (typeof attachmentText === 'string' && attachmentText !== '') parts.push(attachmentText)
     if (typeof historyText === 'string' && historyText !== '') parts.push(historyText)
+    // Dynamic, never standing: the standing block is digest-gated for prompt-cache safety, so
+    // a per-turn block there would invalidate the cache on every turn.
+    if (typeof prompt === 'string' && prompt !== '') {
+      // Built here because the index lives in the conversation's home, known only now.
+      const recallContext = createRecallContext({
+        indexPath: join(cwd, 'memory', 'recall-index.jsonl'),
+        topN: cfg.recallTopN, maxChars: cfg.recallMaxChars, triggerWords: cfg.recallTriggerWords,
+      })
+      const past = recallContext.block(prompt)
+      if (past !== '') parts.push(past)
+    }
 
     if (includeStanding && sessionKey !== null) {
       state.standing = { ...(state.standing ?? {}), [sessionKey]: digest }
@@ -701,6 +713,8 @@ export function apply(ctx, config) {
   // Token accounting. The store is the state file's `usage` section, so the numbers are
   // the same after a restart.
   const usageTracker = createUsageTracker({ store: state.usage })
+
+  /** Past conversations, ranked in-process, so the model is not left to run a CLI and interpret it. */
 
   /**
    * Who asked, per conversation.
@@ -1356,7 +1370,7 @@ export function apply(ctx, config) {
     try {
       await agent.whenIdle()
       const firstSeq = agent.session.seq
-      const { preamble } = await contextPreamble(origin ?? null, historyText, attachmentText, sessionKey)
+      const { preamble } = await contextPreamble(origin ?? null, historyText, attachmentText, sessionKey, prompt)
       const body = preamble === '' ? prompt : `${preamble}[user message]\n${prompt}`
       const refs = await admitImages(images)
       agent.followup(userMessage(refs.length === 0
