@@ -76,6 +76,31 @@ check('names are sanitised', !/\.\.\//.test(text))
 
 rmSync(stateDir, { recursive: true, force: true })
 rmSync(cwd, { recursive: true, force: true })
+// The size boundary, one byte either side. A file at the limit must come through and one
+// byte over must not, and both must say what happened — "too large" silently dropped would
+// look identical to "the attachment never arrived".
+{
+  const { writeAttachments } = await import('../dist/transports/attachments.js')
+  const dir = mkdtempSync(join(tmpdir(), 'deepbot-limits-'))
+  const bytesOf = (n) => Buffer.alloc(n, 0x41)
+  const atLimit = await writeAttachments([{ name: 'at.txt', mimetype: 'text/plain', size: 1000, fetchBytes: async () => bytesOf(1000) }],
+    { cwd: dir, dir: join(dir, 'att'), stamp: 'at', maxBytes: 1000, inlineChars: 2000, maxImageBytes: 1000 })
+  check('a file exactly at the limit is kept', atLimit.text.includes('at.txt') && !/too large|skipped/i.test(atLimit.text), atLimit.text.slice(0, 100))
+  const overLimit = await writeAttachments([{ name: 'over.txt', mimetype: 'text/plain', size: 1001, fetchBytes: async () => bytesOf(1001) }],
+    { cwd: dir, dir: join(dir, 'att'), stamp: 'over', maxBytes: 1000, inlineChars: 2000, maxImageBytes: 1000 })
+  check('a file one byte over is not kept', !overLimit.text.includes('over.txt') || /too large|skipped|not/i.test(overLimit.text), overLimit.text.slice(0, 120))
+  check('and the reason is stated', /too large|skipped|limit|not/i.test(overLimit.text), overLimit.text.slice(0, 120))
+
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Array(100).fill(0)])
+  const imageAt = await writeAttachments([{ name: 'exact.png', mimetype: 'image/png', size: png.length, fetchBytes: async () => png }],
+    { cwd: dir, dir: join(dir, 'att'), stamp: 'img', maxBytes: 10000, inlineChars: 10, maxImageBytes: png.length })
+  check('an image exactly at the image limit is admitted', (imageAt.images ?? []).length === 1, JSON.stringify((imageAt.images ?? []).length))
+  const imageOver = await writeAttachments([{ name: 'big.png', mimetype: 'image/png', size: png.length, fetchBytes: async () => png }],
+    { cwd: dir, dir: join(dir, 'att'), stamp: 'img2', maxBytes: 10000, inlineChars: 10, maxImageBytes: png.length - 1 })
+  check('an image one byte over is not', (imageOver.images ?? []).length === 0, JSON.stringify((imageOver.images ?? []).length))
+  rmSync(dir, { recursive: true, force: true })
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

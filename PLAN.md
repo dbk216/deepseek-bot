@@ -427,8 +427,16 @@ injection (`failures`, 13 — a stop during a turn's creation was silent), the t
 readiness (`ready()` tested `!== null`), a third party answering an approval, restart continuity
 (session mapping and index survive, hash-identical).
 
-Still open: long-run resource growth, a request during a live socket drop, and the product gaps
-in the list above.
+Also done since: the resource sweep (`resources`, 8) found state that lived forever — one
+session mapping, standing digest, history cursor and usage total per thread ever seen, with only
+the dedupe map having any expiry; conversations now expire after `stateRetentionDays` and a
+2000-conversation state file goes from 246 KB to 207 bytes. And the attachment size boundary is
+pinned one byte either side (`attachments`, 13).
+
+Still open: a request during a live socket drop. The reconnect path is covered by its own suite
+(5 checks) and by a real recovery in the live log — a socket error at 04:10:41, reconnect
+scheduled, connected again at 04:10:43 — and taking the live socket down on purpose would
+contradict staying up, so it is left to those two rather than staged.
 
 ### Harness gaps this session found and did not fix
 
