@@ -1393,6 +1393,10 @@ export function apply(ctx, config) {
     // says which by whether it supplies a thread.
     const threadTs = target.threadTs
     const key = threadTs === null ? channel : `${channel}:${threadTs}`
+      // Whitespace and zero-width characters are nothing to say. Found by the edge sweep:
+      // an empty string was refused, but "   " and a run of zero-width spaces each started
+      // a turn — an expensive way to answer nothing, and a question the model can only guess at.
+      if (message.text.replace(/[\s\u200b-\u200f\u2060\ufeff]+/gu, '') === '') return
     const prompt = message.text.slice(0, cfg.maxPromptChars)
       // Remembered here because the approval listener runs outside the turn.
       if (message.user !== '') requesterOf.set(key, message.user)

@@ -22,7 +22,12 @@ import { readFileSync, existsSync } from 'node:fs'
 import { createSlackTransport } from '../dist/transports/slack.js'
 
 const args = process.argv.slice(2)
+const wantsToPost = args.includes('--post')
 const channelArg = args.includes('--channel') ? args[args.indexOf('--channel') + 1] : undefined
+
+// Posting is opt-in, and it goes to a lab channel by default — never to whatever channel
+// happens to be first in the list, which is how a 9000-character alphabet ended up in a real
+// one. The channel is resolved below and the run refuses if it is not there.
 const token = process.env.SLACK_BOT_TOKEN ?? ''
 if (token === '') { console.error('SLACK_BOT_TOKEN is not set — source ~/.dsh/.env first'); process.exit(2) }
 
@@ -44,20 +49,24 @@ async function api(method, body) {
 }
 
 // ── which channel ──────────────────────────────────────────────────────────
-let channel = channelArg
-if (channel === undefined) {
-  const list = await api('conversations.list', { limit: 100, exclude_archived: true })
+const DEFAULT_CHANNEL = process.env.DEEPBOT_QA_CHANNEL ?? 'hope-lab'
+
+/** Resolve a channel name or id, and refuse to guess: the first run picked one and posted into it. */
+async function resolveChannel(name) {
+  if (/^[CG][A-Z0-9]{6,}$/.test(name)) return name
+  const list = await api('conversations.list', { limit: 300, exclude_archived: true, types: 'public_channel,private_channel' })
   if (list.ok !== true) { console.error(`cannot list channels: ${list.error}`); process.exit(2) }
-  const writable = list.channels.filter((c) => !c.is_archived)
-  if (writable.length === 0) { console.error('no channel the bot can see'); process.exit(2) }
-  channel = writable[0].id
-  console.log(`  channel: #${writable[0].name} (${channel})`)
-} else if (!/^C[A-Z0-9]+$/.test(channel)) {
-  const list = await api('conversations.list', { limit: 200, exclude_archived: true })
-  const found = (list.channels ?? []).find((c) => c.name === channel.replace(/^#/, ''))
-  if (found === undefined) { console.error(`no such channel: ${channel}`); process.exit(2) }
-  channel = found.id
+  const found = (list.channels ?? []).find((c) => c.name === name.replace(/^#/, ''))
+  if (found === undefined) {
+    console.error(`no channel named ${name} that the bot can see — pass --channel <name|id>`)
+    console.error(`  it can see: ${(list.channels ?? []).map((c) => '#' + c.name).slice(0, 10).join(' ')}`)
+    process.exit(2)
+  }
+  if (found.is_member === false) { console.error(`the bot is not in #${found.name} — invite it first`); process.exit(2) }
+  return found.id
 }
+
+const channel = await resolveChannel(channelArg ?? DEFAULT_CHANNEL)
 
 const keep = args.includes('--keep')
 const me = await api('auth.test')
@@ -118,6 +127,14 @@ try {
   check('the live token authenticates with the transport', false, String(e?.message ?? e))
   await cleanup()
   process.exit(1)
+}
+
+// Everything below writes into the channel, so it only runs when asked for.
+if (!wantsToPost) {
+  console.log('\n  read-only checks only — pass --post --channel <name> to exercise posting')
+  const failedReadOnly = results.filter((r) => !r.ok)
+  console.log(`  ${results.length - failedReadOnly.length}/${results.length} checks passed`)
+  process.exit(failedReadOnly.length === 0 ? 0 : 1)
 }
 
 // ── 2. a message larger than Slack's limit is chunked, and readable back ───
