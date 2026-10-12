@@ -433,19 +433,56 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
   async function postChunked(target: Target, markdown: string, replaceTs: string | null): Promise<PostedMessage | null> {
     const text = api.toSlackMarkdown(markdown)
     const chunks: string[] = []
-    for (let i = 0; i < text.length; i += cfg.chunkChars) chunks.push(text.slice(i, i + cfg.chunkChars))
-    if (chunks.length === 0) chunks.push("(empty response)")
+    // A configuration without a usable chunk size used to slice at NaN and send an *empty*
+    // body, which Slack answers with `no_text` — a missing setting became a silent, total
+    // failure of every reply. Fall back to the documented limit instead.
+    const chunkChars = Number(cfg.chunkChars) > 0 ? Math.floor(Number(cfg.chunkChars)) : 4000
+    for (let i = 0; i < text.length; i += chunkChars) chunks.push(text.slice(i, i + chunkChars))
+    if (text.length === 0) chunks.push("(empty response)")
+    // A numbered part carries a prefix, and the prefix counts toward Slack's limit: slicing
+    // at exactly chunkChars produced 4006-character parts, which Slack refuses. Re-slice with
+    // the prefix's length taken off, and only when there is a prefix to add.
+    if (chunks.length > 1) {
+      const prefix = `(${chunks.length}/${chunks.length})\n`.length
+      const room = Math.max(1, chunkChars - prefix)
+      chunks.length = 0
+      for (let i = 0; i < text.length; i += room) chunks.push(text.slice(i, i + room))
+    }
     let first: PostedMessage | null = null
     let replace = replaceTs
     for (const [i, chunk] of chunks.entries()) {
       const body = chunks.length > 1 ? `(${i + 1}/${chunks.length})\n${chunk}` : chunk
       const ts = replace
-      const sent = ts !== null && first === null
-        ? await api.slackPost<SlackPostResponse>(requireToken(), 'chat.update', { channel: target.channel, ts, text: body })
-        : await api.slackPost<SlackPostResponse>(requireToken(), 'chat.postMessage', { channel: target.channel, thread_ts: target.threadTs ?? '', text: body })
+      const postNew = () => api.slackPost<SlackPostResponse>(requireToken(), 'chat.postMessage', {
+        channel: target.channel,
+        // `thread_ts: ''` is not "no thread": Slack rejects the whole call with `no_text`, so
+        // a channel-level post (no thread) could never be sent. Omit the field instead.
+        ...(typeof target.threadTs === 'string' && target.threadTs !== '' ? { thread_ts: target.threadTs } : {}),
+        text: body,
+      })
+      let sent: SlackPostResponse
+      if (ts !== null && first === null) {
+        sent = await api.slackPost<SlackPostResponse>(requireToken(), 'chat.update', { channel: target.channel, ts, text: body })
+        if (!sent.ok) {
+          // The message to replace is gone (or never existed). Losing the answer to a failed
+          // edit is worse than answering in a new message, which is what the other transports
+          // do for the same reason.
+          log(`update failed: ${sent.error} — posting a new message instead`)
+          sent = await postNew()
+        }
+      } else {
+        sent = await postNew()
+      }
       replace = null
+      if (!sent.ok) {
+        log(`reply post failed: ${sent.error} — check the chat:write scope and channel membership`)
+        // Reporting a message that was never created is worse than reporting nothing: the
+        // caller would edit a ts that does not exist and believe the answer arrived. The
+        // failure of a later chunk cannot be undone, but the first one can be told.
+        if (i === 0) return null
+        continue
+      }
       if (i === 0) first = { channel: target.channel, ts: sent.ts ?? '' }
-      if (!sent.ok) log(`reply post failed: ${sent.error} — check the chat:write scope and channel membership`)
     }
     return first
   }
