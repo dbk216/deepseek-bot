@@ -461,7 +461,6 @@ export function apply(ctx, config) {
   /** What this tenant is allowed to be, beyond its own directory. */
   function tenantPolicy(tenant: string | null): {
     preset?: string
-    permission?: string
     model?: { provider?: string; model?: string }
     persona?: string
   } {
@@ -1202,7 +1201,7 @@ export function apply(ctx, config) {
     // reproducible by configuration.
     const policy = tenantPolicy(tenant)
     const presetName = policy.preset ?? cfg.agentPreset
-    const permissionName = policy.permission ?? cfg.permissionPreset
+    const permissionName = cfg.permissionPreset
     let presetId = null
     if (presetName) {
       if (!agentPresets) throw new Error('deepbot: agentPreset is configured but the agentPresets service is not composed — the agent would have no tools')

@@ -65,7 +65,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
     sessions: { flush: async () => {} },
     agentDefaultModel: { currentSelection: () => ({ provider: 'fake', model: 'fake' }) },
     agentPresets: {
-      resolve: async (id) => ({ id }),
+      resolve: async (id) => { if (!['standard', 'read-only'].includes(id)) throw new Error('unknown preset ' + id); return { id } },
       acquireScope: () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }),
       mount: async () => {},
     },
@@ -546,12 +546,12 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   plain.done()
 
   // An unknown preset for a tenant is refused with the tenant named, not silently ignored.
-  const bad = boot({ agent: 'ready', config: { ...tenantConfig({ tenantPolicies: { acme: { permission: 'nope' } } }) } })
+  const bad = boot({ agent: 'ready', config: { ...tenantConfig({ tenantPolicies: { acme: { preset: 'nope' } } }) } })
   await sleep(80)
   bad.transport.deliver(bad.transport.message({ text: 'hello' }))
   await sleep(500)
   const posted = bad.transport.posted.map((p) => p.text).join('\n')
-  check('an unknown permission preset for a tenant is refused', /unknown permission preset/.test(posted), posted.slice(0, 110))
+  check('an unknown preset for a tenant is refused', /could not resolve agent preset/.test(posted), posted.slice(0, 110))
   check('and the tenant is named in the refusal', /for tenant acme/.test(posted), posted.slice(0, 110))
   bad.done()
 }
