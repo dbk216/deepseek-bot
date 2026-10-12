@@ -1,5 +1,17 @@
 # deepbot — plan
 
+## 다음 세션 지시 (사용자 지정 · 순서 고정)
+
+이 순서로 진행한다. 각 항목은 **테스트로 고정 → 두 게이트(타입+테스트) → 커밋·푸시**, 라이브 Slack은 항상 정상.
+
+1. **recall이 결정으로 끝나게 한다.** `index.ts`의 `memoryIndex` 주입 지점(548줄 근처)에서 플러그인이 **직접** 인덱스를 검색한다 — `test/recall.test.mjs`가 고정한 어절 겹침 순위 로직 재사용. 상위 후보 + "무슨 일이 있었고 → 그래서 다음에 뭘 할지"를 프롬프트에 주입하고, **함의는 모델이 생성**한다. 목표는 모델이 bash로 CLI를 돌려 원문을 읽는 경로를 없애는 것 — 그게 "참고자료 덤프"의 원인이다. 검증: 과거를 언급하는 시나리오에서 답이 **행동을 포함**하는지.
+2. **TypeScript 이관 완결.** `recall/deepbot-recall.mjs` → `.ts` (`dist/recall/` 컴파일, CLI 계약 `index|search|recent|show|sessions` 유지). **수용 기준 = `test/recall.test.mjs`가 수정 없이 통과.** 함정: 플러그인이 자기 모듈 기준으로 인덱서 경로를 잡아 `dist/recall/…`이 되어 recall이 조용히 낡은 적이 있다 — `recallScriptPath()`를 깨지 말 것. 그 뒤 남은 JS도 전부 이관.
+3. **노트 위생.** `MEMORY.md`가 추가만 되어 무한히 자란다 → 주기적 **통합·중복 제거·요약** 경로(현재 3줄/296자, 필요해지기 전에 구축).
+4. **답변 텍스트에 하이퍼링크.** URL은 Slack 링크, 문서 산출물은 **업로드/워크스페이스 링크**, 채널·스레드 참조는 permalink. **로컬 경로는 클릭 불가**이므로 업로드로 처리. 심화(JS 렌더링)는 **브라우저 엔진 도입 결정** — 런타임 의존성 0을 의도적으로 깬다, README에 명시할 것.
+
+사람이 필요한 것: `hope-lab`에 `@other-agent 안녕`(말투 검증), Slack 앱 표시 이름(`example-bot` 잔재), 라이브 승인 `허용` 1회.
+
+
 Companion to [SPEC.md](SPEC.md). Milestones are ordered by dependency, not by
 enthusiasm: nothing is built before the thing it stands on.
 
