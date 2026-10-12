@@ -455,6 +455,29 @@ Verified by 9 checks in the core suite.
 type checks, but the test shows the call never happens — `permissionSets` stays empty — so either
 its placement is wrong or the guard never passes. Nothing here should claim that half works.
 
+### Recall should end in a decision, not in a dump (raised by the user)
+
+The user's objection to the plan above: showing matched messages as *reference* is not recall, it
+is a search result. The agent should use them to make the next decision — "here is what happened,
+therefore do this" — rather than being handed text and left to be clever about it. Ranking better
+(a BM25-ish score) improves the dump and does not change that.
+
+So the shape to build is: recall runs when a turn wants it, returns the *few* passages that matter
+**plus** what they imply — and the implication is produced by the model, not guessed by the
+scorer, because only the model can read intent. That makes the scorer's job candidate selection,
+not judgement.
+
+This also explains why the keyword index kept being "read previous messages" in practice: it hands
+over material. The decision step is the part that is missing.
+
+#### Tone and register
+
+The user also wants their own deployment's persona set up like the retired Other-agent bot (ari), using
+the mechanism this repository already has: `SOUL.md` / `USER.md` / `MEMORY.md` in the agent home,
+`init.sh` to create them, and `tools/persona-check.mjs` to catch truncation before it happens. The
+files exist in the live home and were copied from ari at migration; what is not yet done is
+aligning them deliberately rather than inheriting them.
+
 ### Semantic recall — what the reconnaissance found (round 24)
 
 The index is a plain-text JSONL file and `search` greps it, so it finds exact substrings and
