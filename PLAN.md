@@ -1,5 +1,16 @@
 # deepbot — plan
 
+## 목표 완료 (라운드 65)
+
+① recall이 결정으로 ✅ — 모듈 12 체크 · 주입 발화 로그(`recall: injected N passage(s)`) · 시나리오 3/3 ×3 · 라이브 배포
+② TypeScript 이관 ✅ — 플러그인·recall 인덱서가 TS(`dist/recall/deepbot-recall.js`) · `test/recall.test.mjs` 7/7 단언 불변 ·
+   참조 5곳 정리 · 설치 스크립트 재실행 · dist 가드에 인덱서 산출물 검사 추가.
+   **범위 결정(사용자)**: `test·service·tools·watch`의 `.mjs`는 빌드 없이 `node`로 도는 검증·운영 스크립트이므로 JS로 둔다.
+③ 노트 위생 ✅ — 모듈 14 체크 · 조언 도달 로그(`notes: consolidation advice added`) · 시나리오 seed 지원
+④ 하이퍼링크 ✅ — 링크 변환(slack 33 체크) · 문서 업로드(files API 3단계) · 스레드 permalink(전송 3 + core 1) ·
+   심화(브라우저 엔진)는 런타임 의존성 0을 깨는 결정으로 README에 비용·재검토 조건과 함께 명시
+
+
 ### ④ 업로드: 구현·검증·스위트 고정 완료 (라운드 59)
 
 `uploadFile`은 Slack files API 3단계(ask → 바이트 POST → complete)로 문서를 스레드에 첨부합니다 —
