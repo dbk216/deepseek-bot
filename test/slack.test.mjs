@@ -34,6 +34,11 @@ function stubSlack(options = {}) {
     const raw = init.body === undefined ? '' : String(init.body)
     const body = raw.startsWith('{') ? JSON.parse(raw) : {}
     calls.push({ method, body })
+    // auth.test carries the workspace URL, which is where a permalink comes from.
+    if (method === 'auth.test') {
+      const auth = { ok: true, user: 'bot', user_id: 'U1', team: 'T1', url: 'https://example.slack.com/' }
+      return { ok: true, status: 200, json: async () => auth, text: async () => JSON.stringify(auth) }
+    }
     const ok = options.fail?.includes(method) !== true
     // The file APIs answer with their own shapes; the chain below is for chat calls.
     if (ok && method === 'files.getUploadURLExternal') {
@@ -205,6 +210,20 @@ function transportFor(api) {
   check('with the title asked for', done?.body?.files?.[0]?.title === 'the report', JSON.stringify(done?.body?.files))
   check('and reports success', ok === true, String(ok))
   rmSync(dir, { recursive: true, force: true })
+}
+
+// 9. A conversation reference can be a link, not a description.
+{
+  const api = stubSlack()
+  const t = transportFor(api)
+  await t.authenticate()
+  await t.identity()
+  const link = t.permalinkFor({ channel: 'C1', threadTs: '111.222' }, 'this thread')
+  const bare = t.permalinkFor({ channel: 'C1', threadTs: null })
+  api.restore()
+  check('a thread gets a permalink', link === '<https://example.slack.com/archives/C1/p111222|this thread>', String(link))
+  check('and the label is what was asked for', /\|this thread>$/.test(String(link)), String(link))
+  check('a channel without a thread has no permalink', bare === null, String(bare))
 }
 
 const failed = results.filter((r) => !r.ok)
