@@ -10,6 +10,14 @@
  * Run: node test/confined-runner.test.mjs
  */
 import { execFileSync } from 'node:child_process'
+
+// The runner this checks is macOS-specific: it implements the bwrap-shaped policy with
+// Seatbelt, and there is nothing to assert on Linux. Say so and stop, rather than failing CI
+// for a platform the deployment does not run on — it was the last red step on every push.
+if (process.platform !== 'darwin') {
+  console.log('  skipped: the confined runner is macOS-specific (Seatbelt); a Linux host would use a container profile')
+  process.exit(0)
+}
 import { fileURLToPath } from 'node:url'
 
 const RUNNER = fileURLToPath(new URL('../service/confined-runner.sh', import.meta.url))
