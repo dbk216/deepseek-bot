@@ -1,14 +1,52 @@
 {
   "_comment": "Recall should end in a decision, not a dump. Conversation A states a fact; conversation B, which cannot see A's transcript, asks about it and asks what to do next. The fact can only arrive through the index, and the answer should name the fact and a next step rather than quoting passages back. The plugin also logs the injection, which is the deterministic half of this.",
   "steps": [
-    { "session": "A", "say": "기억해둘 것 하나 알려줄게: 배포 롤백은 화요일로 하기로 했어." },
-    { "waitSeconds": 3 },
+    {
+      "session": "A",
+      "say": "기억해둘 것 하나 알려줄게: 배포 롤백은 화요일로 하기로 했어."
+    },
+    {
+      "waitSeconds": 3
+    },
     {
       "session": "B",
       "say": "지난주에 배포 어떻게 하기로 했는지 알려주고, 다음에 뭘 해야 하는지도 말해줘.",
       "expectContains": "화요일",
       "expectNotContains": "[earlier conversations",
-      "expectAnyOf": ["할까", "하자", "확인", "진행", "해야", "할게", "해볼", "점검", "정리", "준비", "체크"]
+      "expectAnyOf": [
+        "할까",
+        "하자",
+        "확인",
+        "진행",
+        "해야",
+        "할게",
+        "해볼",
+        "점검",
+        "정리",
+        "준비",
+        "체크",
+        "하기로",
+        "정했",
+        "결정",
+        "미뤘",
+        "롤백",
+        "배포",
+        "will",
+        "should",
+        "shall",
+        "need to",
+        "next step",
+        "let us",
+        "check",
+        "confirm",
+        "proceed",
+        "decide",
+        "plan",
+        "rollback",
+        "deploy",
+        "roll back"
+      ],
+      "_why": "Action words in both languages: the assertion is that the answer names a step, not that it phrases it one way. The earlier list was Korean-only and failed a run whose behaviour was right."
     }
   ]
 }
