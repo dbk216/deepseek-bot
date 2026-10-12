@@ -13,11 +13,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-        # pnpm is not on a GitHub runner by default; its absence was exit 127
-        # on every push, unnoticed because no run's conclusion was ever checked.
-        - uses: pnpm/action-setup@v4
-          with:
-            version: 9
+          # pnpm is not on a GitHub runner by default; its absence was exit 127 on every
+          # push, unnoticed because no run's conclusion was ever checked.
+          - uses: pnpm/action-setup@v4
+            with:
+              version: 9
       # These drive apply() against mocks: a fake context, a fake WebSocket and a
       # fake fetch. They need no harness installation, which is why they run here.
       - run: pnpm install --frozen-lockfile=false
