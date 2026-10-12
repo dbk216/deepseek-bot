@@ -24,6 +24,7 @@
   },
   "include": [
     "index.ts",
+    "notes.ts",
     "progress.ts",
     "usage.ts",
     "injection.ts",

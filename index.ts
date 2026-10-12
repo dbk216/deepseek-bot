@@ -56,6 +56,7 @@ import { createDiscordTransport } from './transports/discord.js'
 import { createProgressTracker } from './progress.js'
 import { createUsageTracker, emptyUsageStore } from './usage.js'
 import { createRecallContext } from './recallContext.js'
+import { analyzeNotes } from './notes.js'
 import { guardFetchedText } from './injection.js'
 import type { SlackHistoryResponse } from './types/slack.js'
 import type { InboundMessage } from './types/transport.js'
@@ -136,6 +137,8 @@ const DEFAULTS = {
   // had one. With an answerer the request reaches the thread and a human decides;
   // without a conversation to ask in, the outcome stays `unavailable`.
   approvalAnswerer: true,
+  // Note hygiene: ask for a tidy-up past this many characters, or when a line repeats.
+  notesBudgetChars: 6000,
   // How long a conversation's bookkeeping is kept: its session mapping, standing digest,
   // history cursor and usage totals. A busy workspace otherwise accumulates one entry per
   // thread forever and rewrites all of it on every turn.
@@ -594,6 +597,17 @@ export function apply(ctx, config) {
     ].join('\n'))
     const notes = memoryIndex(cwd)
     if (notes !== '') standing.push(notes)
+    // Note hygiene. The advice is stable until the file changes and the standing block is
+    // digest-gated, so a request to tidy up is sent once and then cached.
+    const notesAdvice = analyzeNotes(readTextIfPresent(join(cwd, cfg.factsFile), 200000), {
+      budgetChars: cfg.notesBudgetChars,
+    }).advice
+    if (notesAdvice !== null) {
+  standing.push(notesAdvice)
+  // A deterministic signal, so a scenario can assert that the advice reached the prompt rather
+  // than inferring it from the answer.
+  log(`notes: consolidation advice added (${notesAdvice.length} chars)`)
+}
 
     const standingText = standing.join('\n\n')
     const digest = createHash('sha1').update(standingText).digest('hex').slice(0, 16)
