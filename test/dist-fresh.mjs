@@ -13,7 +13,7 @@
  * So the guard checks content now: the source is not near-empty, the entry has exports, and every
  * published module exists. Imported by the test files, and runnable on its own with `pnpm run build:check`.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const dist = fileURLToPath(new URL('../dist/index.js', import.meta.url))
@@ -66,7 +66,6 @@ for (const match of sourceText.matchAll(/from '\.\/([\w.-]+)\.js'/g)) {
 // The indexer is spawned, not imported, so a missing build shows up as recall going quietly stale
 // rather than as a load failure. That happened once: dist/recall was absent and the index stopped
 // updating without a word.
-import { existsSync } from 'node:fs'
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
 const indexerSource = `${repoRoot}recall/deepbot-recall.ts`
 if (existsSync(indexerSource) && !existsSync(`${repoRoot}dist/recall/deepbot-recall.js`)) {
