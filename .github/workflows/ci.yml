@@ -25,6 +25,7 @@ jobs:
       - run: pnpm run build
       - run: node test/reconnect.test.mjs
       - run: node test/core.test.mjs
+      - run: node test/recall.test.mjs
       - run: node test/slack.test.mjs
       - run: node test/edges.test.mjs
       - run: node test/failures.test.mjs
