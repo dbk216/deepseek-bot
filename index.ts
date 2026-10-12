@@ -1683,7 +1683,7 @@ export function apply(ctx, config) {
   /** Where the indexer lives: configured, or the sibling directory in this repo. */
   function recallScriptPath() {
     if (typeof cfg.recallScript === 'string' && cfg.recallScript !== '') return cfg.recallScript
-    return join(PROJECT_ROOT, 'recall', 'deepbot-recall.mjs')
+    return join(PROJECT_ROOT, 'dist', 'recall', 'deepbot-recall.js')
   }
 
   /**

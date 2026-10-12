@@ -30,6 +30,7 @@
     "recallContext.ts",
     "transports/**/*.ts",
     "types/**/*.ts",
-    "tools/**/*.ts"
+    "tools/**/*.ts",
+    "recall/**/*.ts"
   ]
 }

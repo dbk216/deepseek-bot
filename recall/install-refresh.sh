@@ -50,12 +50,12 @@ esac
 
 echo "=== installing recall refresh ($LABEL) ==="
 [ -x "$NODE" ] || { echo "❌ node not found: $NODE (set DEEPBOT_NODE)"; exit 1; }
-[ -f "$SCRIPT_DIR/deepbot-recall.mjs" ] || { echo "❌ deepbot-recall.mjs not found next to this script"; exit 1; }
+[ -f "$SCRIPT_DIR/../dist/recall/deepbot-recall.js" ] || { echo "❌ deepbot-recall.js not found — build first: pnpm run build"; exit 1; }
 mkdir -p "$AGENT_HOME/memory"
 
 # Rebuild once now so the agent has something to read immediately.
 echo "── building the index once"
-DEEPBOT_HOME="$AGENT_HOME" "$NODE" "$SCRIPT_DIR/deepbot-recall.mjs" index | sed 's/^/   /'
+DEEPBOT_HOME="$AGENT_HOME" "$NODE" "$SCRIPT_DIR/../dist/recall/deepbot-recall.js" index | sed 's/^/   /'
 
 # launchd has no cron-style interval for agents, so the job runs the indexer and
 # re-schedules itself by exiting; StartInterval keeps it periodic.
@@ -68,7 +68,7 @@ cat > "$PLIST" <<PLIST_EOF
   <key>ProgramArguments</key>
   <array>
     <string>$NODE</string>
-    <string>$SCRIPT_DIR/deepbot-recall.mjs</string>
+    <string>$SCRIPT_DIR/../dist/recall/deepbot-recall.js</string>
     <string>index</string>
     <string>--quiet</string>
   </array>
@@ -96,5 +96,5 @@ launchctl bootstrap "gui/$UID_N" "$PLIST" 2>&1 | sed 's/^/   /'
 echo
 echo "rebuilds every ${REFRESH_MIN} minute(s)."
 echo "  status:  ./install-refresh.sh --status"
-echo "  force:   DEEPBOT_HOME=$AGENT_HOME $NODE $SCRIPT_DIR/deepbot-recall.mjs index"
+echo "  force:   DEEPBOT_HOME=$AGENT_HOME $NODE $SCRIPT_DIR/../dist/recall/deepbot-recall.js index"
 echo "  remove:  ./install-refresh.sh --uninstall"

@@ -361,3 +361,6 @@ switch (command) {
     console.error(`unknown command: ${command}\ncommands: index | search | recent | show | sessions`)
     process.exit(2)
 }
+
+// A module rather than a global script, so its declarations stay local to this file.
+export {}

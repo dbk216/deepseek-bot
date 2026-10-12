@@ -98,7 +98,7 @@ const child = spawn(DSH_BIN, ['--profile', PROFILE, '--port', PORT, '--no-open']
   env: {
     ...process.env,
     DEEPBOT_SELF_TEST_SCRIPT: scenario,
-    DEEPBOT_RECALL_SCRIPT: join(REPO, 'recall', 'deepbot-recall.mjs'),
+    DEEPBOT_RECALL_SCRIPT: join(REPO, 'dist', 'recall', 'deepbot-recall.js'),
     DEEPBOT_SCENARIO_RESULT: RESULT,
     DEEPBOT_HOME: TEST_HOME,
     ...(seedFile !== undefined ? { DEEPBOT_SESSION_SEED: seedFile } : {}),

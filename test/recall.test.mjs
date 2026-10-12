@@ -22,7 +22,7 @@ function check(name, ok, detail = '') {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
-const CLI = 'recall/deepbot-recall.mjs'
+const CLI = 'dist/recall/deepbot-recall.js'   // the ported build; assertions below are unchanged
 const dir = mkdtempSync(join(tmpdir(), 'deepbot-recall-'))
 const index = join(dir, 'index.jsonl')
 // The older row shares all three query words; the newest shares two. Score has to beat position
