@@ -613,7 +613,12 @@ export function apply(ctx, config) {
         topN: cfg.recallTopN, maxChars: cfg.recallMaxChars, triggerWords: cfg.recallTriggerWords,
       })
       const past = recallContext.block(prompt)
-      if (past !== '') parts.push(past)
+      if (past !== '') {
+        parts.push(past)
+        // A deterministic signal that the decision block reached the prompt, so a scenario can
+        // assert the injection instead of guessing at the shape of the answer.
+        log(`recall: injected ${(past.match(/^- /gm) ?? []).length} passage(s)`)
+      }
     }
 
     if (includeStanding && sessionKey !== null) {

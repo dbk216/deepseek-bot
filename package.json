@@ -74,7 +74,8 @@
     "test:resources": "node test/resources.test.mjs",
     "test:recall": "node test/recall.test.mjs",
     "test:recall-context": "node test/recall-context.test.mjs",
-    "build:check": "node test/dist-fresh.mjs"
+    "build:check": "node test/dist-fresh.mjs",
+    "test:scenario:recall-decision": "node test/run-scenario.mjs test/scenarios/recall-decision.json"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
