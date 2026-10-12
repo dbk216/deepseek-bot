@@ -542,6 +542,29 @@ Note the trap this path already caused once: the plugin resolves the indexer rel
 module, so a `dist/` build produced `dist/recall/…`, which does not exist — recall went quietly
 stale. `recallScriptPath()` handles it; the port has to keep that working.
 
+### The next work order (set by the user)
+
+Four items, all of them asked for — including the two I had argued against.
+
+1. **Recall ends in a decision.** Search inside the plugin (reusing the ranking that is pinned by
+   `test/recall.test.mjs`), inject the few candidates plus a request for what they imply, so a
+   question about the past yields "here is what happened, therefore this is next" rather than
+   passages.
+2. **Finish the TypeScript migration.** `recall/deepbot-recall.mjs` first (`dist/recall/`, keep the
+   `index | search | recent | show | sessions` contract, acceptance criterion is
+   `test/recall.test.mjs` passing unchanged), then anything else still in JavaScript.
+3. **Note hygiene.** `MEMORY.md` only grows: consolidate, merge duplicates and summarise, on a
+   schedule, so the file a persona carries does not accumulate for months. Today it is 3 lines and
+   296 characters, so this is being built before it is needed.
+4. **Links in replies.** Reply text should carry hyperlinks rather than bare strings:
+   `https://…` as Slack links, document artifacts as uploads or workspace links, and channel or
+   thread references as permalinks. **A local file path cannot be made clickable in Slack** — the
+   honest options there are to upload the file or link the workspace UI.
+
+**Decided, with its cost stated:** item 4's deeper half means a headless browser engine in the
+deployment, which breaks the zero-runtime-dependency rule this project has kept. That is a decision
+rather than an oversight, and it belongs in the README's dependency note when it lands.
+
 ### The product gaps, in the order worth doing
 
 1. **Per-tenant model, tools and permission policy** — isolation is a directory today.
