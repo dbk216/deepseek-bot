@@ -177,6 +177,10 @@ export function createSlackApi({ cfg, log, sessionCwd }) {
   /** DSH emits standard Markdown; Slack uses its own dialect. */
   function toSlackMarkdown(md) {
     return md
+      // Links first, so the bold rule cannot reach inside one. Slack wants <url|label>; a bare URL
+      // is linked by Slack itself, so it is left alone. A local path cannot be made clickable here —
+      // that needs an upload, which is a separate job.
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<$2|$1>')
       .replace(/\*\*(.+?)\*\*/g, '*$1*')
       .replace(/^#{1,6}\s+(.*)$/gm, '*$1*')
       .replace(/^\s*[-*]\s+/gm, '• ')

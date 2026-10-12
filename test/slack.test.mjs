@@ -149,6 +149,28 @@ function transportFor(api) {
   check('and the message is reported as sent', sent?.ts !== undefined, JSON.stringify(sent))
 }
 
+// 8. Reply text carries clickable links, which is what a person can actually use.
+{
+  const api = stubSlack()
+  const t = transportFor(api)
+  await t.authenticate()
+  await t.post({ channel: 'C1', threadTs: null }, 'see [the docs](https://example.com/a) and **this**')
+  api.restore()
+  const body = api.calls.find((c) => c.method === 'chat.postMessage')?.body?.text ?? ''
+  check('a markdown link becomes a Slack link', body.includes('<https://example.com/a|the docs>'), body.slice(0, 90))
+  check('and the markdown form is gone', !body.includes('](https://example.com/a)'))
+  check('bold still converts', body.includes('*this*'))
+
+  const api2 = stubSlack()
+  const t2 = transportFor(api2)
+  await t2.authenticate()
+  await t2.post({ channel: 'C1', threadTs: null }, 'bare https://example.com/b and a path /Users/x/note.docx')
+  api2.restore()
+  const body2 = api2.calls.find((c) => c.method === 'chat.postMessage')?.body?.text ?? ''
+  check('a bare URL is left for Slack to link', body2.includes('https://example.com/b') && !body2.includes('<https://example.com/b'), body2.slice(0, 70))
+  check('a local path is left as text, because it cannot be a link', body2.includes('/Users/x/note.docx'), body2.slice(-40))
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)
