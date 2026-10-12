@@ -389,3 +389,41 @@ M5 distribution 🚧 in progress (CI ✅, docs ✅, fresh-install check pending)
 - Attaching a workspace to sessions (the proper fix for instruction injection) —
   it removes the workaround, but it needs API work whose payoff is currently
   cosmetic. Revisit when touching session creation for another reason.
+
+## Next: a verification sweep, then the gaps (2026-10-11)
+
+The four items of the last goal are done and pinned. What is left divides into what can be
+tried here and what cannot.
+
+### QA sweep — everything that can be tried without asking anyone
+
+**Failure injection.** Kill the gateway mid-turn; drop the socket; refuse the credential; a
+model error; an approval nobody answers; a turn cancelled twice; a message arriving during a
+turn; two messages at once against `maxConcurrency`.
+**Input edges.** Whitespace-only and empty text; a 100 KB message; unicode and zero-width
+runs; duplicate events (dedup); a self-message; a bot's message; a malformed socket payload;
+a malformed scenario file; an attachment over `maxAttachmentBytes`; an unparseable URL.
+**Adversarial.** Path traversal and symlink escape, relative and absolute; the metadata
+service; an approval answered by a third party; an injection carried through every channel a
+scenario can put material in.
+**Resources.** Gateway memory and log growth across a long run; where the log has no cap.
+**End to end.** A fresh clone install; restart continuity; the recall index after a restart.
+
+### Harness gaps this session found and did not fix
+
+- `dist-fresh` guards test files only, so a scenario can run a stale build — it did, twice.
+- Scenario suites need a model, so CI does not run them: behaviour regressions are caught
+  only while somebody runs them by hand.
+- The log has no rotation.
+
+### The product gaps, in the order worth doing
+
+1. **Per-tenant model, tools and permission policy** — isolation is a directory today.
+2. **Semantic recall** — the index is a keyword search.
+3. **Note hygiene** — `MEMORY.md` grows without consolidation.
+4. **Deeper link reading** — no JavaScript, so a client-rendered page arrives empty.
+
+### Blocked on a person
+
+- Live Telegram and Discord round trips need a bot token.
+- The live approval round trip needs somebody to press 허용 in Slack.
