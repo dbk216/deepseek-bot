@@ -1321,16 +1321,6 @@ export function apply(ctx, config) {
     // Register before the turn starts, so a message arriving a second later can
     // stop it. The timeout uses the same path: a timeout that only stops the
     // *waiting* leaves the agent running, writing to the session, and eventually
-      // A tenant that names a permission preset gets it applied to its session. The
-      // deployment's own preset is not touched here: that is the deployment's business.
-      if (tenant !== null && typeof policy.permission === 'string' && policy.permission !== '' && permissionPresets?.set) {
-        try {
-          permissionPresets.set(agent.session, policy.permission)
-          log(`tenant ${tenant}: session permission preset ${policy.permission}`)
-        } catch (e) {
-          log(`tenant ${tenant}: could not apply permission preset ${policy.permission} — ${String((e as Error)?.message ?? e)}`)
-        }
-      }
         runningTurns.delete(turnKey)
     }
 
