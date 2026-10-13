@@ -2032,6 +2032,7 @@ export function apply(ctx, config) {
   const DOCUMENT_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.pptx', '.csv']
   const NOT_DELIVERABLES = new Set(['memory', 'attachments', 'state', 'watches', 'skills', 'tenants', 'node_modules'])
   const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+  const FILE_CLOCK_SLACK_MS = 2000
   async function deliverDocuments(key: string, target: Origin, answer: string, since: number): Promise<void> {
     if (cfg.uploadDocuments !== true || answer === '') return
     // No walk for an answer that names no document: the home can be large, and this runs every turn.
@@ -2060,7 +2061,10 @@ export function apply(ctx, config) {
         if (!named(path)) continue
         try {
           const stat = statSync(path)
-          if (stat.mtimeMs >= since && stat.size <= MAX_UPLOAD_BYTES) found.push(path)
+          // The file's time comes from the filesystem's clock, which is coarser than Date.now(): a tick
+          // behind on Linux, whole seconds on some volumes. A document written as the turn began was
+          // stamped just before it and left out — now and then, and only where the clock is coarse.
+          if (stat.mtimeMs >= since - FILE_CLOCK_SLACK_MS && stat.size <= MAX_UPLOAD_BYTES) found.push(path)
         } catch { /* gone since the listing */ }
         if (found.length >= 5) return
       }

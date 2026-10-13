@@ -66,6 +66,12 @@ function boot({ state = {}, config = {}, agent = 'throw', home = null, answer = 
                 for (const [path, body] of Object.entries(answer?.files ?? {})) {
                   mkdirSync(dirname(join(home, path)), { recursive: true })
                   writeFileSync(join(home, path), body)
+                  // A filesystem stamps a file from a coarser clock than Date.now(): `stampedMsEarlier`
+                  // models that, so a test does not depend on which machine it runs on.
+                  if (Number(answer?.stampedMsEarlier) > 0) {
+                    const at = new Date(Date.now() - Number(answer.stampedMsEarlier))
+                    utimesSync(join(home, path), at, at)
+                  }
                 }
                 events.push({ type: 'turn/start' })
                 events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: answer?.text ?? '' }] } } })
@@ -1030,6 +1036,29 @@ for (const remove of [false, true]) {
   await sleep(500)
   check('a refused upload is told to the conversation', t.transport.posted.some((p) => /report\.pdf 파일을 올리지 못했어/.test(p.text)),
     JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 40))))
+  rmSync(home, { recursive: true, force: true })
+  t.done()
+}
+
+// 35d. "Changed during the turn" allows for the filesystem's clock. A file is stamped from a coarser
+// clock than the one the turn's start is read from — Linux's lags by up to a tick, some filesystems
+// keep whole seconds — so a document written right as the turn began could carry a time just before
+// it, and was not uploaded. Seen as two checks failing now and then on CI and never on a Mac.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  writeFileSync(join(home, 'earlier.pdf'), 'made ten seconds before the turn')
+  const tenSecondsAgo = new Date(Date.now() - 10_000)
+  utimesSync(join(home, 'earlier.pdf'), tenSecondsAgo, tenSecondsAgo)
+  const t = boot({
+    agent: 'answer', home, config: { fake: { upload: true } },
+    answer: { text: 'report.pdf 만들었어. earlier.pdf 도 있어.', files: { 'report.pdf': 'pdf' }, stampedMsEarlier: 400 },
+  })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '만들어줘' }))
+  await sleep(500)
+  const sent = t.transport.uploads.map((u) => u.filePath.slice(home.length + 1))
+  check('a document stamped just before the turn began is still this turn\'s', sent.includes('report.pdf'), JSON.stringify(sent))
+  check('one from ten seconds earlier is not', !sent.includes('earlier.pdf'), JSON.stringify(sent))
   rmSync(home, { recursive: true, force: true })
   t.done()
 }
