@@ -19,6 +19,9 @@ if (process.platform !== 'darwin') {
   process.exit(0)
 }
 import { fileURLToPath } from 'node:url'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const RUNNER = fileURLToPath(new URL('../service/confined-runner.sh', import.meta.url))
 const HOME = process.env.HOME ?? ''
@@ -52,6 +55,38 @@ check('a missing separator is refused rather than guessed', (() => {
   try { execFileSync(RUNNER, READ_ONLY, { encoding: 'utf8', stdio: 'pipe' }); return false }
   catch (e) { return e.status === 64 }
 })(), 'exit 64')
+
+// The deployment's credentials. Nothing a command does needs them, and a command's output reaches
+// Slack — as a reply, or as a watch alert — where nothing redacts a token (the log does, the reply
+// does not). Checked by behaviour, not only by profile text: a fake home with a fake .env, and a
+// `cat` inside the runner that must fail without printing it.
+//
+// Twice: under the temp directory as named (a symlink, /var → /private/var) and resolved. The first
+// version passed only the symlinked case — on a resolved path, as live, a shell `[ … ] && printf`
+// made the profile fail and the runner refused every command. "Readable" below is what catches that.
+for (const resolved of [false, true]) {
+  const made = mkdtempSync(join(tmpdir(), 'runner-home-'))
+  const fakeHome = resolved ? realpathSync(made) : made
+  mkdirSync(join(fakeHome, '.dsh'), { recursive: true })
+  writeFileSync(join(fakeHome, '.dsh', '.env'), 'SLACK_BOT_TOKEN=canary-env-5d1\n')
+  writeFileSync(join(fakeHome, '.dsh', '.credentials.yaml'), 'refs: { x: canary-cred-9b7 }\n')
+  writeFileSync(join(fakeHome, '.dsh', '.credentials.yaml.bak-20261008'), 'canary-bak-3c4\n')
+  writeFileSync(join(fakeHome, '.dsh', 'other.txt'), 'readable-2e8\n')
+  const env = { ...process.env, HOME: fakeHome, DEEPBOT_CONFINE_STATE: join(fakeHome, 'state') }
+  const text = execFileSync(RUNNER, ['--print-profile', ...READ_ONLY, '--', 'true'], { encoding: 'utf8', env })
+  const as = resolved ? ' (resolved home)' : ' (home under a symlink)'
+  check('the profile denies the credential files' + as, text.includes(`(deny file-read* (literal "${fakeHome}/.dsh/.env"))`)
+    && text.includes(`(deny file-read* (literal "${fakeHome}/.dsh/.credentials.yaml"))`), text.split('\n').filter((l) => l.includes('.dsh')).join(' | '))
+  const read = (file) => {
+    try { return execFileSync(RUNNER, [...READ_ONLY, '--', '/bin/cat', join(fakeHome, '.dsh', file)], { encoding: 'utf8', env, stdio: 'pipe' }) }
+    catch (e) { return `exit ${e.status}: ${String(e.stdout ?? '')}` }
+  }
+  check('a command cannot read .env' + as, !read('.env').includes('canary-env-5d1'))
+  check('nor .credentials.yaml' + as, !read('.credentials.yaml').includes('canary-cred-9b7'))
+  check('nor a backup of it' + as, !read('.credentials.yaml.bak-20261008').includes('canary-bak-3c4'))
+  check('the rest of ~/.dsh stays readable' + as, read('other.txt').includes('readable-2e8'), read('other.txt').slice(0, 40))
+  rmSync(made, { recursive: true, force: true })
+}
 
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)

@@ -77,6 +77,24 @@ profile() {
     [ "$candidate" = "$workspace_root" ] && continue
     printf '(deny file-read* (subpath %s))\n' "$(sbpl "$candidate")"
   done
+  # Reads: the deployment's credentials. No command needs them, and a command's output reaches
+  # Slack — as a reply or a watch alert — where nothing redacts a token. Measured before this: a
+  # `cat ~/.dsh/.env` inside this runner printed the bot token.
+  echo ";; read confinement: credentials"
+  for dir in "$HOME/.dsh" ${DSH_HOME:+"$DSH_HOME"}; do
+    for candidate in "$dir"/.env "$dir"/.credentials.yaml*; do
+      [ -e "$candidate" ] || continue
+      printf '(deny file-read* (literal %s))\n' "$(sbpl "$candidate")"
+      # Seatbelt matches the resolved path: under a symlinked directory (/var → /private/var) the
+      # rule above alone denied nothing, which the runner test caught.
+      # An `if`, not `[ … ] && printf`: as the loop's last command a false test made profile() fail,
+      # and the runner refused every command with exit 70 — on a home without symlinks, i.e. live.
+      resolved="$(cd "$(dirname "$candidate")" && pwd -P)/$(basename "$candidate")"
+      if [ "$resolved" != "$candidate" ]; then
+        printf '(deny file-read* (literal %s))\n' "$(sbpl "$resolved")"
+      fi
+    done
+  done
 }
 
 sbpl() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
