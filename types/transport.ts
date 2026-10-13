@@ -109,11 +109,15 @@ export interface Transport {
   uploadFile?(target: Target, filePath: string, title?: string): Promise<boolean>
 
   /**
-   * The platform's own "is typing…", shown while a turn runs. Platforms let it lapse after a few
-   * seconds, so the transport repeats it until the returned function is called. A transport without
-   * one (Slack has none for bots) leaves this out, and the core posts a working message instead.
+   * The platform's own working indicator, shown while a turn runs: Discord's and Telegram's "typing…",
+   * Slack's thread status. The transport keeps it up until the returned function is called. When the
+   * platform refuses it — a missing permission, a feature the workspace has off — the transport calls
+   * `onUnavailable`, and the core posts its working message instead.
    */
-  startTyping?(target: Target): () => void
+  startTyping?(target: Target, onUnavailable?: () => void): () => void
+
+  /** True once the transport knows its indicator will be refused, so the core stops asking. */
+  readonly typingUnavailable?: boolean
 
   /**
    * Delete a message the bot posted, where the platform allows it. With it, the answer arrives as a

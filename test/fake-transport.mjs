@@ -61,9 +61,13 @@ export function createFakeTransport(options = {}) {
     supportsButtons: options.supportsButtons ?? false,
     // Native typing, only when asked for: the default fake is a platform without it, like Slack.
     ...(options.typing === true ? {
-      startTyping(target) {
+      startTyping(target, onUnavailable) {
         const entry = { target, stopped: false }
         typing.push(entry)
+        // typingRefusedAfterMs: the platform refuses the indicator, and says so that much later — at once
+        // for 0, as a transport does when it already knows (Slack remembers a lasting refusal).
+        if (options.typingRefusedAfterMs === 0) onUnavailable?.()
+        else if (Number.isFinite(options.typingRefusedAfterMs)) setTimeout(() => onUnavailable?.(), options.typingRefusedAfterMs)
         return () => { entry.stopped = true }
       },
     } : {}),

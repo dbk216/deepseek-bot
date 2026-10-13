@@ -541,6 +541,73 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
   }
 
   /**
+   * Slack's own working status under the thread — "<app> 앱이 작업 중" with a spinner — instead of a
+   * message of ours: a message raised a notification of its own, so every turn notified twice.
+   *
+   * agents.sessions.setStatus (processing → active) is Slack's current method and covers channel
+   * threads; assistant.threads.setStatus (a line of text, cleared by our reply or after two minutes)
+   * is the older one. Which a workspace accepts depends on its features and the app's scopes, which
+   * this code cannot see, so it asks in that order and remembers a refusal that will not change. When
+   * both refuse, `onUnavailable` hands the turn back to the core's working message.
+   */
+  const LASTING_REFUSALS = new Set(['missing_scope', 'feature_disabled', 'not_allowed_token_type', 'unknown_method',
+    'method_deprecated', 'deprecated_endpoint', 'no_permission', 'access_denied', 'not_authed', 'invalid_auth'])
+  let sessionsStatus: boolean | null = null
+  let assistantStatus: boolean | null = null
+  const ASSISTANT_REFRESH_MS = 100_000   // the assistant status lapses after two minutes without a message
+
+  function startTyping(target: Target, onUnavailable?: () => void): () => void {
+    const thread = typeof target.threadTs === 'string' && target.threadTs !== '' ? target.threadTs : null
+    if (thread === null || (sessionsStatus === false && assistantStatus === false)) {
+      onUnavailable?.()
+      return () => {}
+    }
+    const set = (method: string, status: string) =>
+      api.slackPost<{ ok: boolean; error?: string }>(requireToken(), method, { channel_id: target.channel, thread_ts: thread, status })
+    let over = false
+    let shown: 'sessions' | 'assistant' | null = null
+    let refresh: ReturnType<typeof setInterval> | null = null
+    const clear = () => {
+      if (shown === 'sessions') void set('agents.sessions.setStatus', 'active').catch(() => {})
+      if (shown === 'assistant') void set('assistant.threads.setStatus', '').catch(() => {})
+    }
+    const attempt = async (method: string, status: string, known: boolean | null): Promise<boolean | null> => {
+      if (known === false) return false
+      const r = await set(method, status).catch((e) => ({ ok: false, error: String((e as Error)?.message ?? e) }))
+      if (r.ok === true) return true
+      log(`working status: ${method} refused (${r.error ?? 'unknown'})`)
+      return LASTING_REFUSALS.has(String(r.error)) ? false : null
+    }
+    void (async () => {
+      const sessions = await attempt('agents.sessions.setStatus', 'processing', sessionsStatus)
+      if (sessions === true) {
+        sessionsStatus = true
+        shown = 'sessions'
+      } else {
+        if (sessions === false) sessionsStatus = false
+        const assistant = await attempt('assistant.threads.setStatus', '작업 중…', assistantStatus)
+        if (assistant === true) {
+          assistantStatus = true
+          shown = 'assistant'
+          refresh = setInterval(() => { void set('assistant.threads.setStatus', '작업 중…').catch(() => {}) }, ASSISTANT_REFRESH_MS)
+        } else {
+          if (assistant === false) assistantStatus = false
+          if (!over) onUnavailable?.()
+          return
+        }
+      }
+      // The turn may have ended while the status was being set.
+      if (over) { if (refresh !== null) clearInterval(refresh); clear() }
+    })()
+    return () => {
+      if (over) return
+      over = true
+      if (refresh !== null) clearInterval(refresh)
+      clear()
+    }
+  }
+
+  /**
    * Delete one of the bot's own messages. The working message is removed rather than edited into the
    * answer: Slack raises no notification for an edit, so every answer would have reached a phone as
    * "⏳ 아리 작업 중…". chat.delete needs only chat:write for a message the bot posted.
@@ -578,6 +645,8 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
     permalinkFor,
     uploadFile,
     remove,
+    startTyping,
+    get typingUnavailable() { return sessionsStatus === false && assistantStatus === false },
     // Slack's own interactive components are block actions, which this adapter does not
     // handle; a request here is answered by a reply in the thread instead.
     supportsButtons: false,

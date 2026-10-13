@@ -414,11 +414,17 @@ arrive as material. The `fetch` tool's own output goes straight into the model's
 
 ## Progress on a turn
 
-A message that is taken is acknowledged **at once** (`workingIndicator`, on by default). Discord
-and Telegram show their own "is typing…", re-sent every 8 s and 4 s because each lapses on its own,
-and stopped before the answer is posted. Slack has no typing indicator for bots, so there the
-progress message — `⏳ 아리 작업 중…`, the name taken from the persona's first heading — is posted
-immediately instead of after `progressAfterMs`.
+A message that is taken is acknowledged **at once** (`workingIndicator`, on by default), with the
+platform's own indicator: Discord's and Telegram's "is typing…" (re-sent every 8 s and 4 s, since
+each lapses), and on Slack the thread status — "<app> 앱이 작업 중" with a spinner under the thread —
+through `agents.sessions.setStatus`, or `assistant.threads.setStatus` where the workspace refuses
+the first. Both need only `chat:write`; which one a workspace accepts depends on its features. The
+indicator ends before the answer is posted, so the answer is the only notification.
+
+When the platform refuses its indicator, the transport says so and the core posts its progress
+message — `⏳ 아리 작업 중…`, the name from the persona's first heading — immediately instead. A
+refusal that will not change (a scope, a feature) is remembered, so later turns fall back at once;
+one that arrives after the turn is over posts nothing.
 
 The progress message **is edited in place** as tools run, with tool names and elapsed time; on a
 platform with typing it appears only once a turn has run for `progressAfterMs` (8 s). When the turn

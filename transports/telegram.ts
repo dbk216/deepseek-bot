@@ -105,7 +105,7 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
    * Telegram's "typing…" is a chat action that lasts five seconds or until the bot sends, so it is
    * re-sent every four while a turn runs. A refusal is logged once and the repetition stops.
    */
-  function startTyping(target: Target): () => void {
+  function startTyping(target: Target, onUnavailable?: () => void): () => void {
     const intervalMs = Number(cfg.typingIntervalMs) > 0 ? Number(cfg.typingIntervalMs) : 4000
     let timer: ReturnType<typeof setInterval> | null = null
     let failed = false
@@ -117,6 +117,7 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
         failed = true
         stop()
         log(`telegram typing failed: ${String((e as Error)?.message ?? e)}`)
+        onUnavailable?.()
       })
     }
     send()

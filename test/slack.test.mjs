@@ -39,7 +39,8 @@ function stubSlack(options = {}) {
       const auth = { ok: true, user: 'bot', user_id: 'U1', team: 'T1', url: 'https://example.slack.com/' }
       return { ok: true, status: 200, json: async () => auth, text: async () => JSON.stringify(auth) }
     }
-    const ok = options.fail?.includes(method) !== true
+    const forced = options.errors?.[method]
+    const ok = forced === undefined && options.fail?.includes(method) !== true
     // The file APIs answer with their own shapes; the chain below is for chat calls.
     if (ok && method === 'files.getUploadURLExternal') {
       return { ok: true, status: 200, json: async () => ({ ok: true, upload_url: 'https://upload.example/u/1', file_id: 'F1' }), text: async () => '' }
@@ -50,7 +51,7 @@ function stubSlack(options = {}) {
     const json = ok
       // chat.update answers with the same ts it updated; chat.postMessage with a new one.
       ? { ok: true, ts: method === 'chat.update' ? body.ts : `ts-${calls.length}`, channel: body.channel ?? 'C1' }
-      : { ok: false, error: options.error ?? 'no_text' }
+      : { ok: false, error: forced ?? options.error ?? 'no_text' }
     return { ok: true, status: 200, json: async () => json, text: async () => JSON.stringify(json) }
   }
   return { calls, restore: () => { globalThis.fetch = realFetch } }
@@ -164,6 +165,64 @@ function transportFor(api) {
   refused.restore()
   check('a refused delete is reported as false and logged', result === false && t2.logs.some((l) => /delete failed.*message_not_found/.test(l)),
     t2.logs.join(' | ').slice(0, 90))
+}
+
+// 6c. The working status: Slack's own "<app> 앱이 작업 중" under the thread, not a message of ours.
+// agents.sessions.setStatus first, assistant.threads.setStatus when the workspace refuses it, and the
+// core's working message when both do. A refusal that will not change (a scope, a feature) is
+// remembered; one that depends on the conversation is not.
+{
+  const settle = () => new Promise((r) => setTimeout(r, 30))
+  const calls = (api, method) => api.calls.filter((c) => c.method === method).map((c) => c.body)
+
+  const api = stubSlack()
+  const t = transportFor(api)
+  await t.authenticate()
+  let unavailable = 0
+  const stop = t.startTyping({ channel: 'C1', threadTs: 't1' }, () => { unavailable++ })
+  await settle()
+  stop()
+  await settle()
+  const sessions = calls(api, 'agents.sessions.setStatus')
+  check('the session status goes to processing for the thread', sessions[0]?.channel_id === 'C1' && sessions[0]?.thread_ts === 't1' && sessions[0]?.status === 'processing',
+    JSON.stringify(sessions[0]))
+  check('and back to active when the turn is over', sessions[1]?.status === 'active', JSON.stringify(sessions[1]))
+  check('no fallback was asked for', unavailable === 0)
+  api.restore()
+
+  const api2 = stubSlack({ errors: { 'agents.sessions.setStatus': 'feature_disabled' } })
+  const t2 = transportFor(api2)
+  await t2.authenticate()
+  const stop2 = t2.startTyping({ channel: 'C1', threadTs: 't1' }, () => {})
+  await settle()
+  stop2()
+  await settle()
+  const assistant = calls(api2, 'assistant.threads.setStatus')
+  check('a workspace without agent sessions gets the assistant status', assistant[0]?.status === '작업 중…' && assistant[0]?.thread_ts === 't1', JSON.stringify(assistant[0]))
+  check('which is cleared when the turn is over', assistant[1]?.status === '', JSON.stringify(assistant[1]))
+  api2.restore()
+
+  const api3 = stubSlack({ errors: { 'agents.sessions.setStatus': 'missing_scope', 'assistant.threads.setStatus': 'missing_scope' } })
+  const t3 = transportFor(api3)
+  await t3.authenticate()
+  let fell = 0
+  t3.startTyping({ channel: 'C1', threadTs: 't1' }, () => { fell++ })
+  await settle()
+  check('when both are refused the core is told to show its own message', fell === 1)
+  check('and the transport remembers a refusal that will not change', t3.typingUnavailable === true)
+  const before = api3.calls.length
+  t3.startTyping({ channel: 'C1', threadTs: 't2' }, () => { fell++ })
+  check('so the next turn asks Slack nothing and falls back at once', fell === 2 && api3.calls.length === before)
+  api3.restore()
+
+  const api4 = stubSlack({ errors: { 'agents.sessions.setStatus': 'method_not_supported_for_channel_type', 'assistant.threads.setStatus': 'method_not_supported_for_channel_type' } })
+  const t4 = transportFor(api4)
+  await t4.authenticate()
+  let fell4 = 0
+  t4.startTyping({ channel: 'C1', threadTs: 't1' }, () => { fell4++ })
+  await settle()
+  check('a refusal for this kind of conversation falls back but is not remembered', fell4 === 1 && t4.typingUnavailable !== true)
+  api4.restore()
 }
 
 // 7. A transport built without a chunk size still sends the text.

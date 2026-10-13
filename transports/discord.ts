@@ -122,7 +122,7 @@ export function createDiscordTransport(host: DiscordHost): DiscordTransport {
    * while a turn runs. A channel the bot may not type in answers 403: that is logged once and the
    * repetition stops, rather than failing every eight seconds for the length of the turn.
    */
-  function startTyping(target: Target): () => void {
+  function startTyping(target: Target, onUnavailable?: () => void): () => void {
     const intervalMs = Number(cfg.typingIntervalMs) > 0 ? Number(cfg.typingIntervalMs) : 8000
     let timer: ReturnType<typeof setInterval> | null = null
     let failed = false
@@ -134,6 +134,7 @@ export function createDiscordTransport(host: DiscordHost): DiscordTransport {
         failed = true
         stop()
         log(`discord typing failed: ${String((e as Error)?.message ?? e)}`)
+        onUnavailable?.()
       })
     }
     send()

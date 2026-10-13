@@ -759,6 +759,30 @@ for (const remove of [false, true]) {
   t.done()
 }
 
+// 32b. A platform that refuses its own indicator (Slack without the status APIs, Discord without the
+// permission) still shows that the message was taken: the core's working message, replaced by the reply.
+{
+  const t = boot({ config: { progressAfterMs: 60000, fake: { typing: true, typingRefusedAfterMs: 0 } } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: 'will fail' }))
+  await sleep(400)
+  const working = t.transport.posted.find((p) => /작업 중/.test(p.text) && p.replace === null)
+  check('a refused indicator falls back to the working message', working !== undefined, JSON.stringify(t.transport.posted).slice(0, 120))
+  const index = t.transport.posted.indexOf(working)
+  check('which the reply replaces', t.transport.posted.some((p) => p.replace === `ts-${index + 1}`))
+  t.done()
+}
+// A refusal that arrives after the turn is over posts nothing: it would be a working message under the reply.
+{
+  const t = boot({ config: { progressAfterMs: 60000, fake: { typing: true, typingRefusedAfterMs: 600 } } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: 'will fail' }))
+  await sleep(900)
+  check('a late refusal leaves no working message behind', !t.transport.posted.some((p) => /작업 중/.test(p.text)),
+    JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 20))))
+  t.done()
+}
+
 // 33. The indicator can be turned off, and then nothing precedes the reply.
 {
   const t = boot({ config: { progressAfterMs: 60000, workingIndicator: false, fake: { typing: true } } })

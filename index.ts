@@ -787,21 +787,35 @@ export function apply(ctx, config) {
    */
   function startWorking(key: string, target: Origin): () => void {
     if (cfg.workingIndicator !== true) return () => {}
-    if (typeof transport.startTyping === 'function') {
-      try { return transport.startTyping(target) }
-      catch (e) { log(`typing failed: ${String((e as Error)?.message ?? e)}`); return () => {} }
+    if (nativeIndicator()) {
+      // A refusal can arrive after the turn is over; a working message then would sit under the reply.
+      let over = false
+      try {
+        const stop = transport.startTyping(target, () => {
+          if (over) return
+          log(`working indicator refused in ${key} — showing a working message instead`)
+          showWorking(key, target, true)
+        })
+        return () => { over = true; stop() }
+      } catch (e) { log(`typing failed: ${String((e as Error)?.message ?? e)}`) }
     }
-    showWorking(key, target)
+    showWorking(key, target, true)
     return () => {}
   }
 
+  /** Whether the platform shows its own indicator — not once it has said it will refuse. */
+  function nativeIndicator(): boolean {
+    return typeof transport.startTyping === 'function' && transport.typingUnavailable !== true
+  }
+
   /**
-   * The working message, on a platform without typing — unless the conversation already has one,
-   * put up by a turn ahead of this message. Called again when a message that waited starts, because
-   * by then that turn's reply has taken the message it was showing under.
+   * The working message, where the platform shows no indicator of its own — unless the conversation
+   * already has one, put up by a turn ahead of this message. Called again when a message that waited
+   * starts, because by then that turn's reply has taken the message it was showing under. `instead`
+   * is a caller standing in for a refused indicator.
    */
-  function showWorking(key: string, target: Origin): void {
-    if (cfg.workingIndicator !== true || typeof transport.startTyping === 'function' || progress.tracks(key)) return
+  function showWorking(key: string, target: Origin, instead = false): void {
+    if (cfg.workingIndicator !== true || (!instead && nativeIndicator()) || progress.tracks(key)) return
     void progress.force(key, target)
       .catch((e) => log(`working message failed: ${String((e as Error)?.message ?? e)}`))
   }
