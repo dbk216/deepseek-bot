@@ -65,7 +65,7 @@ Each line is traceable to code and to something that checks it.
 | Serves Slack over **Socket Mode**: receive, reply in thread, chunk long answers, drop duplicate events | `transports/slack.ts` | `test/slack.test.mjs` 36/36; `tools/qa-slack.mjs` against a live workspace |
 | Serves **Telegram** by long polling | `transports/telegram.ts` | `test/telegram.test.mjs` 28/28 |
 | Serves **Discord** (gateway websocket + REST), with buttons for approvals | `transports/discord.ts` | `test/discord.test.mjs` 35/35 |
-| Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.mjs` 132/132; `test/scenarios/restart-1.json` + `restart-2.json` |
+| Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.mjs` 139/139; `test/scenarios/restart-1.json` + `restart-2.json` |
 | Injects **persona and notes** (`SOUL.md`/`USER.md`/`MEMORY.md` from the adapter, `AGENTS.md` from `dsh-agent-instructions`), without re-sending them every turn | `index.ts` | `test/core.test.mjs`; `test/scenarios/persona.json` 3/3 |
 | **Recalls past conversations** — rank passages, then ask for what they imply | `recall/`, `recallContext.ts` | `test/recall.test.mjs` 11/11; `test/recall-context.test.mjs` 18/18 |
 | Reads the **thread it was mentioned in**, as a delta | `transports/slack.ts` | `test/history.test.mjs` 9/9 |
@@ -74,6 +74,7 @@ Each line is traceable to code and to something that checks it.
 | Asks the user to **approve** a destructive command, in the conversation | `index.ts` | approval checks in `test/core.test.mjs`; `approval-gate.json` records one open gap |
 | Confines **reads**, for commands and for the file tools | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.mjs` 10/10; `test/edges.test.mjs` 19/19 |
 | Flags **instruction-like text** in fetched material | `injection.ts` | `test/injection.test.mjs` 31/31 |
+| **Uploads the documents a turn made** (pdf, docx, xlsx, pptx, csv changed during the turn and named in the answer; Slack only, needs `files:write`) | `index.ts`, `transports/slack.ts` | `test/core.test.mjs` 139/139; `test/slack.test.mjs` |
 | Runs **one turn at a time per conversation**; a later message waits, and a stop withdraws what is waiting | `index.ts` | `test/failures.test.mjs` 24/24 |
 | Shows it is **working at once** (typing, or a progress message on Slack) and edits it | `progress.ts`, `index.ts` | `test/progress.test.mjs` 22/22; `test/core.test.mjs` |
 | **Stops** a running turn on request, and on its own timeout | `index.ts` | `test/scenarios/interrupt.json` |
@@ -124,8 +125,9 @@ One core, one transport per platform. The core (`index.ts`) owns thread→sessio
 loop, the channel allowlist, prompt assembly, watches and reminders; a transport owns credentials,
 the connection, event parsing, rendering, history and attachments. The interface is
 `types/transport.ts`: `connect({ onMessage, onStatus, onAction })`, `post(target, text, { replace,
-buttons })`, `fetchHistory`, `fetchAttachments`, `identity()`, optional `permalinkFor` and
-`uploadFile`, and a `supportsButtons` flag the core reads rather than assumes.
+buttons })`, `fetchHistory`, `fetchAttachments`, `identity()`, optional `permalinkFor`,
+`uploadFile`, `startTyping` and `remove`, and a `supportsButtons` flag the core reads rather than
+assumes.
 
 `platform: 'slack' | 'telegram' | 'discord'` selects one. `test/fake-transport.mjs` supplies a
 fourth, which is how the core is tested with no platform account at all.

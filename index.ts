@@ -47,7 +47,7 @@
 import { execFile, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { createSlackTransport } from './transports/slack.js'
@@ -189,6 +189,8 @@ const DEFAULTS = {
   // Show at once that a message was taken: the platform's own typing where it has one, otherwise
   // the progress message above, posted immediately instead of after progressAfterMs.
   workingIndicator: true,
+  // Upload the documents a turn made and named in its answer, where the platform can (Slack).
+  uploadDocuments: true,
   downloadAttachments: true,
   maxAttachmentBytes: 10 * 1024 * 1024,
   attachmentsDir: undefined,        // default: <cwd>/attachments
@@ -1822,6 +1824,8 @@ export function apply(ctx, config) {
           writeHealth()
           log(`answered channel=${channel} len=${r.text.length} ${Date.now() - started}ms`)
           await replyInPlaceOf(replyTarget, r.text, placeholderTs)
+          await deliverDocuments(key, replyTarget, r.text, started)
+            .catch((e) => log(`documents: delivery failed: ${String((e as Error)?.message ?? e)}`))
         } else if (r.reason?.kind === 'cancelled') {
           const why = r.reason.cause === 'timed out' ? '시간이 초과돼서 멈췄어.' : '중단했어.'
           log(`turn cancelled cause=${String(r.reason.cause ?? '-')}`)
@@ -1844,6 +1848,49 @@ export function apply(ctx, config) {
         await replyInPlaceOf(replyTarget, `Execution failed: ${String(e?.message ?? e).slice(0, 300)}`, leftover)
       }
     }, () => ticket.withdrawn)
+  }
+
+  // ── Documents ─────────────────────────────────────────────────────────────
+  /**
+   * Upload the documents a turn made. A local path cannot be opened from Slack, so a document has to
+   * travel; the transport could upload since round 59 and nothing called it. Only files changed during
+   * the turn, only those the answer names — two conversations share a home, and the other one's file
+   * must not land here — and never the agent's own bookkeeping directories.
+   */
+  const DOCUMENT_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.pptx', '.csv']
+  const NOT_DELIVERABLES = new Set(['memory', 'attachments', 'state', 'watches', 'skills', 'tenants', 'node_modules'])
+  const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+  async function deliverDocuments(key: string, target: Origin, answer: string, since: number): Promise<void> {
+    if (cfg.uploadDocuments !== true || answer === '') return
+    const found: string[] = []
+    const walk = (dir: string, depth: number) => {
+      if (depth > 4 || found.length >= 5) return
+      let entries
+      try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+      for (const entry of entries) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (!entry.name.startsWith('.') && !NOT_DELIVERABLES.has(entry.name)) walk(path, depth + 1)
+          continue
+        }
+        if (!entry.isFile() || !DOCUMENT_EXTENSIONS.some((ext) => entry.name.toLowerCase().endsWith(ext))) continue
+        if (!answer.includes(entry.name)) continue
+        try {
+          const stat = statSync(path)
+          if (stat.mtimeMs >= since && stat.size <= MAX_UPLOAD_BYTES) found.push(path)
+        } catch { /* gone since the listing */ }
+      }
+    }
+    walk(await cwdFor(key), 0)
+    if (found.length === 0) return
+    if (typeof transport.uploadFile !== 'function') {
+      log(`documents: ${found.length} made in ${key}, but this platform cannot upload them`)
+      return
+    }
+    for (const path of found) {
+      const ok = await transport.uploadFile(target, path).catch(() => false)
+      log(`documents: ${ok ? 'uploaded' : 'upload failed for'} ${basename(path)} to ${key}`)
+    }
   }
 
   /** Generic so the caller keeps the turn's shape: `unknown` here is what forced casts at every call site. */

@@ -15,9 +15,9 @@
  */
 import './dist-fresh.mjs'   // fails loudly on a stale dist
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { apply } from '../dist/index.js'
 import { createFakeTransport } from './fake-transport.mjs'
 
@@ -30,7 +30,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const homeDir = process.cwd()
 
 /** Boot the plugin with a fake transport and a state file we control. */
-function boot({ state = {}, config = {}, agent = 'throw', home = null } = {}) {
+function boot({ state = {}, config = {}, agent = 'throw', home = null, answer = null } = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), 'deepbot-core-'))
   writeFileSync(join(stateDir, 'sessions.json'), JSON.stringify({
     sessions: {}, seen: {}, standing: {}, history: {}, ...state,
@@ -51,6 +51,28 @@ function boot({ state = {}, config = {}, agent = 'throw', home = null } = {}) {
         created.push(options)
         // 'ready' returns a handle so a test can observe what happens after the agent exists
         // — the tenant policy is applied there, and a create that always throws hides it.
+        // 'answer': the agent completes a turn with `answer.text`, writing `answer.files` into the home
+        // first — a document the turn produced, as far as the adapter can tell.
+        if (agent === 'answer') {
+          const events = []
+          return {
+            agent: {
+              session: { header: { id: options?.sessionId ?? 's1' }, get seq() { return events.length }, eventAt: (i) => events[i] },
+              followup: (message) => {
+                followups.push(message)
+                for (const [path, body] of Object.entries(answer?.files ?? {})) {
+                  mkdirSync(dirname(join(home, path)), { recursive: true })
+                  writeFileSync(join(home, path), body)
+                }
+                events.push({ type: 'turn/start' })
+                events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: answer?.text ?? '' }] } } })
+                events.push({ type: 'turn/end', data: { reason: { kind: 'completed' } } })
+              },
+              whenIdle: async () => {}, cancel: () => {},
+            },
+            dispose: async () => {},
+          }
+        }
         if (agent === 'ready') {
           return {
             agent: {
@@ -749,6 +771,51 @@ for (const remove of [false, true]) {
   check('and not one from a DM', !sent.includes('dm-secret-8b6'))
   check('a row from a session mapped to this channel counts as this channel', sent.includes('mapped-9d3'))
   check('a row nobody can place is left out', !sent.includes('unknown-1f7'))
+  rmSync(home, { recursive: true, force: true })
+  t.done()
+}
+
+// 35. A document the turn wrote, and named in its answer, reaches the thread as a file.
+//
+// The transport could upload since round 59 and nothing called it: a document the agent made stayed a
+// local path nobody in Slack can open. Only files changed during the turn, only those the answer names
+// (two conversations share a home, and the other one's file must not land here), never the agent's
+// own bookkeeping directories.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  writeFileSync(join(home, 'old.pdf'), 'written before the turn')
+  const past = new Date(Date.now() - 3600_000)
+  utimesSync(join(home, 'old.pdf'), past, past)
+  const t = boot({
+    agent: 'answer', home, config: { fake: { upload: true } },
+    answer: {
+      text: '정리해서 out/report.docx 로 만들었어. old.pdf 는 그대로고, memory/notes.pdf 도 봤어.',
+      files: { 'out/report.docx': 'docx bytes', 'unnamed.xlsx': 'not mentioned', 'memory/notes.pdf': 'bookkeeping' },
+    },
+  })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '보고서 만들어줘' }))
+  await sleep(500)
+  const sent = t.transport.uploads.map((u) => u.filePath.slice(home.length + 1))
+  check('the document the answer names is uploaded', sent.includes('out/report.docx'), JSON.stringify(sent))
+  check('into the conversation it was made in', t.transport.uploads[0]?.target?.channel === 'C_ALLOWED' && t.transport.uploads[0]?.target?.threadTs === 't1')
+  check('a file from before the turn is not, even when named', !sent.includes('old.pdf'))
+  check('nor one the answer does not name', !sent.includes('unnamed.xlsx'))
+  check('nor anything in the agent\'s own directories', !sent.includes('memory/notes.pdf'))
+  check('and the answer still arrives', t.transport.posted.some((p) => /report\.docx/.test(p.text)))
+  rmSync(home, { recursive: true, force: true })
+  t.done()
+}
+
+// 36. A platform without uploads says so in the log and answers as usual.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  const t = boot({ agent: 'answer', home, answer: { text: 'report.pdf 만들었어', files: { 'report.pdf': 'pdf' } } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '만들어줘' }))
+  await sleep(500)
+  check('no upload is attempted where the transport has none', t.logs.some((l) => /cannot upload/.test(l)) && t.transport.posted.some((p) => /report\.pdf/.test(p.text)),
+    t.logs.filter((l) => /upload/.test(l)).join(' | ').slice(0, 100) || '(no upload log)')
   rmSync(home, { recursive: true, force: true })
   t.done()
 }

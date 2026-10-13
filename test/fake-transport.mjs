@@ -16,6 +16,7 @@ export function createFakeTransport(options = {}) {
   const attachmentCalls = []
   const typing = []
   const removed = []
+  const uploads = []
   let onMessage = null
   let onAction = null
   let closed = 0
@@ -32,6 +33,7 @@ export function createFakeTransport(options = {}) {
     attachmentCalls,
     typing,
     removed,
+    uploads,
     get closed() { return closed },
     /** Push an inbound message as if the platform had delivered it. */
     deliver(message) {
@@ -64,6 +66,10 @@ export function createFakeTransport(options = {}) {
         typing.push(entry)
         return () => { entry.stopped = true }
       },
+    } : {}),
+    // Uploading a file into the conversation, only when asked for, like Slack's files API.
+    ...(options.upload === true ? {
+      async uploadFile(target, filePath, title) { uploads.push({ target, filePath, title }); return true },
     } : {}),
     // Deleting a message, only when asked for, like Slack's chat.delete.
     ...(options.remove === true ? {
