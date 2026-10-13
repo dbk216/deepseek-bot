@@ -33,7 +33,11 @@ function stubSlack(options = {}) {
     // threw inside this stub and the transport reported failure.
     const raw = init.body === undefined ? '' : String(init.body)
     const body = raw.startsWith('{') ? JSON.parse(raw) : {}
-    calls.push({ method, body })
+    // When each call started and answered, so a test can see two in flight at once.
+    const entry = { method, body, start: Date.now(), end: null }
+    calls.push(entry)
+    if (Number(options.delayMs?.[method]) > 0) await new Promise((r) => setTimeout(r, Number(options.delayMs[method])))
+    entry.end = Date.now()
     // auth.test carries the workspace URL, which is where a permalink comes from.
     if (method === 'auth.test') {
       const auth = { ok: true, user: 'bot', user_id: 'U1', team: 'T1', url: 'https://example.slack.com/' }
@@ -272,6 +276,46 @@ function transportFor(api) {
   const statuses = calls(api6, 'agents.sessions.setStatus').map((b) => b.status)
   check('the last to stop clears a status another one set', fellBack === 1 && statuses.at(-1) === 'active', JSON.stringify(statuses))
   api6.restore()
+
+  // Both kinds at once: M1 shows the session status; M2's is refused for the moment and it shows the
+  // assistant status instead. Whoever stops last clears both — one remembered kind cleared only one, and
+  // the thread kept "processing". (Second verification pass.)
+  const opts7 = { errors: {} }
+  const api7 = stubSlack(opts7)
+  const t7 = transportFor(api7)
+  await t7.authenticate()
+  const stopA = t7.startTyping({ channel: 'C1', threadTs: 't1' }, () => {})
+  await settle()
+  opts7.errors = { 'agents.sessions.setStatus': 'ratelimited' }
+  const stopB = t7.startTyping({ channel: 'C1', threadTs: 't1' }, () => {})
+  await settle()
+  opts7.errors = {}
+  stopB()
+  await new Promise((r) => setTimeout(r, 1700))
+  stopA()
+  await settle()
+  const sessions7 = calls(api7, 'agents.sessions.setStatus').map((b) => b.status)
+  const assistant7 = calls(api7, 'assistant.threads.setStatus').map((b) => b.status)
+  check('both kinds a thread showed are cleared', sessions7.at(-1) === 'active' && assistant7.at(-1) === '', `${JSON.stringify(sessions7)} ${JSON.stringify(assistant7)}`)
+  api7.restore()
+
+  // One call at a time per thread: a clear sent while a re-set was still on its way could reach Slack
+  // first and leave "processing" behind. (Second verification pass.)
+  const api8 = stubSlack({ delayMs: { 'agents.sessions.setStatus': 300 } })
+  const t8 = transportFor(api8)
+  await t8.authenticate()
+  const stopC = t8.startTyping({ channel: 'C1', threadTs: 't1' }, () => {})
+  const stopD = t8.startTyping({ channel: 'C1', threadTs: 't1' }, () => {})
+  await new Promise((r) => setTimeout(r, 700))
+  stopC()
+  await new Promise((r) => setTimeout(r, 1600))     // the re-set is on its way
+  stopD()
+  await new Promise((r) => setTimeout(r, 900))
+  const all8 = api8.calls.filter((c) => c.method === 'agents.sessions.setStatus')
+  const overlapping = all8.filter((a) => all8.some((b) => b !== a && b.start <= a.start && b.end !== null && a.start < b.end))
+  check('a thread\'s status calls never overlap', overlapping.length === 0, JSON.stringify(all8.map((c) => [c.body.status, c.start - all8[0].start, c.end - all8[0].start])))
+  check('and the last one clears it', all8.at(-1)?.body?.status === 'active', JSON.stringify(all8.map((c) => c.body.status)))
+  api8.restore()
 }
 
 // 6d. Upload bytes the caller already read are sent as they are; the path is only the file's name.

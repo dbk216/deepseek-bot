@@ -596,8 +596,17 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
   // How many messages are working in each thread. The status is the thread's, not a message's: with one
   // message waiting behind another, the first one's end cleared it and the second ran with nothing shown.
   const working = new Map<string, number>()
-  // What each thread shows, whoever set it: the last to stop clears this, not only what it set itself.
-  const threadShows = new Map<string, 'sessions' | 'assistant'>()
+  // Every kind of status each thread shows, whoever set it: the last to stop clears them all. One kind
+  // remembered per thread cleared only that one when two messages had shown different kinds.
+  const threadShows = new Map<string, Set<'sessions' | 'assistant'>>()
+  const showing = (where: string, kind: 'sessions' | 'assistant') => {
+    const kinds = threadShows.get(where) ?? new Set<'sessions' | 'assistant'>()
+    kinds.add(kind)
+    threadShows.set(where, kinds)
+  }
+  // One status call at a time per thread, in order: a clear sent while a re-set was still on its way
+  // could reach Slack first and leave "processing" behind.
+  const threadCalls = new Map<string, Promise<unknown>>()
 
   function startTyping(target: Target, onUnavailable?: () => void): () => void {
     const thread = typeof target.threadTs === 'string' && target.threadTs !== '' ? target.threadTs : null
@@ -607,16 +616,24 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
     }
     const where = `${target.channel}:${thread}`
     working.set(where, (working.get(where) ?? 0) + 1)
-    const set = (method: string, status: string) =>
-      api.slackPost<{ ok: boolean; error?: string }>(requireToken(), method, { channel_id: target.channel, thread_ts: thread, status })
+    const set = (method: string, status: string) => {
+      const call = (threadCalls.get(where) ?? Promise.resolve()).then(() =>
+        api.slackPost<{ ok: boolean; error?: string }>(requireToken(), method, { channel_id: target.channel, thread_ts: thread, status }))
+      const settled = call.catch(() => {})
+      threadCalls.set(where, settled)
+      // Forgotten once idle with nobody working here, so the map does not keep a chain per thread.
+      void settled.then(() => { if (threadCalls.get(where) === settled && !working.has(where)) threadCalls.delete(where) })
+      return call
+    }
     let over = false
     let shown: 'sessions' | 'assistant' | null = null
     let refresh: ReturnType<typeof setInterval> | null = null
     const clear = () => {
-      const was = threadShows.get(where) ?? shown
+      const kinds = threadShows.get(where) ?? new Set<'sessions' | 'assistant'>()
+      if (shown !== null) kinds.add(shown)
       threadShows.delete(where)
-      if (was === 'sessions') void set('agents.sessions.setStatus', 'active').catch(() => {})
-      if (was === 'assistant') void set('assistant.threads.setStatus', '').catch(() => {})
+      if (kinds.has('sessions')) void set('agents.sessions.setStatus', 'active').catch(() => {})
+      if (kinds.has('assistant')) void set('assistant.threads.setStatus', '').catch(() => {})
     }
     const attempt = async (method: string, status: string, known: boolean | null): Promise<boolean | null> => {
       if (known === false) return false
@@ -630,14 +647,14 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
       if (sessions === true) {
         sessionsStatus = true
         shown = 'sessions'
-        threadShows.set(where, 'sessions')
+        showing(where, 'sessions')
       } else {
         if (sessions === false) sessionsStatus = false
         const assistant = await attempt('assistant.threads.setStatus', '작업 중…', assistantStatus)
         if (assistant === true) {
           assistantStatus = true
           shown = 'assistant'
-          threadShows.set(where, 'assistant')
+          showing(where, 'assistant')
           refresh = setInterval(() => { void set('assistant.threads.setStatus', '작업 중…').catch(() => {}) }, ASSISTANT_REFRESH_MS)
         } else {
           if (assistant === false) assistantStatus = false
@@ -661,7 +678,7 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
         if (again !== null) {
           setTimeout(() => {
             if (!working.has(where)) return
-            threadShows.set(where, again)
+            showing(where, again)
             if (again === 'sessions') void set('agents.sessions.setStatus', 'processing').catch(() => {})
             else void set('assistant.threads.setStatus', '작업 중…').catch(() => {})
           }, REASSERT_MS).unref?.()
