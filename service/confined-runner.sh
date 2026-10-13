@@ -94,6 +94,17 @@ profile() {
       fi
     done
   done
+  # The gateway's logs: their first lines carry the web UI's auth token, and that opens the
+  # harness's HTTP API — outside this sandbox — to whoever reads it. install-service.sh writes them
+  # here, outside the agent's home, where they used to be readable and writable by the agent.
+  logs="$HOME/.dsh/service/logs"
+  if [ -d "$logs" ]; then
+    printf '(deny file-read* (subpath %s))\n' "$(sbpl "$logs")"
+    resolved="$(cd "$logs" && pwd -P)"
+    if [ "$resolved" != "$logs" ]; then
+      printf '(deny file-read* (subpath %s))\n' "$(sbpl "$resolved")"
+    fi
+  fi
 }
 
 sbpl() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }

@@ -72,6 +72,10 @@ for (const resolved of [false, true]) {
   writeFileSync(join(fakeHome, '.dsh', '.credentials.yaml'), 'refs: { x: canary-cred-9b7 }\n')
   writeFileSync(join(fakeHome, '.dsh', '.credentials.yaml.bak-20261008'), 'canary-bak-3c4\n')
   writeFileSync(join(fakeHome, '.dsh', 'other.txt'), 'readable-2e8\n')
+  // The gateway's own log: its first lines carry the web UI's auth token, which opens the harness's
+  // HTTP API — outside this sandbox — to whoever reads it.
+  mkdirSync(join(fakeHome, '.dsh', 'service', 'logs'), { recursive: true })
+  writeFileSync(join(fakeHome, '.dsh', 'service', 'logs', 'gateway.out.log'), 'token=canary-ui-6d2\n')
   const env = { ...process.env, HOME: fakeHome }
   const text = execFileSync(RUNNER, ['--print-profile', ...READ_ONLY, '--', 'true'], { encoding: 'utf8', env })
   const as = resolved ? ' (resolved home)' : ' (home under a symlink)'
@@ -84,6 +88,7 @@ for (const resolved of [false, true]) {
   check('a command cannot read .env' + as, !read('.env').includes('canary-env-5d1'))
   check('nor .credentials.yaml' + as, !read('.credentials.yaml').includes('canary-cred-9b7'))
   check('nor a backup of it' + as, !read('.credentials.yaml.bak-20261008').includes('canary-bak-3c4'))
+  check('nor the gateway\'s log, which carries the web UI token' + as, !read(join('service', 'logs', 'gateway.out.log')).includes('canary-ui-6d2'))
   check('the rest of ~/.dsh stays readable' + as, read('other.txt').includes('readable-2e8'), read('other.txt').slice(0, 40))
   rmSync(made, { recursive: true, force: true })
 }

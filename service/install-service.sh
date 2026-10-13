@@ -26,7 +26,11 @@ UID_N="$(id -u)"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 AGENT_HOME="${DEEPBOT_HOME:-$HOME/.deepbot}"
-RUNTIME_DIR="${DEEPBOT_RUNTIME_DIR:-$AGENT_HOME/service}"
+# Outside the agent's home. It used to be <home>/service: launchd runs this launcher, unconfined, at
+# every (re)start, and the agent may write anywhere in its home — so the agent could rewrite what
+# runs outside its sandbox. The logs move with it: they carry the web UI's auth token.
+RUNTIME_DIR="${DEEPBOT_RUNTIME_DIR:-$HOME/.dsh/service}"
+LOG_DIR="$RUNTIME_DIR/logs"
 PORT="${DEEPBOT_PORT:-19500}"
 PROFILE="${DEEPBOT_PROFILE:-agent}"
 # The repository this script came from: the gateway builds its TypeScript sources
@@ -62,7 +66,7 @@ echo "=== installing deepbot gateway service ==="
 [ -x "$DSH_BIN" ] || { echo "❌ dsh not found: $DSH_BIN (set DSH_BIN)"; exit 1; }
 
 # 1) runtime copy, outside TCC-protected folders
-mkdir -p "$RUNTIME_DIR" "$AGENT_HOME" "$AGENT_HOME/state"
+mkdir -p "$RUNTIME_DIR" "$LOG_DIR" "$AGENT_HOME" "$AGENT_HOME/state"
 cp "$DIR/run-gateway.sh" "$RUNTIME_DIR/run-gateway.sh"
 chmod +x "$RUNTIME_DIR/run-gateway.sh"
 echo "✅ runtime copy: $RUNTIME_DIR/run-gateway.sh"
@@ -102,8 +106,8 @@ cat > "$PLIST" <<PLIST_EOF
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>15</integer>
-  <key>StandardOutPath</key><string>$AGENT_HOME/state/gateway.out.log</string>
-  <key>StandardErrorPath</key><string>$AGENT_HOME/state/gateway.err.log</string>
+  <key>StandardOutPath</key><string>$LOG_DIR/gateway.out.log</string>
+  <key>StandardErrorPath</key><string>$LOG_DIR/gateway.err.log</string>
 </dict>
 </plist>
 PLIST_EOF
@@ -128,7 +132,7 @@ if tail -30 "$HOME/.dsh/slack-state/deepbot.log" 2>/dev/null | grep -q "Socket M
   echo "   ✅ Slack connected"
 else
   echo "   ⚠️  no 'Socket Mode connected' yet — check:"
-  tail -12 "$AGENT_HOME/state/gateway.err.log" 2>/dev/null | sed 's/^/   /'
+  tail -12 "$LOG_DIR/gateway.err.log" 2>/dev/null | sed 's/^/   /'
 fi
 
 cat <<EOF
@@ -138,7 +142,7 @@ cat <<EOF
 
    status:   ./install-service.sh --status
    logs:     tail -f $HOME/.dsh/slack-state/deepbot.log
-   out/err:  $AGENT_HOME/state/gateway.{out,err}.log
+   out/err:  $LOG_DIR/gateway.{out,err}.log
    stop:     launchctl bootout gui/$UID_N/$LABEL
    remove:   ./install-service.sh --uninstall
 
