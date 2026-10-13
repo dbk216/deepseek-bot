@@ -97,6 +97,9 @@ else
   echo "   note    install dev dependencies and build: pnpm install && pnpm run build"
 fi
 
+# install.sh does the next steps itself.
+[ "${DEEPBOT_INSTALLER:-0}" = "1" ] && exit 0
+
 echo
 echo "Next"
 echo "  1. credentials (never stored in this repository):"

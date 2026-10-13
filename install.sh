@@ -88,7 +88,7 @@ note "dist/ ready"
 step "agent home and gateway profile"
 profile_dir="$DSH_HOME/profiles/$DEEPBOT_PROFILE"
 new_profile=0; [ -e "$profile_dir" ] || new_profile=1
-DSH_BIN="$DSH_BIN" "$DEEPBOT_DIR/init.sh" --home "$DEEPBOT_HOME" --profile "$DEEPBOT_PROFILE" | sed 's/^/    /'
+DEEPBOT_INSTALLER=1 DSH_BIN="$DSH_BIN" "$DEEPBOT_DIR/init.sh" --home "$DEEPBOT_HOME" --profile "$DEEPBOT_PROFILE" | sed 's/^/    /'
 
 step "platform and credentials"
 note "tokens go to $DSH_HOME/.env (mode 600); the harness reads them, this code never stores them"
