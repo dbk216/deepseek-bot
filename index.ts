@@ -961,6 +961,8 @@ export function apply(ctx, config) {
     reason: string
     /** Who asked. A decision from anybody else is refused while `approvalRequireSameUser`. */
     user?: string
+    /** Which request this is: its buttons carry it, so an older request's button cannot answer it. */
+    nonce: string
   }>()
 
   function wordIn(text: string, words: string[]): boolean {
@@ -972,16 +974,20 @@ export function apply(ctx, config) {
    * A button press, routed to the approval it belongs to.
    *
    * The id carries what the button means, so the transport does not need to know: it
-   * reports `approval:allow:<conversation>` and this decides.
+   * reports `approval:allow:<conversation>#<request>` and this decides. The request part matters
+   * because no transport takes the buttons away once a request is settled: without it, an old
+   * 허용 answered whatever request was pending in that conversation now.
    */
   async function handleAction(action: { id: string; target: { channel: string; threadTs: string | null }; user: string }) {
-    const match = /^approval:(allow|deny):(.+)$/.exec(action.id)
+    const match = /^approval:(allow|deny):([^#]+)(?:#([0-9a-f]{8}))?$/.exec(action.id)
     if (match === null) { log(`unhandled action id: ${action.id}`); return }
     const decision = match[1]
     const key = match[2]
     const pending = pendingApprovals.get(key)
-    if (pending === undefined) {
-      log(`an approval button was pressed in ${key} but nothing is pending`)
+    if (pending === undefined || pending.nonce !== match[3]) {
+      log(pending === undefined
+        ? `an approval button was pressed in ${key} but nothing is pending`
+        : `an approval button for an earlier request was pressed in ${key} — ignored`)
       await transport.post(targetFromKey(key), '이미 처리된 요청이야.')
       return
     }
@@ -1085,14 +1091,15 @@ export function apply(ctx, config) {
       // One that cannot gets the instruction to answer in the thread, which is the same
       // decision by a slower route.
       const withButtons = transport.supportsButtons === true
+      const nonce = randomUUID().replace(/-/g, '').slice(0, 8)
       const asked = await transport.post(target, [
         `⚠️ 권한이 필요해: ${reason}`,
         withButtons ? `아래 버튼을 누르거나 *허용* / *거부* 라고 답해줘.` : `실행하려면 *허용*, 거부하려면 *거부* 라고 답해줘.`,
         `(답이 없으면 ${Math.round(cfg.approvalTimeoutMs / 60000)}분 뒤 자동으로 거부돼.)`,
       ].join('\n'), withButtons
         ? { buttons: [
-            { id: `approval:allow:${key}`, label: '허용', style: 'primary' as const },
-            { id: `approval:deny:${key}`, label: '거부', style: 'danger' as const },
+            { id: `approval:allow:${key}#${nonce}`, label: '허용', style: 'primary' as const },
+            { id: `approval:deny:${key}#${nonce}`, label: '거부', style: 'danger' as const },
           ] }
         : undefined)
       if (asked === null) return 'unavailable'
@@ -1104,6 +1111,7 @@ export function apply(ctx, config) {
           resolve('cancelled')
         }, cfg.approvalTimeoutMs)
         pendingApprovals.set(key, {
+          nonce,
           askedAt: Date.now(),
           reason,
           user: requester,

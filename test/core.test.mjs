@@ -398,12 +398,38 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   await sleep(100)
   const withButtons = t.transport.posted.find((p) => p.buttons !== null)
   check('an approval on a button-capable transport posts buttons', withButtons?.buttons?.length === 2, JSON.stringify(withButtons?.buttons))
-  check('the buttons carry what they mean', withButtons?.buttons?.[0]?.id === 'approval:allow:C_ALLOWED:t1', String(withButtons?.buttons?.[0]?.id))
+  check('the buttons carry what they mean, and which request', /^approval:allow:C_ALLOWED:t1#[0-9a-f]{8}$/.test(String(withButtons?.buttons?.[0]?.id)), String(withButtons?.buttons?.[0]?.id))
   check('and the label is not an instruction to type', !/허용.*거부.*답해주세요/.test(String(withButtons?.text)) || /버튼으로 결정/.test(String(withButtons?.text)), String(withButtons?.text).slice(-60))
-  t.transport.press('approval:allow:C_ALLOWED:t1')
+  t.transport.press(withButtons?.buttons?.[0]?.id)
   check('pressing 허용 allows the action once', await outcome === 'allowed-once', await outcome)
   check('the press is logged as a decision by button', t.logs.some((l) => /answered by button: allowed-once/.test(l)))
   check('and a confirmation is posted', t.transport.posted.some((p) => /허용했어/.test(p.text)))
+  t.done()
+}
+
+// 18b. A button belongs to its request. The id named only the conversation, and no transport takes the
+// buttons away once a request is settled, so an old 허용 under request A — answered by typing — allowed
+// request B, which nobody had read.
+{
+  const t = boot({ state: { sessions: { 'C_ALLOWED:t1': 'slack-abc' } }, config: { fake: { supportsButtons: true } } })
+  await sleep(60)
+  const first = t.askApproval()
+  await sleep(100)
+  const oldAllow = t.transport.posted.find((p) => p.buttons !== null)?.buttons?.[0]?.id
+  t.transport.deliver(t.transport.message({ text: '허용' }))
+  check('request A is answered by typing', await first === 'allowed-once', await first)
+  const second = t.askApproval()
+  await sleep(100)
+  let settled = null
+  second.then((o) => { settled = o })
+  t.transport.press(oldAllow)
+  await sleep(150)
+  check('A\'s old button does not answer request B', settled === null, String(settled))
+  check('it is answered as settled', t.transport.posted.filter((p) => /이미 처리된 요청/.test(p.text)).length === 1)
+  const newAllow = t.transport.posted.filter((p) => p.buttons !== null).at(-1)?.buttons?.[0]?.id
+  check('B\'s buttons are not A\'s', typeof newAllow === 'string' && newAllow !== oldAllow, `${oldAllow} / ${newAllow}`)
+  t.transport.press(newAllow)
+  check('B\'s own button answers it', await second === 'allowed-once', await second)
   t.done()
 }
 
