@@ -1152,13 +1152,19 @@ export function apply(ctx, config) {
   /**
    * What a terminal shows for a tool call: the tool's own presentation when the registry has one
    * (its title; an edit's before and after), else its first argument. Cut to what a screen shows.
+   * The registry is asked as the session's agent: tools are registered in the agent's scope, and
+   * the global view has none of them.
    */
-  function toolStep(data: any): StreamFrame {
+  function toolStep(data: any, sessionId: string): StreamFrame {
     const name = typeof data?.name === 'string' ? data.name : typeof data?.toolName === 'string' ? data.toolName : 'tool'
     let args = data?.arguments
     if (typeof args === 'string') { try { args = JSON.parse(args) } catch { /* shown as written */ } }
     let card: any
-    try { card = ctx.get('tools')?.get?.(name)?.presentCall?.(args) } catch { card = undefined }
+    try {
+      const tools = ctx.get('tools')
+      const tool = tools?.get?.(name, ctx.get('agents')?.get?.(sessionId)) ?? tools?.get?.(name)
+      card = tool?.presentCall?.(args)
+    } catch { card = undefined }
     const first = typeof args === 'string' ? args : args !== null && typeof args === 'object' ? Object.values(args).find((v) => typeof v === 'string') : undefined
     const title = clip(typeof card?.title === 'string' ? card.title : typeof first === 'string' ? first : '', 300)
     const diff = card?.card === 'diff' && Array.isArray(card.diffs)
@@ -1200,7 +1206,7 @@ export function apply(ctx, config) {
           // A platform that streams shows the step in place; the progress message is for the rest.
           const live = liveOrigins.get(liveSessionId)
           const streams = live !== undefined && typeof via(live).stream === 'function'
-          if (streams) via(live).stream(live, toolStep(event.data))
+          if (streams) via(live).stream(live, toolStep(event.data, liveSessionId))
           const liveKey = streams ? undefined : Object.keys(state.sessions).find((k) => state.sessions[k] === liveSessionId)
           if (liveKey !== undefined) {
             const startedAt = turnStartedAt.get(liveKey)

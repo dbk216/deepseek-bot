@@ -132,6 +132,27 @@ if (question !== null) {
   check('the answer reaches the model', reply !== null && /B/.test(reply.text), JSON.stringify(reply?.text?.slice(0, 80)))
 }
 
+// 2b. A tool call: its card (the harness's own title for the call) and its result, matched by call id.
+const toolMark = frames.length
+send({ type: 'message', text: 'bash 도구로 `echo deepbot-live-check` 를 실행하고, 그 출력만 그대로 답해.' })
+const toolReply = await waitFor((f) => f.type === 'post' && f.answer === true && frames.indexOf(f) >= toolMark)
+const since = frames.slice(toolMark).filter((f) => f.type === 'stream')
+const call = since.find((f) => f.kind === 'tool' && /echo deepbot-live-check/.test(f.title ?? ''))
+check('a tool call reaches the terminal with its title and call id', call !== undefined && typeof call.callId === 'string', JSON.stringify(since.filter((f) => f.kind === 'tool').map((f) => ({ name: f.name, title: f.title, callId: f.callId }))))
+const result = since.find((f) => f.kind === 'tool.result' && f.callId === call?.callId)
+check('and its result follows, by the same call id', result !== undefined && result.ok === true && /deepbot-live-check/.test(result.text), JSON.stringify(result ?? since.filter((f) => f.kind === 'tool.result')))
+check('the model answered with the output', toolReply !== null && /deepbot-live-check/.test(toolReply.text), JSON.stringify(toolReply?.text?.slice(0, 80)))
+// Not a check (the model chooses the tool): whether a file edit arrives as a diff card.
+const editMark = frames.length
+send({ type: 'message', text: '파일 도구로 작업 디렉터리에 live-check.txt 를 만들고 내용은 alpha 한 줄로 해. 끝나면 "done" 만 답해.' })
+await waitFor((f) => f.type === 'post' && f.answer === true && frames.indexOf(f) >= editMark)
+const edits = frames.slice(editMark).filter((f) => f.type === 'stream' && f.kind === 'tool')
+const card = edits.find((f) => Array.isArray(f.diff) && f.diff.length > 0)
+console.log(`  info  file edit as a diff card: ${card !== undefined ? `yes (${card.name}: ${JSON.stringify(card.diff[0]).slice(0, 120)})` : `no (tools used: ${edits.map((f) => `${f.name} "${f.title ?? ''}"`).join(', ') || 'none'})`}`)
+// Not a check: whether this model streams its reasoning is a fact to record.
+const thought = frames.filter((f) => f.type === 'stream' && f.kind === 'thinking')
+console.log(`  info  reasoning streamed: ${thought.length > 0 ? `yes (${thought.length} frames, ${thought.map((f) => f.text).join('').length} chars)` : 'no (this model sends no reasoning-delta)'}`)
+
 // 3. The conversation can be read back (the index is refreshed after each turn, in the background).
 let history = null
 for (let i = 0; i < 20 && (history === null || history.items.length < 2); i++) {

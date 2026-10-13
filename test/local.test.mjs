@@ -445,13 +445,15 @@ function boot({ state = {}, config = {} } = {}) {
         return { agent, dispose: async () => {} }
       },
       resume: async () => { throw new Error('no') },
+      get: (id) => agents.find((a) => a.id === id),
     },
     sessions: { flush: async () => {} },
     agentDefaultModel: { currentSelection: () => ({ provider: 'fake', model: 'fake' }) },
     agentPresets: { resolve: async (id) => ({ id }), acquireScope: () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }), mount: async () => {} },
     permissionPresets: { resolve: () => ({ sandbox: 'workspace-write', approval: 'ask' }), set: () => {}, defaultPreset: 'standard' },
     // The harness's tool registry: an editor that presents its call as a diff; bash has no presenter here.
-    tools: { get: (name) => (name === 'str_replace_editor'
+    // Tools are registered in the agent's scope, as the harness does it: the global view has none.
+    tools: { get: (name, scope) => (name === 'str_replace_editor' && scope !== undefined && scope === agents[0]
       ? { presentCall: (args) => ({ card: 'diff', title: `str_replace ${args.path}`, diffs: [{ path: args.path, oldText: args.old_str, newText: args.new_str }] }) }
       : undefined) },
   }
