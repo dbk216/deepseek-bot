@@ -42,13 +42,22 @@ function safeUrl(url: string): string | undefined {
   return /^(https?:\/\/|mailto:)[\x21-\x7e]{1,2000}$/i.test(url) ? url : undefined
 }
 
-/** A bare URL without what belongs to the sentence around it: a closing bracket it never opened, a full stop. */
+/**
+ * A bare URL without what belongs to the sentence around it: a closing bracket it never opened, a
+ * full stop — and, of two bracketed URLs side by side, only the first. One pass over the token:
+ * a URL followed by a long run of brackets must not be rescanned for each one.
+ */
 function bareUrl(token: string): string {
-  let url = token
+  const next = token.indexOf(')(')
+  let end = next === -1 ? token.length : next + 1
+  let opens = 0
+  let closes = 0
+  for (let i = 0; i < end; i++) { if (token[i] === '(') opens++; else if (token[i] === ')') closes++ }
   for (;;) {
-    const unbalanced = url.endsWith(')') && url.split('(').length < url.split(')').length
-    if (!unbalanced && !/[.,;:!?'"]$/.test(url)) return url
-    url = url.slice(0, -1)
+    const c = end > 0 ? token[end - 1] : ''
+    if (c === ')' && closes > opens) { closes--; end-- }
+    else if (c !== '' && '.,;:!?\'"'.includes(c)) end--
+    else return token.slice(0, end)
   }
 }
 
@@ -58,12 +67,16 @@ export function inline(text: string, base: string, s: MarkdownStyles): Span[] {
   const push = (t: string, style: string, link?: string) => { if (t !== '') out.push(link === undefined ? { text: t, style } : { text: t, style, link }) }
   // Emphasis only at word edges, as Markdown has it: snake_case_names and 2*3*4 stay as written. A
   // link's label and target are bounded, so a run of brackets cannot make each one scan to the end.
-  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![\w*])\*[^*\s][^*\n]*?\*(?![\w*]))|((?<![\w_])_[^_\s][^_\n]*?_(?![\w_]))|(\[[^\]\n]{1,200}\]\([^)\s]{1,2100}\))|(:[a-z0-9_+]+:)|(https?:\/\/[^\s<>[\]]+)/g
+  // A bare URL is printable ASCII (it ends where Korean begins), without the brackets around it.
+  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![\w*])\*[^*\s][^*\n]*?\*(?![\w*]))|((?<![\w_])_[^_\s][^_\n]*?_(?![\w_]))|(\[[^\]\n]{1,200}\]\([^)\s]{1,2100}\))|(:[a-z0-9_+]+:)|(https?:\/\/[\x21-\x3b\x3d\x3f-\x5a\x5c\x5e-\x7e]+)/g
   let last = 0
-  for (const m of text.matchAll(re)) {
-    const at = m.index ?? 0
-    // A bare URL ends before the punctuation that closes its sentence; the rest stays text.
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const at = m.index
+    // A bare URL ends before the punctuation that closes its sentence; the rest is read again as
+    // text (it may hold the next URL).
     const token = m[7] !== undefined ? bareUrl(m[0]) : m[0]
+    re.lastIndex = at + Math.max(1, token.length)
     if (m[6] !== undefined && SHORTCODES[token.slice(1, -1)] === undefined) continue
     push(text.slice(last, at), base)
     if (m[1]) push(token.slice(1, -1), s.code)

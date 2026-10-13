@@ -145,8 +145,11 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
   // Only what changed: the lines around a change are in the file. Of a cut edit, the changes
   // after the last line both sides share are left out too: past the cut, a line can look removed
   // or added only because the other side's copy of it fell outside.
+  let uncompared = false
   const changes = (step.diff ?? []).flatMap((d) => {
     const ops = lineDiff(d.old === null ? [] : d.old.split('\n'), d.new.split('\n'))
+    // Too long to compare line by line: said, never guessed at.
+    if (ops === null) { uncompared = true; return [] }
     const shared = ops.map((l) => l.op).lastIndexOf(' ')
     return (d.truncated === true && shared >= 0 ? ops.slice(0, shared) : ops).filter((l) => l.op !== ' ')
   })
@@ -163,7 +166,10 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
       const out = layout(title === '' || title === step.name ? step.name : `${step.name}  ${title}`, width, style, { first: pad('⏺ ', mark), rest: pad('  ') })
       const diff = changes.flatMap((d) => layout(d.text === '' ? ' ' : d.text, width, d.op === '-' ? removed : added, { first: pad(`  ${d.op} `, d.op === '-' ? removed : added), rest: pad('    ') }))
       out.push(...fold(diff, detail.expanded ? UNFOLDED.diff : FOLDED.diff, detail, style))
-      if (cut) out.push({ spans: [pad('    '), { text: '… 큰 변경이라 앞부분만 표시 (잘림)', style }], soft: false })
+      const note = uncompared ? '… 변경이 커서 줄 단위로 비교하지 않음'
+        : cut ? (changes.length === 0 ? '… 큰 변경: 표시할 수 있는 앞부분에 차이 없음 (잘림)' : '… 큰 변경이라 앞부분만 표시 (잘림)')
+          : ''
+      if (note !== '') out.push({ spans: [pad('    '), { text: note, style }], soft: false })
       if (outcome !== null) {
         const shown = outcome.ok ? style : removed
         const text = outcome.text.replace(/\s+$/, '')

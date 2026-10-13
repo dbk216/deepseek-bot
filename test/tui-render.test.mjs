@@ -315,13 +315,12 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
 
 // 12. A line diff, for an edit's card.
 {
-  const ops = (a, b) => lineDiff(a, b).map((d) => `${d.op}${d.text}`).join('|')
+  const ops = (a, b) => (lineDiff(a, b) ?? []).map((d) => `${d.op}${d.text}`).join('|')
   check('linediff: a changed line is a removal and an addition, the rest kept', ops(['a', 'b', 'c'], ['a', 'x', 'c']) === ' a|-b|+x| c', ops(['a', 'b', 'c'], ['a', 'x', 'c']))
   check('linediff: a new file is all additions', ops([], ['x', 'y']) === '+x|+y')
   check('linediff: an insertion keeps both neighbours', ops(['a', 'c'], ['a', 'b', 'c']) === ' a|+b| c')
   const big = Array.from({ length: 2000 }, (_, i) => `l${i}`)
-  const huge = lineDiff(big, big.map((l) => `${l}!`))
-  check('linediff: inputs too large to compare become all removals then all additions', huge.length === 4000 && huge[0].op === '-' && huge[3999].op === '+')
+  check('linediff: inputs too large to compare are not compared, and it says so', lineDiff(big, big.map((l) => `${l}!`)) === null && lineDiff(['a'], ['b']) !== null)
 }
 
 // 11. Links that can be clicked, tables, and highlighted code.
@@ -349,6 +348,10 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   check('markdown: a line of spaces under a row with a pipe is laid out quickly', spaces < 1500, `${spaces}ms`)
   const brackets = timed('['.repeat(80_000))
   check('markdown: a run of brackets is laid out quickly', brackets < 1500, `${brackets}ms`)
+  const closers = timed(`https://a${')'.repeat(40_000)}`)
+  check('markdown: a URL followed by a run of closing brackets is laid out quickly', closers < 1500, `${closers}ms`)
+  const korean = md('https://x.com에서 확인, 그리고 (https://a.b/c)(https://d.e/f)', 200)[0].spans.filter((sp) => sp.link !== undefined).map((sp) => sp.link)
+  check('markdown: a bare URL ends where printable ASCII ends, and two in brackets are two', JSON.stringify(korean) === JSON.stringify(['https://x.com', 'https://a.b/c', 'https://d.e/f']), JSON.stringify(korean))
 
   const screen = new Screen(30, 2)
   screen.put(0, 0, '문서', 'L', 30, 'https://ex.am/ple')

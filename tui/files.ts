@@ -12,7 +12,7 @@ import { basename, join } from 'node:path'
 const SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.omc', '.cache', '__pycache__', '.venv', '.next', '.dsh'])
 const MAX_ENTRIES = 5000
 const MAX_DEPTH = 6
-/** A directory with more entries than this is listed in part: reading it all would be the whole budget. */
+/** A directory with more entries than this is listed in part, so one folder cannot fill the listing. */
 const MAX_PER_DIRECTORY = 2000
 const TTL_MS = 10_000
 /** The scan runs on a keystroke: past this it returns what it has, breadth first, so the top levels are there. */
@@ -27,8 +27,9 @@ function scan(root: string, now: () => number): string[] {
     if (depth > 0 && now() - started > BUDGET_MS) break
     let entries
     try { entries = readdirSync(dir, { withFileTypes: true }) } catch { continue }
-    if (entries.length > MAX_PER_DIRECTORY) entries.length = MAX_PER_DIRECTORY
+    // Sorted before the cut, so which part of a huge directory is listed does not depend on the disk's order.
     entries.sort((a, b) => a.name.localeCompare(b.name))
+    if (entries.length > MAX_PER_DIRECTORY) entries.length = MAX_PER_DIRECTORY
     for (const entry of entries) {
       if (out.length >= MAX_ENTRIES) break
       if (entry.isSymbolicLink()) continue

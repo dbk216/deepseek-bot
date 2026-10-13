@@ -577,6 +577,21 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   let screen = t.term.screen.text()
   check('tools: a cut diff shows the change, not the line that only fell past the cut', screen.includes('+ new top') && !screen.includes('- tail out'), screen.split('\n').slice(-14).join(' | '))
   check('tools: and says it was cut', /잘림/.test(screen))
+  // A cut edit long enough that its lines are not compared at all: no line is shown as removed or
+  // added on a guess (the fixture: one line put on top of 900).
+  const many = Array.from({ length: 900 }, (_, i) => `line ${i}`)
+  t.app.toolCall({ name: 'edit', callId: 'e2', title: 'Edit huge.ts', diff: [{ path: 'huge.ts', old: many.join('\n'), new: ['top', ...many.slice(0, 899)].join('\n'), truncated: true }] })
+  t.clock.advance(20)
+  screen = t.term.screen.text()
+  check('tools: an edit too long to compare shows no invented removals', !screen.includes('- line 0') && /비교하지 않음/.test(screen), screen.split('\n').slice(-10).join(' | '))
+  t.app.toolCall({ name: 'edit', callId: 'e3', title: 'Edit tail.ts', diff: [{ path: 'tail.ts', old: 'a\nb\nold tail', new: 'a\nb\nnew tail', truncated: true }] })
+  t.clock.advance(20)
+  check('tools: a cut edit whose change is past the cut says there is nothing to show, not "the first part"', /앞부분에 차이 없음/.test(t.term.screen.text()))
+  t.key('\x0f')
+  t.app.thinking(Array.from({ length: 600 }, (_, i) => `생각 ${i}`).join('\n'))
+  t.clock.advance(20)
+  check('thinking: unfolded past its limit, it says how much more there is', /줄 더/.test(t.term.screen.text()))
+  t.key('\x0f')
   // A retried attempt drops its thinking even when its answer had begun.
   t.app.thinking('버려질 계획')
   t.app.delta('버려질 답')
@@ -591,6 +606,22 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.resetAttempt()
   t.clock.advance(20)
   check('thinking: the thinking of an earlier, finished step stays', /생각함/.test(t.term.screen.text()))
+}
+
+{
+  // Found in review. Going up through history passes a /command entry (its list must not take the
+  // arrows), and a list comes back for text still in the box when a question closes.
+  const t = setup({ extra: { commands: COMMAND_INFO } })
+  t.app.editor.load(['첫 질문', '/help', '둘째 질문'])
+  const seen = []
+  for (let i = 0; i < 3; i++) { t.key('\x1b[A'); seen.push(t.app.editor.text) }
+  check('history: up goes past a /command entry', JSON.stringify(seen) === JSON.stringify(['둘째 질문', '/help', '첫 질문']), JSON.stringify(seen))
+  t.app.editor.set('')
+  t.key('/he')
+  t.app.ask('q9', [{ id: 'pick', question: '?', options: [{ label: 'A' }] }])
+  t.app.closeQuestion('q9')
+  t.clock.advance(20)
+  check('complete: the list is back for the text in the box once the question is gone', t.app.completion !== null && t.term.screen.text().includes('/help'))
 }
 
 {
@@ -644,6 +675,11 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const slow = fileFinder(() => (ticks += 1000))
   const partial = slow(root, '')
   check('files: a scan over its time budget returns what it has', partial.length > 0 && !partial.includes('src/app.ts'), JSON.stringify(partial))
+  // A huge directory is listed in part, and which part does not depend on the order the disk gives.
+  mkdirSync(join(root, 'many'))
+  for (let i = 0; i < 2100; i++) writeFileSync(join(root, 'many', `f${String(i).padStart(4, '0')}`), '')
+  const first = fileFinder()(root, 'many/f', 5000)
+  check('files: a directory over the cap keeps its first names in order', first.includes('many/f0000') && first.includes('many/f1999') && !first.includes('many/f2099'), `${first.length} listed`)
   rmSync(root, { recursive: true, force: true })
 }
 

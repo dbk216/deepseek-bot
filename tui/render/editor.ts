@@ -54,6 +54,11 @@ export class Editor {
     this.browsing = -1
   }
 
+  /** Whether the box shows an earlier entry reached with the arrows, not something being typed. */
+  get browsingHistory(): boolean {
+    return this.browsing !== -1
+  }
+
   /** What was sent before, oldest first: earlier runs' (loaded) and this one's. */
   get past(): readonly string[] {
     return this.history

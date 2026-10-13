@@ -377,6 +377,8 @@ export class App {
   closeQuestion(id: string): void {
     if (this.question?.id !== id) return
     this.question = null
+    // The keys are the input box's again: a command still typed there gets its list back.
+    this.refreshCompletion()
     this.notice('질문이 닫힘', 'info')
   }
 
@@ -390,6 +392,7 @@ export class App {
     if (q.done) {
       this.question = null
       this.o.backend.answer?.(q.id, q.answers)
+      this.refreshCompletion()
     }
     this.terminal.requestRender(true)
   }
@@ -618,7 +621,8 @@ export class App {
   /** Look again at what is typed: a /command or an @file being written gets its candidates. */
   private refreshCompletion(): void {
     if (this.dismissed !== null && this.dismissed !== this.editor.text) this.dismissed = null
-    const usable = this.view.kind === 'main' && this.question === null && this.search === null && this.dismissed === null
+    // Not for an earlier entry being walked through: its list would take the arrows that walk on.
+    const usable = this.view.kind === 'main' && this.question === null && this.search === null && this.dismissed === null && !this.editor.browsingHistory
     const found = usable ? complete(this.editor.text, this.editor.cursor, this.o.commands ?? [], this.o.files) : null
     if (found === null) { this.completion = null; return }
     const same = this.completion !== null && this.completion.items.map((i) => i.label).join('\n') === found.items.map((i) => i.label).join('\n')

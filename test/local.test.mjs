@@ -513,6 +513,7 @@ function boot({ state = {}, config = {} } = {}) {
   await sleep(80)
   const later = c.frames.filter((f) => f.type === 'stream' && f.kind === 'tool')
   const cut = later.find((f) => f.callId === 'c3')?.diff?.[0]
+  check('tools: a large edit is cut to few enough lines to compare', cut?.old.split('\n').length <= 400 && cut.new.split('\n').length <= 400, `${cut?.old.split('\n').length} / ${cut?.new.split('\n').length}`)
   check('tools: a large edit is cut at a line boundary and marked as cut', cut?.truncated === true && cut.old.length <= 8000 && /^line \d+$/.test(cut.old.split('\n').at(-1)) && /^line \d+$/.test(cut.new.split('\n').at(-1)), JSON.stringify({ truncated: cut?.truncated, oldEnd: cut?.old?.slice(-20), newEnd: cut?.new?.slice(-20) }))
   check('tools: a presenter that answers with a promise is not waited for: the first argument is the title', later.find((f) => f.callId === 'c4')?.title === '/w/x')
   check('tools: another session\'s tool call is not shown in this conversation', !later.some((f) => f.callId === 'c5'))

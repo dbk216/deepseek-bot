@@ -1172,11 +1172,14 @@ export function apply(ctx, config) {
     const title = clip(typeof card?.title === 'string' ? card.title : typeof first === 'string' ? first : '', 300)
     // The first three files of an edit, each side cut to whole lines within a budget. A cut side
     // is marked, so the card can say so instead of showing the lines past the cut as removed.
+    // Lines as well as characters: the card compares the two sides line by line, and past a few
+    // hundred a side it would not compare them at all.
     const side = (text: string) => {
-      if (text.length <= 8000) return { text, cut: false }
-      const head = text.slice(0, 8000)
-      const end = head.lastIndexOf('\n')
-      return { text: end > 0 ? head.slice(0, end) : head, cut: true }
+      let kept = text
+      if (kept.length > 8000) { const head = kept.slice(0, 8000); const end = head.lastIndexOf('\n'); kept = end > 0 ? head.slice(0, end) : head }
+      const lines = kept.split('\n')
+      if (lines.length > 400) kept = lines.slice(0, 400).join('\n')
+      return { text: kept, cut: kept.length < text.length }
     }
     const diff = card?.card === 'diff' && Array.isArray(card.diffs)
       ? card.diffs.slice(0, 3).map((d: any) => {
