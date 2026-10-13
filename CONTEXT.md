@@ -12,9 +12,11 @@ and what to call the other. The rules for changing the code are in [AGENTS.md](A
 - **profile** — the harness configuration a gateway runs with: which plugins, which sandbox, which
   approval policy. It lives under the harness home, not in this repository.
 - **adapter** — the plugin itself (`index.ts`): everything between a platform message and a turn.
-- **transport** — the part that speaks one platform's API (Slack, Telegram, Discord). The adapter
-  talks to a transport only through `types/transport.ts`.
-- **platform** — Slack, Telegram or Discord. Not "channel", which is a place inside one.
+- **transport** — the part that speaks one platform's API (Slack, Telegram, Discord) or serves the
+  terminal over a local socket. The adapter talks to a transport only through `types/transport.ts`.
+- **platform** — Slack, Telegram, Discord or the terminal. Not "channel", which is a place inside one.
+- **terminal** — `deepbot-tui`, a fullscreen client that talks to the gateway over a local socket. It
+  is only the screen: the conversation, its session and its memory stay in the gateway.
 
 ## Places on disk
 
@@ -39,7 +41,8 @@ Never say just "home".
 - **turn** — one message taken, worked on and answered. One turn runs at a time per conversation;
   later messages **wait**.
 - **in-flight record** — the note, kept on disk, that a turn is running, so a restart can tell the
-  conversation its turn was lost.
+  conversation its turn was lost. What a process finds at start it sets aside (`restartLost`), so it
+  reports the previous process's turns and never its own.
 
 ## What the model is given
 
