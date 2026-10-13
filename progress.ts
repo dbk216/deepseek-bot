@@ -127,6 +127,9 @@ export function createProgressTracker(options: ProgressOptions) {
       return { ts: entry.ts, target: entry.target }
     },
 
+    /** Whether this conversation has a message, or one on its way: a first post in flight counts. */
+    tracks(key: string): boolean { return entries.has(key) },
+
     /** Whether a message already exists for this conversation. */
     has(key: string): boolean { return entries.get(key)?.ts !== null && entries.get(key) !== undefined },
 

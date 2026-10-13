@@ -89,23 +89,61 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   t.done()
 }
 
-// 3. While a turn is open, another message must not be lost.
+// 3. While a turn is open, another message in the same conversation waits for it.
 //
-// There is deliberately no per-conversation serialization here: the queue is a global FIFO
-// bounded by `maxConcurrency`, and two turns in one conversation collide on the session,
-// which the adopt path absorbs by retrying on "active write handle". What matters is that
-// the second message is not dropped. A per-conversation queue would be tidier — that is a
-// product gap, not a defect, and this check does not pretend otherwise.
+// This used to assert the opposite on purpose: no per-conversation serialization, two turns
+// colliding on one session, the adopt path absorbing it by retrying on "active write handle".
+// In practice the second turn waited out three retries and answered "Execution failed", and in a
+// new thread it created a second session and the mapping kept whichever finished last. Now the
+// second message queues behind the first and runs when it ends; other conversations are not held.
 {
-  const t = boot({ agent: 'hang' })
+  const t = boot({ agent: 'hang', config: { runTimeoutMs: 500 } })
   await sleep(60)
   t.transport.deliver(t.transport.message({ text: 'slow one' }))
-  await sleep(250)
+  await sleep(150)
   t.transport.deliver(t.transport.message({ text: 'while you are busy' }))
-  await sleep(400)
-  check('a message during a turn is not dropped', t.created.length === 2, `${t.created.length} create(s) — the second is attempted, not ignored`)
-  check('and nothing says it was ignored', !t.logs.some((l) => /ignored|dropped|refused the message/i.test(l)),
+  await sleep(150)
+  check('a second message waits while the first turn is open', t.created.length === 1, `${t.created.length} create(s)`)
+  await sleep(900)
+  check('and runs once the first turn has ended', t.created.length === 2, `${t.created.length} create(s)`)
+  check('nothing says it was ignored', !t.logs.some((l) => /ignored|dropped|refused the message/i.test(l)),
     t.logs.filter((l) => /accepted|ignored|dropped/.test(l)).join(' | ').slice(0, 120))
+  t.done()
+}
+
+// 3b. A stop withdraws what is waiting as well as what is running. Without it the bot said it had
+// stopped and then started on the next message in the queue.
+{
+  const t = boot({ agent: 'hang', config: { runTimeoutMs: 500 } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: 'slow one' }))
+  await sleep(150)
+  t.transport.deliver(t.transport.message({ text: 'queued behind it' }))
+  await sleep(50)
+  t.transport.deliver(t.transport.message({ text: '그만' }))
+  await sleep(1200)
+  check('a waiting message is withdrawn by a stop, not run afterwards', t.created.length === 1, `${t.created.length} create(s)`)
+  t.done()
+}
+
+// 3c. A stop for a message that has not started says it stopped it — not "nothing is running" while
+// "작업 중" is on screen — and the report takes the working message's place.
+{
+  const t = boot({ agent: 'hang', config: { maxConcurrency: 1, runTimeoutMs: 60000, targetChannels: ['*'] } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: 'elsewhere', target: { channel: 'C_OTHER', threadTs: 't0' } }))
+  await sleep(150)
+  t.transport.deliver(t.transport.message({ text: 'waits for a slot' }))
+  await sleep(150)
+  t.transport.deliver(t.transport.message({ text: '그만' }))
+  await sleep(300)
+  const posts = t.transport.posted.map((p, i) => ({ ...p, ts: `ts-${i + 1}` }))
+  const inThread = posts.filter((p) => p.target.channel === 'C_ALLOWED')
+  const working = inThread.find((p) => p.replace === null && /작업 중/.test(p.text))
+  const report = inThread[inThread.length - 1]
+  check('the stop says it withdrew the waiting message', /중단/.test(report?.text ?? '') && !/없어/.test(report?.text ?? ''), report?.text)
+  check('in place of the working message', working !== undefined && report?.replace === working.ts, JSON.stringify(inThread).slice(0, 160))
+  check('and the waiting message never starts', t.created.length === 1, `${t.created.length} create(s)`)
   t.done()
 }
 

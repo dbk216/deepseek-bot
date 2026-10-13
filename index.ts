@@ -775,9 +775,19 @@ export function apply(ctx, config) {
       try { return transport.startTyping(target) }
       catch (e) { log(`typing failed: ${String((e as Error)?.message ?? e)}`); return () => {} }
     }
+    showWorking(key, target)
+    return () => {}
+  }
+
+  /**
+   * The working message, on a platform without typing — unless the conversation already has one,
+   * put up by a turn ahead of this message. Called again when a message that waited starts, because
+   * by then that turn's reply has taken the message it was showing under.
+   */
+  function showWorking(key: string, target: Origin): void {
+    if (cfg.workingIndicator !== true || typeof transport.startTyping === 'function' || progress.tracks(key)) return
     void progress.force(key, target)
       .catch((e) => log(`working message failed: ${String((e as Error)?.message ?? e)}`))
-    return () => {}
   }
 
   /**
@@ -1587,6 +1597,41 @@ export function apply(ctx, config) {
     }
   }
 
+  /**
+   * One turn at a time per conversation. Two turns on one session collided: the second waited out
+   * three "active write handle" retries and answered "Execution failed", and in a new thread it made
+   * a second session and the mapping kept whichever finished last. A conversation's messages now
+   * enter the global queue one after another; other conversations are not held up behind them.
+   */
+  const conversationTail = new Map<string, Promise<void>>()
+  function enqueueFor(key: string, job: () => Promise<void>): void {
+    const run = (conversationTail.get(key) ?? Promise.resolve())
+      .then(() => new Promise<void>((done) => enqueue(() => Promise.resolve(job()).finally(done))))
+    conversationTail.set(key, run)
+    void run.finally(() => { if (conversationTail.get(key) === run) conversationTail.delete(key) })
+  }
+
+  /**
+   * Messages accepted but not started, per conversation. A stop withdraws them; each checks its
+   * ticket just before its turn begins. Without this the bot said it had stopped and then started
+   * on the next message in the queue.
+   */
+  const waiting = new Map<string, Set<{ withdrawn: boolean }>>()
+  function withdrawWaiting(key: string): number {
+    const tickets = waiting.get(key)
+    if (tickets === undefined) return 0
+    for (const ticket of tickets) ticket.withdrawn = true
+    waiting.delete(key)
+    return tickets.size
+  }
+  /** Leave the waiting list; false when a stop withdrew this message meanwhile. */
+  function leaveWaiting(key: string, ticket: { withdrawn: boolean }): boolean {
+    const tickets = waiting.get(key)
+    tickets?.delete(ticket)
+    if (tickets?.size === 0) waiting.delete(key)
+    return !ticket.withdrawn
+  }
+
   // ── Event handling ────────────────────────────────────────────────────────
   /**
    * One inbound message, already parsed by the transport: it has decided the
@@ -1614,8 +1659,6 @@ export function apply(ctx, config) {
       // a turn — an expensive way to answer nothing, and a question the model can only guess at.
       if (message.text.replace(/[\s\u200b-\u200f\u2060\ufeff]+/gu, '') === '') return
     const prompt = message.text.slice(0, cfg.maxPromptChars)
-      // Remembered here because the approval listener runs outside the turn.
-      if (message.user !== '') requesterOf.set(key, message.user)
       state.touched[key] = Date.now()
     if (!prompt) return
 
@@ -1650,8 +1693,17 @@ export function apply(ctx, config) {
     // actually running — otherwise the honest reply is that there is nothing to
     // stop, which is better than starting a turn to say so.
     if (isCancelRequest(prompt)) {
+      // What is waiting goes too: a stop that left it queued would start on it right after.
+      const withdrawn = withdrawWaiting(key)
       const stopped = cancelRunning(key, 'user')
-      log(`cancel requested in ${key} — ${stopped === 'none' ? 'nothing was running' : `stopped a ${stopped} turn`}`)
+      log(`cancel requested in ${key} — ${stopped === 'none' ? 'nothing was running' : `stopped a ${stopped} turn`}${withdrawn > 0 ? `, withdrew ${withdrawn} waiting message(s)` : ''}`)
+      // Only waiting messages: no turn holds the working message they put up, so the report takes
+      // its place — not "nothing is running" under a message that says "작업 중".
+      if (stopped === 'none' && withdrawn > 0) {
+        await progress.settle(key)
+        await replyInPlaceOf({ channel, threadTs }, `중단했어 — 기다리던 메시지 ${withdrawn}개를 취소했어.`, progress.take(key)?.ts ?? null)
+        return
+      }
       // A running turn reports its own cancellation: it holds the progress placeholder, so
       // the placeholder becomes the report rather than leaving a second message behind.
       // A turn that is still being created has no placeholder and no agent, so nothing would
@@ -1671,10 +1723,15 @@ export function apply(ctx, config) {
     log(`accepted channel=${channel} thread=${threadTs} session=${state.sessions[key] ?? 'new'}`)
     // Before the queue, so a message waiting behind other turns also shows it was taken.
     const stopWorking = startWorking(key, { channel, threadTs })
+    const ticket = { withdrawn: false }
+    if (!waiting.has(key)) waiting.set(key, new Set())
+    waiting.get(key)?.add(ticket)
 
-    enqueue(async () => {
+    enqueueFor(key, async () => {
       const started = Date.now()
       const replyTarget = { channel, threadTs }
+      if (ticket.withdrawn) { stopWorking(); log(`withdrawn before it started in ${key}`); return }
+      showWorking(key, replyTarget)
       try {
         let historyText = ''
         let historyLastTs: string | null = null
@@ -1698,6 +1755,11 @@ export function apply(ctx, config) {
         } catch (e) { log(`attachment fetch threw: ${String(e?.message ?? e)}`) }
         if (attachmentText !== '') log(`attachments: ${message.files.length} file(s) for ts=${ts}`)
 
+        // Checked again here, after the fetches: a stop can arrive while they run, before the turn exists.
+        if (!leaveWaiting(key, ticket)) { stopWorking(); log(`withdrawn before it started in ${key}`); return }
+        // Remembered when this message's turn starts, not when it arrives: the approval listener runs
+        // outside the turn, and a message queued behind another would claim that turn's approvals.
+        if (message.user !== '') requesterOf.set(key, message.user)
         let r
         try {
           r = await withTimeout(runTurn(prompt, state.sessions[key], { channel, threadTs, user: message.user }, historyText, attachmentText, key, attachmentImages), cfg.runTimeoutMs)
@@ -1734,6 +1796,7 @@ export function apply(ctx, config) {
       } catch (e) {
         log('turn failed', String(e?.stack ?? e))
         stopWorking()
+        leaveWaiting(key, ticket)   // a ticket left behind would be "withdrawn" by a later stop
         await progress.settle(key)
         const leftover = progress.take(key)?.ts ?? null
         await replyInPlaceOf(replyTarget, `Execution failed: ${String(e?.message ?? e).slice(0, 300)}`, leftover)
