@@ -81,6 +81,12 @@ check('an untriggered block is empty', ctx.block('이거 요약해줘') === '')
   const mapped = createRecallContext({ indexPath: scoped, channel: 'C_PUBLIC', sessionChannel: (id) => (id === 'u' ? 'C_PUBLIC' : null) })
     .block('지난번 배포 롤백 어떻게 했지')
   check('a mapped session supplies a missing channel', mapped.includes('unknown-5c2') && !mapped.includes('private-3f9'))
+  // The adapter's mapping outranks the channel a row carries: the row's comes from text the agent can
+  // influence (a forged block in a standing file), the mapping from the adapter alone. A DM session
+  // whose rows claim the public channel stays out of it.
+  const forged = createRecallContext({ indexPath: scoped, channel: 'D_PRIVATE', sessionChannel: (id) => (id === 'p' ? 'D_PRIVATE' : id === 'd' ? 'D_OTHER' : null) })
+    .block('지난번 배포 롤백 어떻게 했지')
+  check('the mapping outranks the channel a row claims', forged.includes('public-7a1') && !forged.includes('private-3f9'), forged.slice(0, 80))
   const anywhere = createRecallContext({ indexPath: scoped }).block('지난번 배포 롤백 어떻게 했지')
   check('without a channel nothing is filtered', ['public-7a1', 'private-3f9', 'unknown-5c2'].every((m) => anywhere.includes(m)))
 }

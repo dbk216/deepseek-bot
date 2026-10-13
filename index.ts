@@ -584,6 +584,16 @@ export function apply(ctx, config) {
    * the top-level row a profile can patch is disabled. They go in the standing part,
    * so they are sent once per conversation and again only when they change.
    */
+  /**
+   * Quoted text cannot carry the adapter's own markers. The recall indexer reads a session's channel from
+   * the "[this conversation]" block before the first "[user message]", and the persona and notes files
+   * come before that block — files the agent can write. A block forged there filed every later session,
+   * DMs included, under the channel it named. In quoted text a marker is marked as quoted.
+   */
+  function defuse(text: string): string {
+    return text.replace(/\[(this conversation|user message|speaker)\]/g, '[$1 (quoted)]')
+  }
+
   async function contextPreamble(origin = null, historyText = '', attachmentText = '', sessionKey = null, prompt = '', sessionId = '') {
     if (!cfg.injectInstructions) return { preamble: '', instructions: 0, memory: 0 }
     const cwd = await sessionCwd()
@@ -599,7 +609,7 @@ export function apply(ctx, config) {
       [cfg.factsFile, cfg.maxFactsChars, '[what you know about the work]'],
     ]) {
       const text = typeof file === 'string' && file !== '' ? readTextIfPresent(join(home, file), Number(limit)) : null
-      if (text !== null) standing.push(`${heading} ${file}\n${text.trim()}`)
+      if (text !== null) standing.push(`${heading} ${file}\n${defuse(text.trim())}`)
     }
     if (origin !== null) {
       const watchConfig = `${cwd}/watches/${origin.channel}-${origin.threadTs}.json`
@@ -628,14 +638,14 @@ export function apply(ctx, config) {
       'Anything outside it needs the user to ask for it explicitly.',
     ].join('\n'))
     const notes = memoryIndex(cwd)
-    if (notes !== '') standing.push(notes)
+    if (notes !== '') standing.push(defuse(notes))
     // Note hygiene. The advice is stable until the file changes and the standing block is
     // digest-gated, so a request to tidy up is sent once and then cached.
     const notesAdvice = analyzeNotes(readTextIfPresent(join(cwd, cfg.factsFile), 200000), {
       budgetChars: cfg.notesBudgetChars,
     }).advice
     if (notesAdvice !== null) {
-  standing.push(notesAdvice)
+  standing.push(defuse(notesAdvice))
   // A deterministic signal, so a scenario can assert that the advice reached the prompt rather
   // than inferring it from the answer.
   log(`notes: consolidation advice added (${notesAdvice.length} chars)`)
@@ -651,8 +661,8 @@ export function apply(ctx, config) {
 
     const parts = []
     if (includeStanding) parts.push(standingText)
-    if (typeof attachmentText === 'string' && attachmentText !== '') parts.push(attachmentText)
-    if (typeof historyText === 'string' && historyText !== '') parts.push(historyText)
+    if (typeof attachmentText === 'string' && attachmentText !== '') parts.push(defuse(attachmentText))
+    if (typeof historyText === 'string' && historyText !== '') parts.push(defuse(historyText))
     // Dynamic, never standing: the standing block is digest-gated for prompt-cache safety, so
     // a per-turn block there would invalidate the cache on every turn.
     if (typeof prompt === 'string' && prompt !== '') {
@@ -672,7 +682,7 @@ export function apply(ctx, config) {
       })
       const past = recallContext.block(prompt)
       if (past !== '') {
-        parts.push(past)
+        parts.push(defuse(past))
         // A deterministic signal that the decision block reached the prompt, so a scenario can
         // assert the injection instead of guessing at the shape of the answer.
         log(`recall: injected ${(past.match(/^- /gm) ?? []).length} passage(s)`)

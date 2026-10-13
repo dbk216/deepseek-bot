@@ -132,7 +132,8 @@ export function createRecallContext(options: RecallOptions) {
         const own = options.sessionId ?? null
         const rows = load()
           .filter((row) => channel === null
-            || (row.channel ?? (row.sessionId !== undefined ? options.sessionChannel?.(row.sessionId) : null) ?? null) === channel)
+            // The adapter's mapping first: a row's own channel was read from text, the mapping was not.
+            || ((row.sessionId !== undefined ? options.sessionChannel?.(row.sessionId) : null) ?? row.channel ?? null) === channel)
           .filter((row) => own === null || row.sessionId !== own)
         if (rows.length === 0) return ''
         const texts = rows.map((row) => String(row.text).toLowerCase())
