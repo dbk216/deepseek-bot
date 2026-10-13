@@ -491,6 +491,52 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
 }
 
 {
+  // Thinking and tool steps: shown briefly, everything on ctrl+o.
+  const t = setup({ rows: 40 })
+  t.app.turnStarted()
+  t.app.thinking('계획을 세우는 중\n둘째 생각\n셋째 생각\n넷째 생각')
+  t.clock.advance(20)
+  let screen = t.term.screen.text()
+  check('thinking: shown while it streams, its latest lines', screen.includes('생각 중') && screen.includes('넷째 생각') && !screen.includes('계획을 세우는 중'), screen.split('\n').slice(10, 20).join(' | '))
+  t.app.delta('답을 씁니다')
+  t.clock.advance(20)
+  screen = t.term.screen.text()
+  check('thinking: folded to one line once the answer starts', /생각함/.test(screen) && !screen.includes('넷째 생각') && screen.includes('답을 씁니다'))
+  t.key('\x0f')   // ctrl+o
+  t.clock.advance(20)
+  screen = t.term.screen.text()
+  check('ctrl+o: unfolds the thinking in full', screen.includes('계획을 세우는 중') && screen.includes('넷째 생각'))
+  t.key('\x0f')
+  t.clock.advance(20)
+  check('ctrl+o: and folds it again', !t.term.screen.text().includes('계획을 세우는 중'))
+
+  t.app.toolCall({ name: 'str_replace_editor', callId: 'c1', title: 'str_replace /w/a.ts',
+    diff: [{ path: '/w/a.ts', old: 'same one\nold value\nsame two', new: 'same one\nnew value\nsame two' }] })
+  t.clock.advance(20)
+  screen = t.term.screen.text()
+  check('tools: the call shows its name and title', screen.includes('⏺ str_replace_editor') && screen.includes('str_replace /w/a.ts'))
+  check('tools: an edit shows what changed, not the lines around it', screen.includes('- old value') && screen.includes('+ new value') && !screen.includes('same one'), screen.split('\n').slice(-16).join(' | '))
+  t.app.toolResult('c1', true, 'r1\nr2\nr3\nr4\nr5')
+  t.clock.advance(20)
+  screen = t.term.screen.text()
+  check('tools: the result shows under its call, a few lines', screen.includes('⎿ r1') && screen.includes('r3') && !screen.includes('r4'))
+  t.key('\x0f')
+  t.clock.advance(20)
+  check('ctrl+o: unfolds the result too', t.term.screen.text().includes('r5'))
+  t.key('\x0f')
+  t.app.toolCall({ name: 'bash', callId: 'c2', title: 'false' })
+  t.app.toolResult('c2', false, 'exit 1')
+  t.app.toolResult('unknown', true, '아무 데도 안 붙음')
+  t.clock.advance(20)
+  screen = t.term.screen.text()
+  check('tools: a failed result is shown, and one for an unknown call is dropped', screen.includes('⎿ exit 1') && !screen.includes('아무 데도 안 붙음'))
+  t.app.thinking('버려질 생각')
+  t.app.resetAttempt()
+  t.clock.advance(20)
+  check('thinking: a failed attempt\'s thinking is dropped with its text', !t.term.screen.text().includes('버려질 생각'))
+}
+
+{
   // The history file: owner-only, read back, and kept to the last HISTORY_KEEP entries.
   const dir = mkdtempSync(join(tmpdir(), 'deepbot-history-'))
   const file = join(dir, 'deepbot-tui', 'history.jsonl')

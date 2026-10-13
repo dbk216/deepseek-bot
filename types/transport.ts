@@ -93,7 +93,12 @@ export interface AttachmentManifest {
 export type StreamFrame =
   | { kind: 'text'; text: string }
   | { kind: 'reset' }
-  | { kind: 'tool'; name: string }
+  /** The model's reasoning, apart from the answer. */
+  | { kind: 'thinking'; text: string }
+  /** A tool call: the tool's own title for it when it has one, and an edit's before and after. */
+  | { kind: 'tool'; name: string; callId?: string; title?: string; diff?: Array<{ path: string; old: string | null; new: string }> }
+  /** A call's result, by its call id: whether it failed, and its text (cut). */
+  | { kind: 'tool.result'; callId: string; ok: boolean; text: string }
 
 /** A question a turn asks the person (the ask_user_question tool, a plan review). */
 export interface QuestionItem {

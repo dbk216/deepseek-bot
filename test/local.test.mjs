@@ -450,6 +450,10 @@ function boot({ state = {}, config = {} } = {}) {
     agentDefaultModel: { currentSelection: () => ({ provider: 'fake', model: 'fake' }) },
     agentPresets: { resolve: async (id) => ({ id }), acquireScope: () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }), mount: async () => {} },
     permissionPresets: { resolve: () => ({ sandbox: 'workspace-write', approval: 'ask' }), set: () => {}, defaultPreset: 'standard' },
+    // The harness's tool registry: an editor that presents its call as a diff; bash has no presenter here.
+    tools: { get: (name) => (name === 'str_replace_editor'
+      ? { presentCall: (args) => ({ card: 'diff', title: `str_replace ${args.path}`, diffs: [{ path: args.path, oldText: args.old_str, newText: args.new_str }] }) }
+      : undefined) },
   }
   let unloadStream = () => {}
   apply({ get: (n) => stubs[n], effect: (fn) => { unloadStream = fn() }, on: (name, h) => { (listeners[name] ??= []).push(h); return () => {} }, logger: { info: () => {} } }, {
@@ -479,8 +483,23 @@ function boot({ state = {}, config = {} } = {}) {
   await sleep(80)
   const streamed = c.frames.filter((f) => f.type === 'stream')
   const kinds = streamed.map((f) => f.kind === 'text' ? f.text : `<${f.kind}${f.name ? ':' + f.name : ''}>`).join('|')
-  check('stream: text deltas reach the terminal in order, with a reset for the failed attempt and the tool step', kinds === '실패한 |<reset>|첫 줄 |<tool:read_file>|둘째 줄', kinds)
+  check('stream: text deltas reach the terminal in order, with a reset for the failed attempt, the thinking and the tool step', kinds === '실패한 |<reset>|첫 줄 |<thinking>|<tool:read_file>|둘째 줄', kinds)
   check('stream: reasoning is not shown as the answer, and another session\'s text is not shown at all', !kinds.includes('생각') && !kinds.includes('남의'))
+  check('stream: reasoning arrives as thinking, apart from the answer', streamed.find((f) => f.kind === 'thinking')?.text === '생각')
+  // A tool call: the tool's own presentation (an edit's diff), else its first argument; then its result.
+  emit('session/event', agent.session, { type: 'tool/call', data: { name: 'str_replace_editor', callId: 'c1',
+    arguments: JSON.stringify({ command: 'str_replace', path: '/w/a.ts', old_str: 'old line', new_str: 'new line' }) } })
+  emit('session/event', agent.session, { type: 'tool/call', data: { name: 'bash', callId: 'c2', arguments: JSON.stringify({ command: 'ls -la' }) } })
+  emit('session/event', agent.session, { type: 'tool/result', data: { message: { role: 'tool', toolCallId: 'c1', content: [{ type: 'text', text: 'edited' }], isError: false } } })
+  emit('session/event', agent.session, { type: 'tool/result', data: { message: { role: 'tool', toolCallId: 'c2', content: [{ type: 'text', text: 'x'.repeat(10000) }], isError: true } } })
+  await sleep(80)
+  const tools = c.frames.filter((f) => f.type === 'stream' && (f.kind === 'tool' || f.kind === 'tool.result'))
+  const edit = tools.find((f) => f.callId === 'c1' && f.kind === 'tool')
+  check('tools: an edit shows the tool\'s own title and its diff', edit?.title === 'str_replace /w/a.ts' && edit.diff?.[0]?.old === 'old line' && edit.diff[0].new === 'new line', JSON.stringify(edit))
+  check('tools: a tool without a presenter shows its first argument', tools.find((f) => f.callId === 'c2' && f.kind === 'tool')?.title === 'ls -la')
+  const results = tools.filter((f) => f.kind === 'tool.result')
+  check('tools: each result names its call, with whether it failed', results.length === 2 && results[0].callId === 'c1' && results[0].ok === true && results[0].text === 'edited' && results[1].ok === false, JSON.stringify(results.map((r) => ({ ...r, text: r.text.slice(0, 20) }))))
+  check('tools: a long result is cut before it reaches the terminal', results[1].text.length <= 4001)
   check('stream: a terminal turn posts no progress message (the steps are already on screen)', !c.frames.some((f) => f.type === 'post' && /작업 중/.test(f.text)))
   release()
   const reply = await c.waitFor((f) => f.type === 'post', 2000)

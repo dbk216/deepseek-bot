@@ -75,7 +75,9 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
     case 'stream':
       if (frame.kind === 'text') app.delta(frame.text)
       else if (frame.kind === 'reset') app.resetAttempt()
-      else app.tool(frame.name)
+      else if (frame.kind === 'thinking') app.thinking(frame.text)
+      else if (frame.kind === 'tool.result') app.toolResult(frame.callId, frame.ok, frame.text)
+      else app.toolCall(frame)
       return
     case 'remove':
       app.unpost(frame.ts)
@@ -115,7 +117,7 @@ export const HELP = [
   ...COMMAND_INFO.map((c) => `${column(`/${c.name}${c.usage ? ` ${c.usage}` : ''}`, 18)}${c.hint}`),
   '',
   '↵ 전송 · alt+↵ 줄바꿈 · esc 중단 · 휠/PgUp/PgDn 스크롤 · 드래그 복사',
-  '/ 명령 · @ 파일 (tab으로 넣기) · ctrl+r 입력 기록 검색',
+  '/ 명령 · @ 파일 (tab으로 넣기) · ctrl+r 입력 기록 검색 · ctrl+o 생각·도구 결과 펼치기/접기',
 ].join('\n')
 
 function ago(ms: number, now: number): string {

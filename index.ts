@@ -63,7 +63,7 @@ import { createRecallContext, recallIndexPath } from './recallContext.js'
 import { analyzeNotes } from './notes.js'
 import { guardFetchedText } from './injection.js'
 import type { SlackHistoryResponse } from './types/slack.js'
-import type { InboundMessage } from './types/transport.js'
+import type { InboundMessage, StreamFrame } from './types/transport.js'
 import type { Origin, TurnOutcome, TurnSummary } from './types/core.js'
 import type {
   AgentDefaultModelService, AgentsService, AgentPresetsService, AttachmentsService,
@@ -1147,6 +1147,26 @@ export function apply(ctx, config) {
   }
   let deliveryWatcher = null
 
+  const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text)
+
+  /**
+   * What a terminal shows for a tool call: the tool's own presentation when the registry has one
+   * (its title; an edit's before and after), else its first argument. Cut to what a screen shows.
+   */
+  function toolStep(data: any): StreamFrame {
+    const name = typeof data?.name === 'string' ? data.name : typeof data?.toolName === 'string' ? data.toolName : 'tool'
+    let args = data?.arguments
+    if (typeof args === 'string') { try { args = JSON.parse(args) } catch { /* shown as written */ } }
+    let card: any
+    try { card = ctx.get('tools')?.get?.(name)?.presentCall?.(args) } catch { card = undefined }
+    const first = typeof args === 'string' ? args : args !== null && typeof args === 'object' ? Object.values(args).find((v) => typeof v === 'string') : undefined
+    const title = clip(typeof card?.title === 'string' ? card.title : typeof first === 'string' ? first : '', 300)
+    const diff = card?.card === 'diff' && Array.isArray(card.diffs)
+      ? card.diffs.slice(0, 3).map((d: any) => ({ path: String(d?.path ?? ''), old: typeof d?.oldText === 'string' ? clip(d.oldText, 8000) : null, new: clip(String(d?.newText ?? ''), 8000) }))
+      : undefined
+    return { kind: 'tool', name, ...(typeof data?.callId === 'string' ? { callId: data.callId } : {}), ...(title !== '' ? { title } : {}), ...(diff !== undefined ? { diff } : {}) }
+  }
+
   /**
    * One listener for both things the adapter watches in a session.
    *
@@ -1161,6 +1181,18 @@ export function apply(ctx, config) {
         const liveSessionId = session?.header?.id ?? session?.id
         if (typeof liveSessionId !== 'string') return
 
+        // A call's result, for a platform that shows the steps (a terminal): matched to its call by id.
+        if (event?.type === 'tool/result' && activeTurns.has(liveSessionId)) {
+          const live = liveOrigins.get(liveSessionId)
+          const message = event.data?.message
+          const callId = message?.toolCallId ?? message?.source?.callId
+          if (live !== undefined && typeof via(live).stream === 'function' && typeof callId === 'string') {
+            const text = (Array.isArray(message?.content) ? message.content : [])
+              .filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n')
+            via(live).stream(live, { kind: 'tool.result', callId, ok: message?.isError !== true && event.data?.error === undefined, text: clip(text, 4000) })
+          }
+        }
+
         // Progress: the turn is slow, and it is doing something. The message is
         // created once the turn has been slow for progressAfterMs, then edited as
         // tools run, so a quick turn never shows anything.
@@ -1168,10 +1200,7 @@ export function apply(ctx, config) {
           // A platform that streams shows the step in place; the progress message is for the rest.
           const live = liveOrigins.get(liveSessionId)
           const streams = live !== undefined && typeof via(live).stream === 'function'
-          if (streams) {
-            const name = event.data?.name ?? event.data?.toolName ?? event.data?.call?.name
-            via(live).stream(live, { kind: 'tool', name: typeof name === 'string' ? name : 'tool' })
-          }
+          if (streams) via(live).stream(live, toolStep(event.data))
           const liveKey = streams ? undefined : Object.keys(state.sessions).find((k) => state.sessions[k] === liveSessionId)
           if (liveKey !== undefined) {
             const startedAt = turnStartedAt.get(liveKey)
@@ -1437,6 +1466,8 @@ export function apply(ctx, config) {
         const frame = payload?.frame
         if (frame?.type === 'chunk' && frame.chunk?.type === 'text-delta' && typeof frame.chunk.text === 'string') {
           part.stream(origin, { kind: 'text', text: frame.chunk.text })
+        } else if (frame?.type === 'chunk' && frame.chunk?.type === 'reasoning-delta' && typeof frame.chunk.text === 'string') {
+          part.stream(origin, { kind: 'thinking', text: frame.chunk.text })
         } else if (frame?.type === 'end' && (frame.outcome?.kind === 'abandoned' || frame.outcome?.eventType === 'assistant/attempt')) {
           // A failed model call is retried from scratch: what it streamed is not the answer.
           part.stream(origin, { kind: 'reset' })

@@ -24,6 +24,7 @@ import { copy, osc52 } from '../dist/tui/render/clipboard.js'
 import { emulator, fakeTerminal, fakeClock } from './tui-fakes.mjs'
 import { sgr, detectColorMode, rgbTo256 } from '../dist/tui/render/style.js'
 import { markdown } from '../dist/tui/render/markdown.js'
+import { lineDiff } from '../dist/tui/render/linediff.js'
 
 const results = []
 function check(name, ok, detail = '') {
@@ -310,6 +311,17 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   const copiedCode = extract(code, { line: 0, col: 0 }, { line: code.length - 1, col: 99 })
   check('markdown: a copy of wrapped code is the line as written, without the bar', copiedCode === 'const value = someFunction(argumentOne, argumentTwo)', JSON.stringify(copiedCode))
   check('markdown: no leading or trailing blank lines', md('\n\n본문\n\n').length === 1)
+}
+
+// 12. A line diff, for an edit's card.
+{
+  const ops = (a, b) => lineDiff(a, b).map((d) => `${d.op}${d.text}`).join('|')
+  check('linediff: a changed line is a removal and an addition, the rest kept', ops(['a', 'b', 'c'], ['a', 'x', 'c']) === ' a|-b|+x| c', ops(['a', 'b', 'c'], ['a', 'x', 'c']))
+  check('linediff: a new file is all additions', ops([], ['x', 'y']) === '+x|+y')
+  check('linediff: an insertion keeps both neighbours', ops(['a', 'c'], ['a', 'b', 'c']) === ' a|+b| c')
+  const big = Array.from({ length: 2000 }, (_, i) => `l${i}`)
+  const huge = lineDiff(big, big.map((l) => `${l}!`))
+  check('linediff: inputs too large to compare become all removals then all additions', huge.length === 4000 && huge[0].op === '-' && huge[3999].op === '+')
 }
 
 // 11. Links that can be clicked, tables, and highlighted code.

@@ -9,7 +9,7 @@
  * Layout, top to bottom: a header, the transcript, a divider, the status line, the input box,
  * and a hint line. Nothing frames the whole screen; the transcript gets every row it can.
  */
-import { answerBlock, bannerBlock, noticeBlock, spacerBlock, toolBlock, userBlock, type AnswerBlock, type NoticeKind } from './blocks.js'
+import { answerBlock, bannerBlock, noticeBlock, spacerBlock, thinkingBlock, toolBlock, toolCallBlock, userBlock, type AnswerBlock, type Detail, type NoticeKind, type ThinkingBlock, type ToolCallBlock, type ToolStep } from './blocks.js'
 import { complete, type CommandInfo, type Completion } from './complete.js'
 import type { AgentItem, JobItem, ViewLine } from './bridge.js'
 import { formatTokens, panelCounts, panelRows, panelWindow, rowStatus, type PanelRow } from './panel.js'
@@ -131,6 +131,12 @@ export class App {
   question: QuestionFlow | null = null
   /** A deep interview in progress: its topic and the model's latest report on it. */
   interview: { topic: string; state: InterviewState | null } | null = null
+  /** What folded blocks show, shared by every thinking and tool block; ctrl+o toggles it. */
+  readonly detail: Detail = { expanded: false }
+  /** The reasoning streaming now, until the answer starts. */
+  private thought: ThinkingBlock | null = null
+  /** Tool calls waiting for their result, by call id. */
+  private readonly calls = new Map<string, ToolCallBlock>()
   /** Candidates for what is being typed (/commands, @files), and the one picked. */
   completion: (Completion & { index: number }) | null = null
   /** The text Esc closed the list at: it stays closed until the text changes. */
@@ -209,6 +215,7 @@ export class App {
 
   /** Streamed answer text. The block is created on the first delta. */
   delta(text: string): void {
+    this.closeThinking()
     if (this.answer === null) { this.answer = answerBlock(this.mode); this.transcript.push(this.answer); this.turnBlock = this.answer }
     this.answer.append(text)
     this.noteInterview(this.answer.text)
@@ -216,10 +223,53 @@ export class App {
     this.terminal.requestRender()
   }
 
-  /** The current attempt failed and is being retried: drop what it streamed. */
+  /** The current attempt failed and is being retried: drop what it streamed, thinking included. */
   resetAttempt(): void {
-    if (this.answer === null) return
-    this.answer.reset()
+    if (this.answer === null && this.thought === null) return
+    this.answer?.reset()
+    this.thought?.reset()
+    this.transcript.touch()
+    this.terminal.requestRender()
+  }
+
+  /** Streamed reasoning, shown apart from the answer. */
+  thinking(text: string): void {
+    if (this.thought === null) {
+      this.closeAnswer()
+      this.thought = thinkingBlock(this.detail, this.mode)
+      this.transcript.push(this.thought)
+    }
+    this.thought.append(text)
+    this.transcript.touch()
+    this.terminal.requestRender()
+  }
+
+  private closeThinking(): void {
+    if (this.thought === null) return
+    this.thought.done()
+    this.thought = null
+    this.transcript.touch()
+  }
+
+  /** A tool call: its card, which its result (by call id) is added to later. */
+  toolCall(step: ToolStep): void {
+    this.closeThinking()
+    this.closeAnswer()
+    const block = toolCallBlock(step, this.detail, this.mode)
+    this.transcript.push(block)
+    if (step.callId !== undefined) {
+      this.calls.set(step.callId, block)
+      // A result that never comes (a cancelled turn) must not keep its call forever.
+      if (this.calls.size > 200) this.calls.delete(this.calls.keys().next().value!)
+    }
+    this.terminal.requestRender()
+  }
+
+  toolResult(callId: string, ok: boolean, text: string): void {
+    const block = this.calls.get(callId)
+    if (block === undefined) return
+    this.calls.delete(callId)
+    block.result(ok, text)
     this.transcript.touch()
     this.terminal.requestRender()
   }
@@ -241,6 +291,7 @@ export class App {
   }
 
   turnEnded(): void {
+    this.closeThinking()
     this.closeAnswer()
     this.choice = null   // whatever it asked belonged to the turn
     this.busy = Math.max(0, this.busy - 1)
@@ -341,6 +392,8 @@ export class App {
   /** A fresh screen for another conversation: the banner and nothing else. */
   clear(): void {
     this.interview = null
+    this.thought = null
+    this.calls.clear()
     // Another conversation: whatever was running belongs to the old one.
     this.busy = 0
     this.status.running = false
@@ -507,6 +560,7 @@ export class App {
         case 'w': this.editor.killWord(); break
         case 'l': this.terminal.invalidate(); break
         case 'j': this.editor.insert('\n'); break
+        case 'o': this.detail.expanded = !this.detail.expanded; this.transcript.touch(); break
         default: return
       }
       this.refreshCompletion()
