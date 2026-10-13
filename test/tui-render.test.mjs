@@ -360,6 +360,10 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   check('markdown: only a bare host may run into Korean and still be a link', JSON.stringify(paths) === JSON.stringify(['https://x.com']), JSON.stringify(paths))
   const punctuated = md('문서는 https://example.com/docs。 그리고 “https://example.com/a/b” 참고', 200)[0].spans.filter((sp) => sp.link !== undefined).map((sp) => sp.link)
   check('markdown: a path followed by punctuation of another script is still a link', JSON.stringify(punctuated) === JSON.stringify(['https://example.com/docs', 'https://example.com/a/b']), JSON.stringify(punctuated))
+  // Found in review: only closing punctuation ends a URL. A dash, a middle dot or an ellipsis may be
+  // part of the path, so a path followed by one is not linked short to the wrong page.
+  const inner = md('https://en.wikipedia.org/wiki/Navier–Stokes_equations 와 https://namu.wiki/w/BTS·블랙핑크 와 https://a.b/c…', 200)[0].spans.filter((sp) => sp.link !== undefined).map((sp) => sp.link)
+  check('markdown: a dash, a middle dot or an ellipsis after a path does not end it into a wrong link', JSON.stringify(inner) === JSON.stringify([]), JSON.stringify(inner))
   const overlong = md(`https://${'a'.repeat(2000)}.${'b'.repeat(40)} 끝`, 200)[0].spans.filter((sp) => sp.link !== undefined)
   check('markdown: a URL longer than the bound is not linked to its first part', overlong.length === 0, `${overlong.length} link(s), ${overlong[0]?.link?.length ?? 0} chars`)
   const repeated = timed('(https://a.b/c)'.repeat(40_000))

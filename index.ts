@@ -1195,21 +1195,21 @@ export function apply(ctx, config) {
       ? card.diffs.slice(0, 3).map((d: any) => {
           const a = linesOf(d?.oldText)
           const b = linesOf(d?.newText)
-          // A final newline is not a line of its own: the empty piece after it is dropped — unless
-          // the other side has text and no final newline, where it is the change.
-          const emptyA = a.length === 0
-          const emptyB = b.length === 0
-          const newlineA = !emptyA && a[a.length - 1] === ''
-          const newlineB = !emptyB && b[b.length - 1] === ''
-          if (newlineA && (newlineB || emptyB)) a.pop()
-          if (newlineB && (newlineA || emptyA)) b.pop()
+          // A final newline is not a line of its own: the empty piece after it is dropped on both
+          // sides, so a change beside it shows no blank line that never existed.
+          const newlineA = a.length > 0 && a[a.length - 1] === ''
+          const newlineB = b.length > 0 && b[b.length - 1] === ''
+          if (newlineA) a.pop()
+          if (newlineB) b.pop()
           let start = 0
           while (start < a.length && start < b.length && a[start] === b[start]) start++
           let endA = a.length
           let endB = b.length
           while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB-- }
-          const before = within(a.slice(start, endA))
-          const after = within(b.slice(start, endB))
+          // When the final newline is all that changed, that is the change: an empty line, on the side that had it.
+          const newlineOnly = start === endA && start === endB && newlineA !== newlineB
+          const before = within(newlineOnly && newlineA ? [''] : a.slice(start, endA))
+          const after = within(newlineOnly && newlineB ? [''] : b.slice(start, endB))
           return {
             path: clip(String(d?.path ?? ''), 300),
             old: before.lines.length === 0 ? null : before.lines.join('\n'),

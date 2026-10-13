@@ -181,7 +181,7 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
       out.push(...fold(diff, detail.expanded ? UNFOLDED.diff : FOLDED.diff, detail, style))
       const note = uncompared ? '… 변경이 커서 줄 단위로 비교하지 않음'
         : !cut ? ''
-          : changes.length > 0 ? '… 큰 변경이라 앞부분만 표시 (잘림)'
+          : changes.length > 0 ? (withheld > 0 ? `… 큰 변경: 확실한 줄만 표시, ${withheld}줄 생략 (잘림)` : '… 큰 변경이라 앞부분만 표시 (잘림)')
             : withheld > 0 ? '… 큰 변경: 잘려서 확실히 말할 수 있는 줄이 없음 (잘림)'
               : '… 큰 변경: 표시할 수 있는 앞부분에 차이 없음 (잘림)'
       if (note !== '') out.push({ spans: [pad('    '), { text: note, style }], soft: false })

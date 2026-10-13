@@ -565,6 +565,14 @@ function boot({ state = {}, config = {} } = {}) {
   check('tools: one line exactly as long as the budget is sent whole, not marked cut', longLine?.old?.length === 8000 && longLine.oldCut === undefined && longLine.new === 'b', JSON.stringify({ old: longLine?.old?.length, oldCut: longLine?.oldCut, new: longLine?.new }))
   const eol = sent('c14')
   check('tools: a change of the final newline alone still shows a row', eol !== undefined && drawn(eol).length > 1, JSON.stringify(eol?.diff))
+  // Found in review: when the final newlines differ alongside a real change, no blank line that never
+  // existed is drawn removed or added.
+  sendEdit('c15', 'a\n', 'a\nb')
+  sendEdit('c16', 'x\ny\n', 'x\nz')
+  await sleep(80)
+  const blankRow = (frame) => drawn(frame).some((row) => /^\s+[-+]\s*$/.test(row))
+  check('tools: a line added where the final newline went shows that line only', sent('c15') !== undefined && drawn(sent('c15')).some((row) => row.includes('+ b')) && !blankRow(sent('c15')), JSON.stringify(sent('c15') === undefined ? [] : drawn(sent('c15'))))
+  check('tools: a line replaced where the final newline went shows the two lines only', sent('c16') !== undefined && drawn(sent('c16')).some((row) => row.includes('- y')) && drawn(sent('c16')).some((row) => row.includes('+ z')) && !blankRow(sent('c16')), JSON.stringify(sent('c16') === undefined ? [] : drawn(sent('c16'))))
   check('tools: a presenter that answers with a promise is not waited for: the first argument is the title', later.find((f) => f.callId === 'c4')?.title === '/w/x')
   check('tools: another session\'s tool call is not shown in this conversation', !later.some((f) => f.callId === 'c5'))
   check('stream: a terminal turn posts no progress message (the steps are already on screen)', !c.frames.some((f) => f.type === 'post' && /작업 중/.test(f.text)))

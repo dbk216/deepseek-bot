@@ -92,9 +92,10 @@ export function inline(text: string, base: string, s: MarkdownStyles): Span[] {
       // Only a bare host may run straight into the sentence ("x.com에서"): with a path, what follows
       // in another script is as likely the rest of the path as a particle, and no link is better
       // than a link to the wrong page. The same for a match that filled the bound: it is a prefix.
-      // (A letter, digit or mark: punctuation of another script — 。 ” — ends a URL like a full stop.)
+      // Only closing punctuation of another script — 。 ” ） — ends a URL like a full stop; anything
+      // else outside ASCII, a dash or a middle dot included, may be part of the path.
       const next = String.fromCodePoint(text.codePointAt(at + token.length) ?? 0x20)
-      const continues = /[^\x00-\x7f]/.test(next) && /[\p{L}\p{N}\p{M}]/u.test(next)
+      const continues = /[^\x00-\x7f]/.test(next) && !/[\p{Pe}\p{Pf}、。，．！？：；]/u.test(next)
       const cutShort = (continues && !/^https?:\/\/[^/?#]+\/?$/.test(token)) || m[0].length - m[0].indexOf('//') - 2 >= 2001
       push(token, cutShort ? base : s.link, cutShort ? undefined : safeUrl(token))
     }

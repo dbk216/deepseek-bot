@@ -605,6 +605,9 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('tools: additions below the last shared line are shown, not "no difference"', shown.includes('+ add 0') && !/차이 없음/.test(shown), shown.replace(/\n/g, ' | '))
   // And the other side: when the old text was cut, an addition past the last shared line may be old text.
   shown = card('n4', { path: 'd', old: 'same\nold kept', new: 'same\nmaybe old\n', oldCut: true })
+  // Rows left out inside what is shown are said, with how many.
+  shown = card('n5', { path: 'e', old: 'keep\n}\n\nmore', new: 'keep\nnew one\n}\nnew two\n\nnew three', newCut: true })
+  check('tools: a card that leaves rows out says how many', /확실한 줄만 표시, \d+줄 생략/.test(shown), shown.replace(/\n/g, ' | '))
   check('tools: an addition past the last shared line is withheld when the old side was cut', !shown.includes('+ maybe old') && shown.includes('- old kept') && !/차이 없음/.test(shown), shown.replace(/\n/g, ' | '))
   t.key('\x0f')
   t.app.thinking(Array.from({ length: 600 }, (_, i) => `생각 ${i}`).join('\n'))
