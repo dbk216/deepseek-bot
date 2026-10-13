@@ -204,7 +204,7 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   await sleep(60)
   t.transport.deliver(t.transport.message({ text: 'will fail' }))
   await sleep(400)
-  check('a failed turn still replies', t.transport.posted.some((p) => /Execution failed|did not complete/.test(p.text)), `${t.transport.posted.length} post(s)`)
+  check('a failed turn still replies, in the voice the bot speaks', t.transport.posted.some((p) => /실행에 실패했어|끝내지 못했어/.test(p.text)), `${t.transport.posted.length} post(s)`)
   t.done()
 }
 
@@ -632,6 +632,19 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   await sleep(400)
   check('the thread permalink is provided', t.logs.some((l) => /thread permalink provided/.test(l)),
     t.logs.filter((l) => /link:/.test(l)).join(' | ').slice(0, 90) || '(no link log)')
+  t.done()
+}
+
+// 27b. A turn that did not complete says so in Korean, and does not hand the conversation a path on
+// the host — it used to end with "Log: <the plugin log's absolute path>".
+{
+  const t = boot({ agent: 'ready' })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: 'ping' }))
+  await sleep(400)
+  const said = t.transport.posted.map((p) => p.text).join('\n')
+  check('an unfinished turn is reported in Korean', /끝내지 못했어/.test(said), said.slice(0, 80))
+  check('without a host path in it', !said.includes(process.env.HOME ?? '/nonexistent') && !/\.log\b/.test(said), said.slice(0, 120))
   t.done()
 }
 

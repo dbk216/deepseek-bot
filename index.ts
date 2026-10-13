@@ -879,6 +879,8 @@ export function apply(ctx, config) {
     cause: string | null
     /** False while the agent is still being created: then the turn cannot report itself. */
     prepared: boolean
+    /** The stop was reported for it by the stop request, so it reports nothing when it returns. */
+    reported?: boolean
   }
   const runningTurns = new Map<string, TurnState>()
 
@@ -1325,7 +1327,8 @@ export function apply(ctx, config) {
     }
     runningTurns.set(turnKey, turnState)
     try {
-      return await runRegisteredTurn({ sessionId, turnKey, turnState }, prompt, existingSessionId, origin, historyText, attachmentText, sessionKey, images)
+      const outcome = await runRegisteredTurn({ sessionId, turnKey, turnState }, prompt, existingSessionId, origin, historyText, attachmentText, sessionKey, images)
+      return turnState.reported === true ? { ...outcome, reported: true } : outcome
     } finally {
       if (runningTurns.get(turnKey) === turnState) runningTurns.delete(turnKey)
     }
@@ -1784,10 +1787,15 @@ export function apply(ctx, config) {
       // A turn that is still being created has no placeholder and no agent, so nothing would
       // ever be said — found by the failure-injection sweep, where a create that never
       // resolved left the stop request completely silent.
-      if (stopped !== 'running') {
-        await transport.post({ channel, threadTs }, stopped === 'none'
-          ? '지금 돌고 있는 작업이 없어.'
-          : '중단했어 — 시작 중이던 작업을 멈췄어.')
+      if (stopped === 'preparing') {
+        // Reported now — the turn may not come back soon if its agent is stuck being created — and once:
+        // in the working message's place, with the turn told not to report again when it returns.
+        const turn = runningTurns.get(key)
+        if (turn !== undefined) turn.reported = true
+        await progress.settle(key)
+        await replyInPlaceOf({ channel, threadTs }, '중단했어 — 시작 중이던 작업을 멈췄어.', progress.take(key)?.ts ?? null)
+      } else if (stopped === 'none') {
+        await transport.post({ channel, threadTs }, '지금 돌고 있는 작업이 없어.')
       }
       return
     }
@@ -1869,11 +1877,18 @@ export function apply(ctx, config) {
             .catch((e) => log(`documents: delivery failed: ${String((e as Error)?.message ?? e)}`))
         } else if (r.reason?.kind === 'cancelled') {
           const why = r.reason.cause === 'timed out' ? '시간이 초과돼서 멈췄어.' : '중단했어.'
-          log(`turn cancelled cause=${String(r.reason.cause ?? '-')}`)
-          await replyInPlaceOf(replyTarget, why, placeholderTs)
+          log(`turn cancelled cause=${String(r.reason.cause ?? '-')}${r.reported === true ? ' (already reported)' : ''}`)
+          if (r.reported !== true) await replyInPlaceOf(replyTarget, why, placeholderTs)
+          // Already reported: a working message put up since (the turn's own, when slow) is removed, not
+          // turned into a second report — edited only where the platform cannot delete.
+          else if (placeholderTs !== null) {
+            const gone = typeof transport.remove === 'function' && await transport.remove(replyTarget, placeholderTs).catch(() => false)
+            if (gone !== true) await transport.post(replyTarget, why, { replace: placeholderTs })
+          }
         } else {
           log(`turn ended abnormally reason=${JSON.stringify(r.reason)}`)
-          await replyInPlaceOf(replyTarget, `The turn did not complete (${r.reason?.kind ?? 'unknown'}). Log: ${LOG}`, placeholderTs)
+          // In the voice the bot speaks, and with no path on the host: the log is the operator's to read.
+          await replyInPlaceOf(replyTarget, `작업을 끝내지 못했어 (${r.reason?.kind ?? '이유 모름'}). 다시 말해줄래?`, placeholderTs)
         }
       } catch (e) {
         log('turn failed', String(e?.stack ?? e))
@@ -1886,7 +1901,7 @@ export function apply(ctx, config) {
         leaveWaiting(key, ticket)   // a ticket left behind would be "withdrawn" by a later stop
         await progress.settle(key)
         const leftover = progress.take(key)?.ts ?? null
-        await replyInPlaceOf(replyTarget, `Execution failed: ${String(e?.message ?? e).slice(0, 300)}`, leftover)
+        await replyInPlaceOf(replyTarget, `실행에 실패했어: ${withoutHome(String(e?.message ?? e)).slice(0, 300)}`, leftover)
       }
     }, () => ticket.withdrawn)
   }
@@ -1953,6 +1968,12 @@ export function apply(ctx, config) {
       const ok = await transport.uploadFile(target, path).catch(() => false)
       log(`documents: ${ok ? 'uploaded' : 'upload failed for'} ${basename(path)} to ${key}`)
     }
+  }
+
+  /** An error for the conversation: the operator's home directory is not the conversation's business. */
+  function withoutHome(text: string): string {
+    const home = process.env.HOME
+    return typeof home === 'string' && home.length > 1 ? text.split(home).join('~') : text
   }
 
   /** Generic so the caller keeps the turn's shape: `unknown` here is what forced casts at every call site. */

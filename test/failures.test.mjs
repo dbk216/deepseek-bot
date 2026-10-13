@@ -244,6 +244,21 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   t.done()
 }
 
+// 3h. A stop while the agent is being created is reported once. It said "중단했어 — 시작 중이던 작업을
+// 멈췄어" at once, and "중단했어." again when the turn came back.
+{
+  const t = boot({ agent: 'slow', config: { runTimeoutMs: 5000 } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: 'stopped while it is created' }))
+  await sleep(50)
+  t.transport.deliver(t.transport.message({ text: '그만' }))
+  await sleep(500)
+  const reports = t.transport.posted.filter((p) => /중단/.test(p.text))
+  check('a stop during preparation is reported once', reports.length === 1, JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 30))))
+  check('in place of the working message', reports[0]?.replace !== null && reports[0]?.replace !== undefined, JSON.stringify(reports[0]))
+  t.done()
+}
+
 // 4. Stopping a turn that is open actually stops it, and says so.
 {
   const t = boot({ agent: 'hang' })

@@ -24,6 +24,8 @@ export interface TurnSummary {
 /** The same, plus the session it happened in. */
 export interface TurnOutcome extends TurnSummary {
   sessionId: string
+  /** A stop for this turn was already reported to the conversation, so the turn says nothing more. */
+  reported?: boolean
 }
 
 /** Where a message came from: the transport's idea of a conversation. */
