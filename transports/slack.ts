@@ -591,6 +591,11 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
   let sessionsStatus: boolean | null = null
   let assistantStatus: boolean | null = null
   const ASSISTANT_REFRESH_MS = 100_000   // the assistant status lapses after two minutes without a message
+  const REASSERT_MS = 1500              // after one message's end, the status is set again for another still working
+
+  // How many messages are working in each thread. The status is the thread's, not a message's: with one
+  // message waiting behind another, the first one's end cleared it and the second ran with nothing shown.
+  const working = new Map<string, number>()
 
   function startTyping(target: Target, onUnavailable?: () => void): () => void {
     const thread = typeof target.threadTs === 'string' && target.threadTs !== '' ? target.threadTs : null
@@ -598,6 +603,8 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
       onUnavailable?.()
       return () => {}
     }
+    const where = `${target.channel}:${thread}`
+    working.set(where, (working.get(where) ?? 0) + 1)
     const set = (method: string, status: string) =>
       api.slackPost<{ ok: boolean; error?: string }>(requireToken(), method, { channel_id: target.channel, thread_ts: thread, status })
     let over = false
@@ -633,12 +640,28 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
         }
       }
       // The turn may have ended while the status was being set.
-      if (over) { if (refresh !== null) clearInterval(refresh); clear() }
+      if (over) { if (refresh !== null) clearInterval(refresh); if (!working.has(where)) clear() }
     })()
     return () => {
       if (over) return
       over = true
       if (refresh !== null) clearInterval(refresh)
+      const left = (working.get(where) ?? 1) - 1
+      if (left > 0) {
+        working.set(where, left)
+        // Another message here is still working. A reply clears the assistant status on Slack's side, so
+        // it is set again once this one's reply has gone out.
+        const again = shown
+        if (again !== null) {
+          setTimeout(() => {
+            if (!working.has(where)) return
+            if (again === 'sessions') void set('agents.sessions.setStatus', 'processing').catch(() => {})
+            else void set('assistant.threads.setStatus', '작업 중…').catch(() => {})
+          }, REASSERT_MS).unref?.()
+        }
+        return
+      }
+      working.delete(where)
       clear()
     }
   }

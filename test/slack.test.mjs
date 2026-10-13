@@ -223,6 +223,32 @@ function transportFor(api) {
   await settle()
   check('a refusal for this kind of conversation falls back but is not remembered', fell4 === 1 && t4.typingUnavailable !== true)
   api4.restore()
+
+  // The status belongs to the thread, not to a message: with M2 waiting behind M1 in one thread, M1's
+  // end set it back to active and M2 ran with nothing shown. It is cleared by the last one to stop,
+  // and set again after an earlier one stops — a reply clears the assistant status on Slack's side.
+  for (const [label, errors, method, cleared] of [
+    ['session status', {}, 'agents.sessions.setStatus', 'active'],
+    ['assistant status', { 'agents.sessions.setStatus': 'feature_disabled' }, 'assistant.threads.setStatus', ''],
+  ]) {
+    const api5 = stubSlack({ errors })
+    const t5 = transportFor(api5)
+    await t5.authenticate()
+    const stopFirst = t5.startTyping({ channel: 'C1', threadTs: 't1' }, () => {})
+    const stopSecond = t5.startTyping({ channel: 'C1', threadTs: 't1' }, () => {})
+    await settle()
+    stopFirst()
+    await settle()
+    check(`${label}: the first to stop does not clear it while another is working`, !calls(api5, method).some((b) => b.status === cleared),
+      JSON.stringify(calls(api5, method).map((b) => b.status)))
+    const setBefore = calls(api5, method).filter((b) => b.status !== cleared).length
+    await new Promise((r) => setTimeout(r, 1700))
+    check(`${label}: and it is set again for the one still working`, calls(api5, method).filter((b) => b.status !== cleared).length > setBefore)
+    stopSecond()
+    await settle()
+    check(`${label}: the last to stop clears it`, calls(api5, method).at(-1)?.status === cleared, JSON.stringify(calls(api5, method).at(-1)))
+    api5.restore()
+  }
 }
 
 // 6d. Upload bytes the caller already read are sent as they are; the path is only the file's name.
