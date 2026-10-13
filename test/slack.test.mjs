@@ -249,6 +249,29 @@ function transportFor(api) {
     check(`${label}: the last to stop clears it`, calls(api5, method).at(-1)?.status === cleared, JSON.stringify(calls(api5, method).at(-1)))
     api5.restore()
   }
+
+  // The last to stop clears what the thread shows, not only what it set itself. M1 shows the status; M2's
+  // own attempts are refused for the moment (rate limited) and it falls back to a message; M1 stops, and
+  // its re-set shows the status again; M2 stops last — and left "processing" for good. (Found by the
+  // verification pass.)
+  const opts = { errors: {} }
+  const api6 = stubSlack(opts)
+  const t6 = transportFor(api6)
+  await t6.authenticate()
+  const stopM1 = t6.startTyping({ channel: 'C1', threadTs: 't1' }, () => {})
+  await settle()
+  opts.errors = { 'agents.sessions.setStatus': 'ratelimited', 'assistant.threads.setStatus': 'ratelimited' }
+  let fellBack = 0
+  const stopM2 = t6.startTyping({ channel: 'C1', threadTs: 't1' }, () => { fellBack++ })
+  await settle()
+  opts.errors = {}
+  stopM1()
+  await new Promise((r) => setTimeout(r, 1700))
+  stopM2()
+  await settle()
+  const statuses = calls(api6, 'agents.sessions.setStatus').map((b) => b.status)
+  check('the last to stop clears a status another one set', fellBack === 1 && statuses.at(-1) === 'active', JSON.stringify(statuses))
+  api6.restore()
 }
 
 // 6d. Upload bytes the caller already read are sent as they are; the path is only the file's name.

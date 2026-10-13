@@ -596,6 +596,8 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
   // How many messages are working in each thread. The status is the thread's, not a message's: with one
   // message waiting behind another, the first one's end cleared it and the second ran with nothing shown.
   const working = new Map<string, number>()
+  // What each thread shows, whoever set it: the last to stop clears this, not only what it set itself.
+  const threadShows = new Map<string, 'sessions' | 'assistant'>()
 
   function startTyping(target: Target, onUnavailable?: () => void): () => void {
     const thread = typeof target.threadTs === 'string' && target.threadTs !== '' ? target.threadTs : null
@@ -611,8 +613,10 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
     let shown: 'sessions' | 'assistant' | null = null
     let refresh: ReturnType<typeof setInterval> | null = null
     const clear = () => {
-      if (shown === 'sessions') void set('agents.sessions.setStatus', 'active').catch(() => {})
-      if (shown === 'assistant') void set('assistant.threads.setStatus', '').catch(() => {})
+      const was = threadShows.get(where) ?? shown
+      threadShows.delete(where)
+      if (was === 'sessions') void set('agents.sessions.setStatus', 'active').catch(() => {})
+      if (was === 'assistant') void set('assistant.threads.setStatus', '').catch(() => {})
     }
     const attempt = async (method: string, status: string, known: boolean | null): Promise<boolean | null> => {
       if (known === false) return false
@@ -626,12 +630,14 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
       if (sessions === true) {
         sessionsStatus = true
         shown = 'sessions'
+        threadShows.set(where, 'sessions')
       } else {
         if (sessions === false) sessionsStatus = false
         const assistant = await attempt('assistant.threads.setStatus', '작업 중…', assistantStatus)
         if (assistant === true) {
           assistantStatus = true
           shown = 'assistant'
+          threadShows.set(where, 'assistant')
           refresh = setInterval(() => { void set('assistant.threads.setStatus', '작업 중…').catch(() => {}) }, ASSISTANT_REFRESH_MS)
         } else {
           if (assistant === false) assistantStatus = false
@@ -655,6 +661,7 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
         if (again !== null) {
           setTimeout(() => {
             if (!working.has(where)) return
+            threadShows.set(where, again)
             if (again === 'sessions') void set('agents.sessions.setStatus', 'processing').catch(() => {})
             else void set('assistant.threads.setStatus', '작업 중…').catch(() => {})
           }, REASSERT_MS).unref?.()
