@@ -16,10 +16,15 @@ DIR="$(pwd)"
 LABEL="ai.deepbot.watch"
 UID_N="$(id -u)"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+# A setting not given keeps the value the installed job already has: install.sh updates by running this
+# again with none of them, and an unset one used to be written empty — dropping the deny list and the
+# alert target without a word. Set one to an empty value to clear it.
+kept() { [ -f "$PLIST" ] || return 0; /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:$1" "$PLIST" 2>/dev/null || true; }
+DEEPBOT_DENY_READ="${DEEPBOT_DENY_READ-$(kept DEEPBOT_DENY_READ)}"
 INTERVAL_S="${INTERVAL_S:-60}"
 NODE="${DEEPBOT_NODE:-$(command -v node || echo /usr/local/bin/node)}"
 RUNTIME_DIR="${DEEPBOT_RUNTIME_DIR:-$HOME/.dsh/service}"
-AGENT_HOME="${DEEPBOT_HOME:-$HOME/dsh-agent}"
+AGENT_HOME="${DEEPBOT_HOME:-$(kept DEEPBOT_HOME)}"; AGENT_HOME="${AGENT_HOME:-$HOME/dsh-agent}"
 
 case "${1:-}" in
 --status)

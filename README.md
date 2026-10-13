@@ -59,7 +59,9 @@ Then invite the bot to a channel and mention it. The agent's persona is `~/dsh-a
 edit it, it is yours.
 
 Optional environment for the installer: `DEEPBOT_DIR`, `DEEPBOT_HOME`, `DEEPBOT_PROFILE`, `DEEPBOT_REF`,
-`DSH_BIN`, and `DEEPBOT_SKIP_SERVICES=1` to build and configure without installing any service.
+`DSH_BIN`, and `DEEPBOT_SKIP_SERVICES=1` to build and configure without installing any service. The
+harness's home must be the default `~/.dsh`; the installer refuses a `DSH_HOME` elsewhere. Running it
+again keeps the profile, the tokens, and each service's settings (an alert target, a deny list).
 
 ## Talking to it
 

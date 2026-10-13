@@ -24,15 +24,20 @@ DIR="$(pwd)"
 LABEL="ai.deepbot.gateway"
 UID_N="$(id -u)"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+# A setting not given keeps the value the installed job already has: install.sh updates by running this
+# again with none of them, and an unset one used to be written empty — dropping the deny list and the
+# alert target without a word. Set one to an empty value to clear it.
+kept() { [ -f "$PLIST" ] || return 0; /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:$1" "$PLIST" 2>/dev/null || true; }
 
-AGENT_HOME="${DEEPBOT_HOME:-$HOME/.deepbot}"
+AGENT_HOME="${DEEPBOT_HOME:-$(kept DEEPBOT_HOME)}"; AGENT_HOME="${AGENT_HOME:-$HOME/dsh-agent}"
+DEEPBOT_DENY_READ="${DEEPBOT_DENY_READ-$(kept DEEPBOT_DENY_READ)}"
 # Outside the agent's home. It used to be <home>/service: launchd runs this launcher, unconfined, at
 # every (re)start, and the agent may write anywhere in its home — so the agent could rewrite what
 # runs outside its sandbox. The logs move with it: they carry the web UI's auth token.
 RUNTIME_DIR="${DEEPBOT_RUNTIME_DIR:-$HOME/.dsh/service}"
 LOG_DIR="$RUNTIME_DIR/logs"
-PORT="${DEEPBOT_PORT:-19500}"
-PROFILE="${DEEPBOT_PROFILE:-agent}"
+PORT="${DEEPBOT_PORT:-$(kept DEEPBOT_PORT)}"; PORT="${PORT:-19500}"
+PROFILE="${DEEPBOT_PROFILE:-$(kept DEEPBOT_PROFILE)}"; PROFILE="${PROFILE:-agent}"
 # The repository this script came from: the gateway builds its TypeScript sources
 # from here when dist is missing or stale.
 # DIR is already `cd`-resolved, so build from that. Using $0 here resolved against

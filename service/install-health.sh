@@ -17,6 +17,11 @@ DIR="$(pwd)"
 LABEL="ai.deepbot.health"
 UID_N="$(id -u)"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+# A setting not given keeps the value the installed job already has: install.sh updates by running this
+# again with none of them, and an unset one used to be written empty — dropping the deny list and the
+# alert target without a word. Set one to an empty value to clear it.
+kept() { [ -f "$PLIST" ] || return 0; /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:$1" "$PLIST" 2>/dev/null || true; }
+DEEPBOT_ALERT_TO="${DEEPBOT_ALERT_TO-$(kept DEEPBOT_ALERT_TO)}"
 INTERVAL_S="${INTERVAL_S:-300}"
 NODE="${DEEPBOT_NODE:-$(command -v node || echo /usr/local/bin/node)}"
 RUNTIME_DIR="${DEEPBOT_RUNTIME_DIR:-$HOME/.dsh/service}"

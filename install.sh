@@ -17,12 +17,49 @@
 #   DEEPBOT_SKIP_SERVICES=1   build and configure only; install no launchd jobs
 set -euo pipefail
 
+# Helpers at the top level, so a test can source this file (DEEPBOT_INSTALL_SOURCED=1) and call them.
+
+# The channels as a YAML list, from what a person typed: ids separated by spaces or commas, or * alone.
+# It goes into the profile through sed, so nothing but an id's characters gets through; and it is split
+# with globbing off, since an unquoted * expanded to the files in the directory.
+channel_list() {
+  local input="$1" ids=() id out=''
+  if [ "$input" = '*' ]; then printf "['*']\n"; return 0; fi
+  local IFS=$' \t,'
+  set -f; read -r -a ids <<< "$input"; set +f
+  [ "${#ids[@]}" -gt 0 ] || return 1
+  for id in "${ids[@]}"; do
+    [[ "$id" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+    out="${out:+$out, }'$id'"
+  done
+  printf '[%s]\n' "$out"
+}
+
+# The platform an existing profile names, so a rerun asks for that platform's tokens; slack if none.
+profile_platform() {
+  local found
+  found="$(sed -n -E 's/^    platform: (slack|telegram|discord)$/\1/p' "$1" 2>/dev/null | head -1 || true)"
+  printf '%s\n' "${found:-slack}"
+}
+
+# The services, the runner and the health probe read the harness's home at ~/.dsh. A DSH_HOME elsewhere
+# would put the tokens and the profile where nothing running looks.
+check_dsh_home() {
+  [ -z "${DSH_HOME:-}" ] || [ "${DSH_HOME%/}" = "$HOME/.dsh" ] || {
+    printf 'error: DSH_HOME=%s is not supported by this installer; the services read %s\n' "$DSH_HOME" "$HOME/.dsh" >&2
+    return 1
+  }
+}
+
+main() {
+
 DEEPBOT_DIR="${DEEPBOT_DIR:-$HOME/.deepbot}"
 DEEPBOT_HOME="${DEEPBOT_HOME:-$HOME/dsh-agent}"
 DEEPBOT_PROFILE="${DEEPBOT_PROFILE:-agent}"
 DEEPBOT_REPO="${DEEPBOT_REPO:-https://github.com/rlaope/deepseek-bot.git}"
 DEEPBOT_REF="${DEEPBOT_REF:-master}"
-DSH_HOME="${DSH_HOME:-$HOME/.dsh}"
+check_dsh_home || exit 1
+DSH_HOME="$HOME/.dsh"
 DSH_BIN="${DSH_BIN:-$(command -v dsh 2>/dev/null || echo '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh')}"
 export DSH_HOME DSH_BIN DEEPBOT_HOME DEEPBOT_PROFILE
 
@@ -88,6 +125,15 @@ note "dist/ ready"
 step "agent home and gateway profile"
 profile_dir="$DSH_HOME/profiles/$DEEPBOT_PROFILE"
 new_profile=0; [ -e "$profile_dir" ] || new_profile=1
+# Asked, and checked, before init.sh writes the profile: a refused answer used to leave a profile behind
+# that a rerun then kept as it was.
+platform="$(profile_platform "$profile_dir/cordis.patch.yml")"; channels='*'
+if [ "$new_profile" -eq 1 ]; then
+  ask platform "platform (slack / telegram / discord)?" slack
+  case "$platform" in slack|telegram|discord) ;; *) die "unknown platform: $platform" ;; esac
+  if [ "$platform" != telegram ]; then ask channels "channels to answer in (* = every channel it is invited to, or ids separated by spaces)?" '*'; fi
+  list="$(channel_list "$channels")" || die "channel ids are letters, digits, - and _ (got: $channels)"
+fi
 DEEPBOT_INSTALLER=1 DSH_BIN="$DSH_BIN" "$DEEPBOT_DIR/init.sh" --home "$DEEPBOT_HOME" --profile "$DEEPBOT_PROFILE" | sed 's/^/    /'
 
 step "platform and credentials"
@@ -100,12 +146,6 @@ put_key() {     # put_key <name> <question> — only when it is not there yet
   ask_secret value "$2"
   if [ -n "$value" ]; then printf '%s=%s\n' "$1" "$value" >>"$DSH_HOME/.env"; note "$1 saved"; else note "$1 skipped — add it to $DSH_HOME/.env later"; fi
 }
-platform=slack; channels='*'
-if [ "$new_profile" -eq 1 ]; then
-  ask platform "platform (slack / telegram / discord)?" slack
-  case "$platform" in slack|telegram|discord) ;; *) die "unknown platform: $platform" ;; esac
-  if [ "$platform" != telegram ]; then ask channels "channels to answer in (* = every channel it is invited to, or ids separated by spaces)?" '*'; fi
-fi
 case "$platform" in
   slack)    put_key SLACK_BOT_TOKEN "Slack bot token (xoxb-…):"; put_key SLACK_APP_TOKEN "Slack app-level token (xapp-…):" ;;
   telegram) put_key TELEGRAM_BOT_TOKEN "Telegram bot token:" ;;
@@ -115,8 +155,6 @@ put_key DEEPSEEK_API_KEY "DeepSeek API key:"
 
 if [ "$new_profile" -eq 1 ]; then
   patch="$profile_dir/cordis.patch.yml"
-  list="['*']"
-  if [ "$channels" != '*' ]; then list="[$(printf "'%s', " $channels | sed 's/, $//')]"; fi
   sed -i '' -e "s/^    platform: slack$/    platform: $platform/" -e "s/^    targetChannels: \['\*'\]$/    targetChannels: $list/" "$patch"
   note "profile: platform $platform, channels $list"
 else
@@ -126,7 +164,7 @@ fi
 if [ "${DEEPBOT_SKIP_SERVICES:-0}" = "1" ]; then
   step "services skipped (DEEPBOT_SKIP_SERVICES=1)"
   note "start it by hand: \"$DSH_BIN\" --profile $DEEPBOT_PROFILE --no-open"
-  exit 0
+  return 0
 fi
 
 step "services"
@@ -144,3 +182,7 @@ cat <<NEXT
     Your agent's persona is ${bold}$DEEPBOT_HOME/SOUL.md${off} — edit it, it is yours.
     Update later by running the same curl line again.
 NEXT
+}
+
+# The last line, so a download cut short defines functions and runs nothing.
+[ "${DEEPBOT_INSTALL_SOURCED:-0}" = 1 ] || main "$@"
