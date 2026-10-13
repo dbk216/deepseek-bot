@@ -74,6 +74,14 @@ function fixture() {
   const f = fixture()
   const dsh = join(f.base, 'dsh')
   mkdirSync(join(dsh, 'sessions'), { recursive: true })
+  // The control: on an ordinary home the indexer writes its index. Without it, an indexer that died
+  // early for any reason would pass the checks below.
+  execFileSync(process.execPath, ['dist/recall/deepbot-recall.js', 'index', '--quiet'],
+    { encoding: 'utf8', env: { ...process.env, DSH_HOME: dsh, DEEPBOT_HOME: f.home }, stdio: 'pipe' })
+  let wrote = false
+  try { wrote = lstatSync(join(f.home, 'memory', 'recall-index.jsonl')).isFile() } catch { /* not written */ }
+  check('on an ordinary home the indexer writes its index', wrote)
+  rmSync(join(f.home, 'memory'), { recursive: true, force: true })
   mkdirSync(join(f.home, 'memory'))
   symlinkSync(f.launcher, join(f.home, 'memory', 'recall-index.jsonl'))
   try {

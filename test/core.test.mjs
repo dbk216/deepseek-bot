@@ -15,7 +15,7 @@
  */
 import './dist-fresh.mjs'   // fails loudly on a stale dist
 
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { apply } from '../dist/index.js'
@@ -473,6 +473,23 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   check('creation and seeding are logged', t.logs.some((l) => /tenant acme created at/.test(l)) && t.logs.some((l) => /tenant acme seeded from/.test(l)))
   rmSync(tenants, { recursive: true, force: true })
   rmSync(template, { recursive: true, force: true })
+  t.done()
+}
+
+// 22b. Seeding a tenant never writes through a link the agent left in its home. The default tenant
+// root is <home>/tenants, which the agent can replace with a link to anywhere.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  const outside = mkdtempSync(join(tmpdir(), 'outside-'))
+  symlinkSync(outside, join(home, 'tenants'))
+  const template = mkdtempSync(join(tmpdir(), 'tpl-'))
+  writeFileSync(join(template, 'SOUL.md'), 'tenant persona\n')
+  const t = boot({ home, config: { targetChannels: ['*'], tenantIsolation: true, tenantChannels: { C_ALLOWED: 'acme' }, tenantTemplateDir: template } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '안녕' }))
+  await sleep(400)
+  check('nothing is written through a linked tenants directory', readdirSync(outside).length === 0, JSON.stringify(readdirSync(outside)))
+  for (const dir of [home, outside, template]) rmSync(dir, { recursive: true, force: true })
   t.done()
 }
 

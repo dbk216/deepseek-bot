@@ -208,7 +208,9 @@ function readSession(file, sessionId, includeInjected) {
     if (role === 'user' && !placed) {
       placed = true
       const at = text.indexOf(USER_MESSAGE_MARKER)
-      const named = at >= 0 ? /\[this conversation\]\s*\nchannel=(\S+)/.exec(text.slice(0, at)) : null
+      // The adapter's exact shape: its own line, then "channel=… thread=…". Quoted material — history is
+      // one line per message, attachments are indented — cannot produce it.
+      const named = at >= 0 ? /(?:^|\n)\[this conversation\]\nchannel=(\S+) thread=/.exec(text.slice(0, at)) : null
       if (named !== null) channel = named[1]
     }
     if (role === 'user') text = stripInjectedPreamble(text)

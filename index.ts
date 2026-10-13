@@ -54,6 +54,7 @@ import { createSlackTransport } from './transports/slack.js'
 import { createTelegramTransport } from './transports/telegram.js'
 import { createDiscordTransport } from './transports/discord.js'
 import { createProgressTracker } from './progress.js'
+import { writeInside } from './safeWrite.js'
 import { createUsageTracker, emptyUsageStore } from './usage.js'
 import { createRecallContext } from './recallContext.js'
 import { analyzeNotes } from './notes.js'
@@ -489,18 +490,20 @@ export function apply(ctx, config) {
       ? cfg.tenantRoot
       : join(await sessionCwd(), 'tenants')
     const dir = join(root, tenant)
+    // The default root is in the agent's home, which the agent can replace with a link: these writes
+    // run unconfined, so they are held to the home (or to the configured root) and never follow one.
+    const guard = typeof cfg.tenantRoot === 'string' && cfg.tenantRoot !== '' ? cfg.tenantRoot : await sessionCwd()
     if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true })
       // The marker stops the instruction loader climbing out of the tenant directory —
       // without it a tenant inherits whatever AGENTS.md is above it, which is exactly the
       // crossing this feature exists to prevent.
-      writeFileSync(join(dir, '.deepbot-root'), `deepbot tenant ${tenant}\n`)
+      writeInside(guard, join(dir, '.deepbot-root'), `deepbot tenant ${tenant}\n`)
       const policy = tenantPolicy(tenant)
       const template = typeof policy.persona === 'string' && policy.persona !== '' ? policy.persona : cfg.tenantTemplateDir
       if (typeof template === 'string' && template !== '' && existsSync(template)) {
         for (const name of readdirSync(template)) {
           if (!name.endsWith('.md')) continue
-          writeFileSync(join(dir, name), readFileSync(join(template, name)))
+          writeInside(guard, join(dir, name), readFileSync(join(template, name)))
         }
         log(`tenant ${tenant} seeded from ${template}`)
       }

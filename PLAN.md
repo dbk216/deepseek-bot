@@ -1,5 +1,38 @@
 # deepbot — plan
 
+## 라운드 66 (2026-10-13) — persona 복구, 작업 중 표시, 평가 high 4건, 보안 리뷰 후속
+
+계기: Slack에서 "아리 널 어떻게 활용할수있니"에 봇이 "아리야, 나 홍길동이야…"라고 답함. 세션 로그 확인 결과
+`SOUL.md`/`USER.md`/`MEMORY.md`가 10/10부터 한 번도 프롬프트에 들어가지 않았음(harness 로더는 `AGENTS.md`/`CLAUDE.md`만 읽음).
+
+완료(커밋 순, 각각 테스트 선작성 → red 확인 → 두 게이트, 리뷰 반영):
+- persona 주입 복구 + 발화자 표시, 즉시 작업 중 표시(Discord/Telegram typing, Slack은 placeholder→새 메시지+삭제) — `8ee19b7`
+- 대화별 직렬화, 대기 메시지 철회, timeout 순서·조기 등록 — `d1a6dd8` `dbc0d6a` `7f4aef3`
+- agent가 쓴 watch는 read-only 샌드박스에서 실행 — `1460e20` `ecef0bc`
+- 샌드박스 명령의 credential·gateway 로그·세션 저장소 읽기, ssh-agent 사용 차단 — `b2db711` `526bd32` `ef5db46`
+- gateway launcher와 토큰 로그를 agent 홈 밖(`~/.dsh/service`)으로 — `526bd32` (배포·재설치 완료)
+- recall 자동 주입을 같은 채널로 제한 — `7f2366d` `34e4d3d` `78abd65`
+- 턴이 만든 문서를 스레드에 업로드(Slack) — `9852f72` `78abd65`
+- unconfined 코드가 agent 홈에 쓸 때 symlink를 따르지 않음(`safeWrite.ts`) — `0954a15`, tenant 시딩 포함 — 이번 커밋
+- 인덱서 channel은 첫 메시지·첫 marker 앞의 adapter 형식 블록에서만 — `78abd65`, 이번 커밋
+
+라이브: 2026-10-13 14:19 KST 재설치·재시작, healthy. 독립 검증(verifier) 3개 커밋 PASS, 잔여는 아래 LOW. 실모델 시나리오 persona 4/4, recall-decision 3/3, recall-immediate 6/6.
+push는 이 머신 자격증명(`someone`)으로 403 — 커밋은 로컬에만 있음.
+
+미검증:
+- Discord/Telegram typing은 mock API로만 확인. Slack 앱의 `files:write` 보유 여부 미확인(없으면 업로드 실패가 로그에만 남음).
+
+미해결(다음 후보, 영향 순):
+- agent가 `~/dsh-agent/.env`를 쓰면 credential chain에서 `~/.dsh/.env`보다 우선 — 재시작 시 토큰 교체 가능(추정, 미재현).
+- agent는 도구로 recall 인덱스 전체를 읽을 수 있음(채널 제한은 자동 주입에만 적용). 채널별 인덱스나 읽기 규칙 필요.
+- 샌드박스 credential 거부는 경로 기준 — hard link로 우회 가능성(미검증).
+- (LOW) `writeInside`의 realpath 확인과 쓰기 사이 TOCTOU, 업로드 직전 검사와 Slack 읽기 사이 TOCTOU.
+- (LOW) runner는 launchd ssh-agent 소켓만 막음 — 1Password·gpg-agent 등 다른 agent 소켓은 열려 있음.
+- (LOW) 첫 메시지에 블록이 없는 세션 4행(`slack-68063122`)은 채널을 매핑 fallback으로만 얻음; 매핑이 만료되면 recall에서 빠짐.
+- preparing 중 "그만"은 보고가 두 번 나감("시작 중이던 작업을 멈췄어" + "중단했어").
+- 평가 med 항목: recall 트리거 단어 의존·IDF 없음, 재시작 시 진행 중 턴 유실, 오류 메시지 영어, 일일 시나리오 실패 알림 없음, 플랫폼 간 기능 차이.
+- Slack은 턴마다 알림 2회(작업 중 + 답). 1회로 줄이려면 리액션 방식 + `reactions:write`.
+
 ## 목표 완료 (라운드 65)
 
 ① recall이 결정으로 ✅ — 모듈 12 체크 · 주입 발화 로그(`recall: injected N passage(s)`) · 시나리오 3/3 ×3 · 라이브 배포
