@@ -69,7 +69,7 @@ Optional environment for the installer: `DEEPBOT_DIR`, `DEEPBOT_HOME`, `DEEPBOT_
 | a follow-up while it is still working | waits, then answers it next — one turn at a time per thread |
 | `그만` / `stop` | stops the running turn and withdraws what was waiting |
 | `사용량` / `usage` | token totals for the thread, without starting a turn |
-| `허용` / `거부`, or the buttons (Slack, Discord) | answers its request to run something destructive |
+| `허용` / `거부`, or the buttons | answers its request to run something destructive |
 | "지난번에 … 어떻게 하기로 했지?" | recalls past threads **in this channel** and says what they imply |
 | "…가 바뀌면 알려줘" | sets up a watch: a command it runs on a schedule, in a read-only sandbox |
 | "보고서 docx로 만들어줘" | writes the document and uploads it to the conversation |
@@ -107,7 +107,7 @@ Each line is traceable to code and to something that checks it.
 | Reads the **thread it was mentioned in**, as a delta | `transports/slack.ts` | `test/history.test.mjs` 9/9 |
 | Sends an attached **image** to the model as an image | `transports/attachments.ts`, `index.ts` | `test/attachments.test.mjs` 13/13; `vision.json` needs a model |
 | Produces **documents** (docx, pptx, xlsx) | `profile/cordis.patch.yml` office rows | `test/scenarios/document.json` asserts the artifacts |
-| Asks the user to **approve** a destructive command, in the conversation — with buttons on Slack and Discord | `index.ts`, `transports/slack.ts`, `transports/discord.ts` | approval checks in `test/core.test.mjs`; `approval-gate.json` records one open gap |
+| Asks the user to **approve** a destructive command, in the conversation — with buttons on every platform | `index.ts`, `transports/*.ts` | approval checks in `test/core.test.mjs`; `approval-gate.json` records one open gap |
 | Confines **reads**, for commands and for the file tools — other agents' homes, credentials, the session store, the gateway's logs, the ssh-agent | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.mjs` 27/27; `test/edges.test.mjs` 19/19 |
 | Flags **instruction-like text** in fetched material | `injection.ts` | `test/injection.test.mjs` 31/31 |
 | **Uploads the documents a turn made** (pdf, docx, xlsx, pptx, csv changed during the turn, whose path the answer names, with one link and inside the home; on Slack it needs `files:write`) | `index.ts`, `transports/*.ts` | `test/core.test.mjs` 141/141; `test/slack.test.mjs` |

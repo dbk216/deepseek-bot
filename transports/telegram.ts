@@ -18,7 +18,7 @@
 import { readFileSync } from 'node:fs'
 import { basename } from 'node:path'
 import { writeAttachments, type AttachmentSource } from './attachments.js'
-import type { AttachmentManifest, AttachmentRef, InboundMessage, PostedMessage, Target, Transport } from '../types/transport.js'
+import type { AttachmentManifest, AttachmentRef, InboundMessage, PostedMessage, Target, Transport, ActionButton, ActionEvent } from '../types/transport.js'
 
 interface TelegramHost {
   cfg: Record<string, any>
@@ -49,7 +49,8 @@ interface TelegramMessage {
   voice?: TelegramFileRef
   reply_to_message?: TelegramMessage
 }
-interface TelegramUpdate { update_id: number; message?: TelegramMessage; edited_message?: TelegramMessage }
+interface TelegramCallbackQuery { id: string; from?: TelegramUser; data?: string; message?: TelegramMessage }
+interface TelegramUpdate { update_id: number; message?: TelegramMessage; edited_message?: TelegramMessage; callback_query?: TelegramCallbackQuery }
 
 const API_BASE = 'https://api.telegram.org'
 
@@ -92,6 +93,7 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
   let polling = false
   let offset = 0
   let onMessage: ((message: InboundMessage) => void) | null = null
+  let onAction: ((action: ActionEvent) => void) | null = null
 
   /** Per-conversation ring of what we have seen, since the API offers no history. */
   const seenMessages = new Map<string, Array<{ ts: string; who: string; text: string }>>()
@@ -281,10 +283,20 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
     const updates = await call<TelegramUpdate[]>('getUpdates', {
       offset,
       timeout: 30,
-      allowed_updates: ['message'],
+      allowed_updates: ['message', 'callback_query'],
     })
     for (const update of updates) {
       offset = update.update_id + 1
+      // A button press. Answered at once, or the button keeps spinning on the person's screen.
+      if (update.callback_query !== undefined) {
+        const query = update.callback_query
+        void call('answerCallbackQuery', { callback_query_id: query.id }).catch((e) => log(`telegram answerCallbackQuery failed: ${String((e as Error)?.message ?? e)}`))
+        const chat = query.message?.chat?.id
+        if (typeof query.data === 'string' && chat !== undefined && onAction !== null) {
+          onAction({ id: query.data, target: { channel: String(chat), threadTs: null }, user: String(query.from?.id ?? '') })
+        }
+        continue
+      }
       const message = parseUpdate(update)
       if (message !== null && onMessage !== null) onMessage(message)
     }
@@ -318,14 +330,15 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
     identity,
     authenticate,
     ready,
-    // Inline keyboards exist, but this transport answers decisions by reply text.
-    supportsButtons: false,
+    // An inline keyboard; the press comes back as a callback query.
+    supportsButtons: true,
     hasSocket,
     startTyping,
     uploadFile,
 
-    async connect(handlers: { onMessage: (message: InboundMessage) => void }) {
+    async connect(handlers: { onMessage: (message: InboundMessage) => void; onAction?: (action: ActionEvent) => void }) {
       onMessage = handlers.onMessage
+      onAction = handlers.onAction ?? null
       await authenticate()
       await identity()
       polling = true
@@ -335,7 +348,11 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
     },
 
     /** Telegram edits only recent messages; if the edit is refused, send a new one. */
-    async post(target: Target, text: string, options?: { replace?: string | null }): Promise<PostedMessage | null> {
+    async post(target: Target, text: string, options?: { replace?: string | null; buttons?: ActionButton[] }): Promise<PostedMessage | null> {
+      // Buttons as an inline keyboard on the last part, where the question ends. callback_data is capped
+      // at 64 bytes by Telegram; an id longer than that goes without a button and is answered by typing.
+      const keyboard = (options?.buttons ?? []).filter((button) => Buffer.byteLength(button.id) <= 64)
+        .slice(0, 5).map((button) => ({ text: button.label.slice(0, 64), callback_data: button.id }))
       const chunks: string[] = []
       for (let i = 0; i < text.length; i += MESSAGE_LIMIT) chunks.push(text.slice(i, i + MESSAGE_LIMIT))
       if (chunks.length === 0) chunks.push('(empty response)')
@@ -355,6 +372,7 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
           sent = await rendered<TelegramMessage>('sendMessage', {
             chat_id: target.channel,
             ...(target.threadTs !== null ? { reply_to_message_id: Number(target.threadTs) } : {}),
+            ...(keyboard.length > 0 && i === chunks.length - 1 ? { reply_markup: { inline_keyboard: [keyboard] } } : {}),
           }, body)
         }
         replace = null

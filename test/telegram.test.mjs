@@ -294,6 +294,32 @@ function groupMessage(overrides = {}) {
     && attempts[1].body.text === '**굵게**', JSON.stringify(attempts.map((a) => a.body)))
 }
 
+// 15. Approval buttons: an inline keyboard, and the press as a callback query. They existed only on
+// Discord; a Telegram user had to type 허용.
+{
+  const api = fakeApi()
+  const t = transportFor(api, mkdtempSync(join(tmpdir(), 'tg-')))
+  await t.identity()
+  check('the transport says it can render buttons', t.supportsButtons === true)
+  await t.post({ channel: '7', threadTs: null }, '⚠️ 권한이 필요해', {
+    buttons: [{ id: 'approval:allow:7', label: '허용', style: 'primary' }, { id: 'approval:deny:7', label: '거부', style: 'danger' }],
+  })
+  const keyboard = api.calls.find((c) => c.method === 'sendMessage')?.body?.reply_markup?.inline_keyboard
+  check('the message carries an inline keyboard', keyboard?.[0]?.length === 2 && keyboard[0][0].callback_data === 'approval:allow:7' && keyboard[0][1].text === '거부',
+    JSON.stringify(keyboard))
+
+  const pressed = []
+  const api2 = fakeApi({ updates: [{ update_id: 9, callback_query: { id: 'Q1', from: { id: 5 }, data: 'approval:deny:7', message: { message_id: 40, chat: { id: 7, type: 'private' } } } }] })
+  const t2 = transportFor(api2, mkdtempSync(join(tmpdir(), 'tg-')))
+  await t2.connect({ onMessage: () => {}, onAction: (action) => pressed.push(action) })
+  await sleep(200)
+  await t2.close()
+  check('a press reaches the core', pressed.length === 1 && pressed[0].id === 'approval:deny:7' && pressed[0].target.channel === '7' && pressed[0].user === '5',
+    JSON.stringify(pressed))
+  check('and is answered, so the button stops spinning', api2.calls.some((c) => c.method === 'answerCallbackQuery' && c.body?.callback_query_id === 'Q1'))
+  check('callback queries are asked for', JSON.stringify(api2.calls.find((c) => c.method === 'getUpdates')?.body?.allowed_updates ?? []).includes('callback_query'))
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)
