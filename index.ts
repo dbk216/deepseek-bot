@@ -814,9 +814,13 @@ export function apply(ctx, config) {
     saveStateNow()
   }
   async function recoverInflight(): Promise<void> {
-    for (const [key, record] of Object.entries(state.inflight ?? {}) as Array<[string, { channel: string; threadTs: string | null; placeholder?: string; since?: number }]>) {
-      delete state.inflight[key]
-      saveStateNow()
+    // Taken and cleared at once, before the first await: a message arriving while the notices go out is
+    // a new turn, and must find no old record that stops it writing its own.
+    const lost = Object.entries(state.inflight ?? {}) as Array<[string, { channel: string; threadTs: string | null; placeholder?: string; since?: number }]>
+    if (lost.length === 0) return
+    state.inflight = {}
+    saveStateNow()
+    for (const [key, record] of lost) {
       if (Date.now() - Number(record.since ?? 0) > 24 * 3600_000) { log(`inflight ${key}: older than a day, dropped without a notice`); continue }
       const target = { channel: record.channel, threadTs: record.threadTs }
       // The platform's status may still say "작업 중" from the process that died: raise and lower it.

@@ -280,6 +280,23 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   check('and the record is cleared', Object.keys(t.read().inflight ?? {}).length === 0, JSON.stringify(t.read().inflight))
   t.done()
 }
+// A message that arrives while the notices are still going out is a new turn, and is tracked as one.
+// Records were cleared one at a time between awaits: a new turn in a conversation not yet reached found
+// the old record, skipped writing its own, and then lost the old one to the loop — untracked.
+{
+  const since = Date.now() - 5000
+  const t = boot({ agent: 'hang', config: { runTimeoutMs: 60000, fake: { postDelayMs: 400 } }, state: { inflight: {
+    'C_ALLOWED:t0': { channel: 'C_ALLOWED', threadTs: 't0', placeholder: 'ts-a', since },
+    'C_ALLOWED:t1': { channel: 'C_ALLOWED', threadTs: 't1', placeholder: 'ts-b', since },
+  } } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: 'new one' }))
+  await sleep(1500)
+  const record = t.read().inflight?.['C_ALLOWED:t1']
+  check('a turn begun during recovery is tracked', record !== undefined && Number(record.since) > since, JSON.stringify(t.read().inflight))
+  check('and both lost turns were still reported', t.transport.posted.filter((p) => /끊겼어/.test(p.text)).length === 2)
+  t.done()
+}
 
 // 4. Stopping a turn that is open actually stops it, and says so.
 {
