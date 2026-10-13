@@ -13,6 +13,12 @@ import './dist-fresh.mjs'   // fails loudly on a stale dist
 import { App } from '../dist/tui/app.js'
 import { RESTORE } from '../dist/tui/render/terminal.js'
 import { fakeClock, fakeTerminal } from './tui-fakes.mjs'
+import { COMMAND_INFO, COMMANDS, HELP } from '../dist/tui/cli.js'
+import { appendHistory, loadHistory, HISTORY_KEEP } from '../dist/tui/history.js'
+import { fileFinder } from '../dist/tui/files.js'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const results = []
 function check(name, ok, detail = '') {
@@ -20,7 +26,7 @@ function check(name, ok, detail = '') {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
-function setup({ cols = 80, rows = 30, env = { COLORTERM: 'truecolor' } } = {}) {
+function setup({ cols = 80, rows = 30, env = { COLORTERM: 'truecolor' }, extra = {} } = {}) {
   const term = fakeTerminal(cols, rows)
   const clock = fakeClock()
   const sent = []
@@ -40,6 +46,7 @@ function setup({ cols = 80, rows = 30, env = { COLORTERM: 'truecolor' } } = {}) 
     },
     copy: (t) => { copied.push(t); return 'pbcopy' },
     onExit: (code) => { exited = code },
+    ...extra,
   })
   app.start()
   app.setStatus({ connected: true, preset: 'ask', session: 'tui-3f2a9c1e-aaaa', workspace: '~/dsh-agent', model: 'deepseek-v4.1' })
@@ -412,6 +419,104 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   } catch (e) { threw = e }
   check(`small: ${cols}×${rows} draws without throwing`, threw === null, String(threw?.stack ?? ''))
   if (threw === null) check(`small: ${cols}×${rows} still takes input`, t.app.editor.text === '' || t.app.question?.typing === true)
+}
+
+// Input help: completing /commands and @files, searching what was typed before, and keeping it.
+{
+  const intercepted = []
+  const remembered = []
+  const files = ['src/', 'src/app.ts', 'src/apply.ts', 'README.md']
+  const t = setup({ extra: {
+    commands: COMMAND_INFO,
+    files: (query) => files.filter((f) => f.toLowerCase().includes(query.toLowerCase())),
+    intercept: (text) => { intercepted.push(text); return text.startsWith('/') },
+    remember: (text) => remembered.push(text),
+  } })
+  check('commands: every /command has a description for completion', COMMANDS.every((c) => COMMAND_INFO.some((i) => i.name === c)) && HELP.includes('/resume <번호|id>'))
+  t.key('/')
+  check('complete: "/" lists the commands above the input box', t.term.screen.text().includes('/new') && t.term.screen.text().includes('/sessions') && t.term.screen.text().includes('/resume'))
+  t.key('re')
+  const screen = t.term.screen.text()
+  check('complete: typing narrows the list', screen.includes('/resume') && !screen.includes('/sessions'), screen.split('\n').slice(-12).join(' | '))
+  t.key('\t')
+  check('complete: tab puts the command in, ready for its argument', t.app.editor.text === '/resume ' && t.sent.length === 0 && intercepted.length === 0)
+  t.app.editor.set('')
+  t.key('/he')
+  t.key('\r')
+  check('complete: enter on a command without arguments runs it', JSON.stringify(intercepted) === JSON.stringify(['/help']) && t.app.editor.text === '', JSON.stringify(intercepted))
+  t.key('/inter')
+  t.key('\r')
+  check('complete: enter on a command that takes an argument only puts it in', t.app.editor.text === '/interview ' && intercepted.length === 1)
+  t.app.editor.set('')
+  t.key('/')
+  t.key('\x1b'); t.clock.advance(40)
+  check('complete: esc closes the list, and the text stays', !t.term.screen.text().includes('/sessions') && t.app.editor.text === '/')
+  t.key('s')
+  check('complete: typing again opens it again', t.term.screen.text().includes('/sessions'))
+  t.app.editor.set('')
+  t.key('see @ap')
+  check('complete: "@" lists files of the workspace', t.term.screen.text().includes('@src/app.ts') && t.term.screen.text().includes('@src/apply.ts'))
+  t.key('\x1b[B')   // down: the second
+  t.key('\t')
+  check('complete: arrows pick, tab puts the path in', t.app.editor.text === 'see @src/apply.ts ', JSON.stringify(t.app.editor.text))
+  t.app.editor.set('')
+  t.key('mail a@ap')
+  check('complete: an @ inside a word is not a mention', !t.term.screen.text().includes('@src/app.ts'))
+  t.app.editor.set('')
+  t.key('/Users/me/notes 열어줘')
+  check('complete: a path that starts with / is not a command', !t.term.screen.text().includes('/sessions'))
+  t.app.editor.set('')
+}
+
+{
+  // Ctrl+R: newest first, narrowed by what is typed, again for older; enter keeps it to edit, esc restores.
+  const remembered = []
+  const t = setup({ extra: { remember: (text) => remembered.push(text) } })
+  t.app.editor.load(['first deploy', 'second build', 'third deploy'])
+  t.key('draft')
+  t.key('\x12')
+  check('search: ctrl+r shows the newest entry', t.app.editor.text === 'third deploy' && /기록 검색/.test(t.term.screen.text()))
+  t.key('build')
+  check('search: typing narrows it', t.app.editor.text === 'second build')
+  t.key('\x1b'); t.clock.advance(40)
+  check('search: esc gives back what was being typed', t.app.editor.text === 'draft' && !/기록 검색/.test(t.term.screen.text()))
+  t.key('\x12')
+  t.key('deploy')
+  t.key('\x12')
+  check('search: ctrl+r again goes to an older match', t.app.editor.text === 'first deploy')
+  t.key('\r')
+  check('search: enter keeps it in the box to edit, without sending', t.app.editor.text === 'first deploy' && t.sent.length === 0 && !/기록 검색/.test(t.term.screen.text()))
+  t.key('\r')
+  check('remember: what is sent is kept for the next run', t.sent.at(-1) === 'first deploy' && remembered.at(-1) === 'first deploy')
+}
+
+{
+  // The history file: owner-only, read back, and kept to the last HISTORY_KEEP entries.
+  const dir = mkdtempSync(join(tmpdir(), 'deepbot-history-'))
+  const file = join(dir, 'deepbot-tui', 'history.jsonl')
+  appendHistory(file, '첫 질문')
+  appendHistory(file, '여러 줄\n질문')
+  check('history: entries are read back in order, newlines included', JSON.stringify(loadHistory(file)) === JSON.stringify(['첫 질문', '여러 줄\n질문']))
+  check('history: the file is the owner\'s only', (statSync(file).mode & 0o777) === 0o600)
+  for (let i = 0; i < HISTORY_KEEP * 2 + 5; i++) appendHistory(file, `q${i}`)
+  const kept = loadHistory(file)
+  check('history: only the last entries are kept, and the file does not grow forever', kept.length === HISTORY_KEEP && kept.at(-1) === `q${HISTORY_KEEP * 2 + 4}` && readFileSync(file, 'utf8').split('\n').filter(Boolean).length <= HISTORY_KEEP * 2)
+  check('history: a missing or broken file is no history', loadHistory(join(dir, 'none.jsonl')).length === 0)
+  rmSync(dir, { recursive: true, force: true })
+}
+
+{
+  // Files for @: the workspace, without dependency and build folders, best matches first.
+  const root = mkdtempSync(join(tmpdir(), 'deepbot-files-'))
+  for (const d of ['src', 'node_modules/pkg', '.git/objects', 'docs']) mkdirSync(join(root, d), { recursive: true })
+  for (const f of ['src/app.ts', 'src/map.ts', 'node_modules/pkg/app.js', '.git/objects/app', 'docs/app-notes.md', 'README.md']) writeFileSync(join(root, f), '')
+  const find = fileFinder()
+  const hits = find(root, 'app')
+  check('files: dependency and git folders are not listed', !hits.some((p) => p.startsWith('node_modules') || p.startsWith('.git')), JSON.stringify(hits))
+  check('files: a name that starts with the query comes first', hits[0] === 'src/app.ts' || hits[0] === 'docs/app-notes.md', JSON.stringify(hits))
+  check('files: folders end with /', find(root, 'sr').includes('src/'))
+  check('files: no workspace, no files', find('', 'app').length === 0)
+  rmSync(root, { recursive: true, force: true })
 }
 
 const failed = results.filter((r) => !r.ok)

@@ -10,7 +10,9 @@
  */
 import { App } from './app.js'
 import { Connection, discover } from './client.js'
-import { bind, createCommands, parseArgs, USAGE, type Commands } from './cli.js'
+import { bind, COMMAND_INFO, createCommands, parseArgs, USAGE, type Commands } from './cli.js'
+import { fileFinder } from './files.js'
+import { appendHistory, historyFile, loadHistory } from './history.js'
 import { processIO, restoreOnExit } from './render/terminal.js'
 
 function main(): void {
@@ -28,8 +30,13 @@ function main(): void {
 
   let connection: Connection | null = null
   let commands: Commands | null = null
+  const findFiles = fileFinder()
+  const history = historyFile(process.env)
   const app = new App({
     intercept: (text) => commands?.intercept(text) ?? false,
+    commands: COMMAND_INFO,
+    files: (query) => findFiles(app.status.workspace, query),
+    remember: (text) => appendHistory(history, text),
     io: processIO(process.stdin, process.stdout),
     env: process.env,
     platform: process.platform,
@@ -62,6 +69,7 @@ function main(): void {
     },
   })
   commands = createCommands(app, connection, { resumeOnStart: parsed.resume !== undefined })
+  app.editor.load(loadHistory(history))
   restoreOnExit(app.terminal)
   app.start()
   connection.start()

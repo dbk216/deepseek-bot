@@ -5,6 +5,8 @@
 import type { App } from './app.js'
 import { NAME, type ClientFrame, type ConversationItem, type ServerFrame } from './protocol.js'
 import { interviewPrompt } from './interview.js'
+import type { CommandInfo } from './complete.js'
+import { stringWidth } from './render/width.js'
 
 export interface Args { name?: string; socket?: string; tenant?: string; resume?: string; help: boolean }
 
@@ -94,17 +96,26 @@ export function parseCommand(text: string): { name: CommandName; args: string } 
   return { name: m[1] as CommandName, args: (m[2] ?? '').trim() }
 }
 
+/** What each command takes and does: the source of /help and of the completion list. */
+export const COMMAND_INFO: Array<CommandInfo & { name: CommandName }> = [
+  { name: 'new', hint: '새 대화 (같은 workspace)', args: false },
+  { name: 'sessions', hint: '터미널 대화 목록 (어느 tenant인지 표시)', args: false },
+  { name: 'resume', usage: '<번호|id>', hint: '목록의 대화 이어가기', args: true },
+  { name: 'tenant', usage: '[이름]', hint: '그 tenant workspace에서 새 대화 (이름 없이: 설정의 기본, 없으면 home)', args: true },
+  { name: 'interview', usage: '<주제>', hint: '딥인터뷰: 질문을 하나씩 받아 명확도를 올리고 spec으로 정리', args: true },
+  { name: 'usage', hint: '지금까지 쓴 토큰', args: false },
+  { name: 'clear', hint: '화면 비우기 (대화는 그대로)', args: false },
+  { name: 'help', hint: '이 도움말', args: false },
+  { name: 'quit', hint: '종료 (ctrl+c 두 번, ctrl+d도 같음)', args: false },
+]
+
+const column = (text: string, width: number) => text + ' '.repeat(Math.max(1, width - stringWidth(text)))
+
 export const HELP = [
-  '/new              새 대화 (같은 workspace)',
-  '/sessions         터미널 대화 목록 (어느 tenant인지 표시)',
-  '/resume <번호|id> 목록의 대화 이어가기',
-  '/tenant [이름]    그 tenant workspace에서 새 대화 (이름 없이: 설정의 기본, 없으면 home)',
-  '/interview <주제> 딥인터뷰: 질문을 하나씩 받아 명확도를 올리고 spec으로 정리',
-  '/usage            지금까지 쓴 토큰',
-  '/clear            화면 비우기 (대화는 그대로)',
-  '/quit             종료 (ctrl+c 두 번, ctrl+d도 같음)',
+  ...COMMAND_INFO.map((c) => `${column(`/${c.name}${c.usage ? ` ${c.usage}` : ''}`, 18)}${c.hint}`),
   '',
   '↵ 전송 · alt+↵ 줄바꿈 · esc 중단 · 휠/PgUp/PgDn 스크롤 · 드래그 복사',
+  '/ 명령 · @ 파일 (tab으로 넣기) · ctrl+r 입력 기록 검색',
 ].join('\n')
 
 function ago(ms: number, now: number): string {

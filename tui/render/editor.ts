@@ -42,6 +42,25 @@ export class Editor {
     this.browsing = -1
   }
 
+  /** Replace the text between two cursor positions, leaving the cursor after what was put in. */
+  replace(from: number, to: number, text: string): void {
+    const add = graphemes(text)
+    this.chars = this.chars.slice(0, from).concat(add, this.chars.slice(to))
+    this.pos = from + add.length
+    this.browsing = -1
+  }
+
+  /** What was sent before, oldest first: earlier runs' (loaded) and this one's. */
+  get past(): readonly string[] {
+    return this.history
+  }
+
+  /** Earlier runs' entries, oldest first, placed before this run's. */
+  load(entries: readonly string[]): void {
+    this.history = [...entries.filter((e) => e.trim() !== ''), ...this.history]
+    this.browsing = -1
+  }
+
   backspace(): void {
     if (this.pos === 0) return
     this.chars.splice(this.pos - 1, 1)

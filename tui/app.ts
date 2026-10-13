@@ -10,6 +10,7 @@
  * and a hint line. Nothing frames the whole screen; the transcript gets every row it can.
  */
 import { answerBlock, bannerBlock, noticeBlock, spacerBlock, toolBlock, userBlock, type AnswerBlock, type NoticeKind } from './blocks.js'
+import { complete, type CommandInfo, type Completion } from './complete.js'
 import type { AgentItem, JobItem, ViewLine } from './bridge.js'
 import { formatTokens, panelCounts, panelRows, panelWindow, rowStatus, type PanelRow } from './panel.js'
 import { AMBIGUITY_TARGET, readState, type InterviewState } from './interview.js'
@@ -23,7 +24,7 @@ import type { Screen } from './render/screen.js'
 import { detectColorMode, sgr, theme, type ColorMode } from './render/style.js'
 import { Terminal, type TerminalIO } from './render/terminal.js'
 import { Transcript } from './render/transcript.js'
-import { stringWidth } from './render/width.js'
+import { graphemes, stringWidth } from './render/width.js'
 
 export interface Backend {
   send(text: string): void
@@ -81,6 +82,12 @@ export interface AppOptions {
   copy?: (text: string) => CopyMethod
   /** A typed line the app should not send (a /command): return true when it was handled. */
   intercept?: (text: string) => boolean
+  /** The /commands to complete, with what they take. */
+  commands?: readonly CommandInfo[]
+  /** The workspace's files matching a query, for @ completion. */
+  files?: (query: string) => string[]
+  /** Keep a sent line for the next run's history. */
+  remember?: (text: string) => void
 }
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -89,6 +96,7 @@ const TOAST_MS = 1500
 /** A paste larger than this is cut: the core keeps a few thousand characters of a message anyway. */
 const MAX_PASTE_CHARS = 200_000
 const PANEL_MAX_ROWS = 6
+const COMPLETION_MAX_ROWS = 6
 
 export class App {
   readonly mode: ColorMode
@@ -123,6 +131,12 @@ export class App {
   question: QuestionFlow | null = null
   /** A deep interview in progress: its topic and the model's latest report on it. */
   interview: { topic: string; state: InterviewState | null } | null = null
+  /** Candidates for what is being typed (/commands, @files), and the one picked. */
+  completion: (Completion & { index: number }) | null = null
+  /** The text Esc closed the list at: it stays closed until the text changes. */
+  private dismissed: string | null = null
+  /** A Ctrl+R search: what is typed, how many older matches to skip, and the text it replaced. */
+  private search: { query: string; skip: number; original: string; found: boolean } | null = null
   private toast: { text: string; until: number } | null = null
   private quitArmed = 0
   private spinTimer: unknown = null
@@ -458,7 +472,9 @@ export class App {
       this.clearSelection()
       const text = event.text.length > MAX_PASTE_CHARS ? event.text.slice(0, MAX_PASTE_CHARS) : event.text
       if (text !== event.text) this.showToast(`붙여넣기가 커서 앞 ${MAX_PASTE_CHARS.toLocaleString('en-US')}자만 넣음`)
+      this.search = null
       this.editor.insert(text)
+      this.refreshCompletion()
       this.terminal.requestRender(true)
       return
     }
@@ -473,6 +489,9 @@ export class App {
 
     if (this.question !== null && this.onQuestionKey(key)) return
     if (this.focus === 'panel' && this.onPanelKey(key)) return
+    if (this.search !== null && this.onSearchKey(key)) return
+    if (key.ctrl && key.name === 'char' && key.ch === 'r' && this.view.kind === 'main' && this.question === null) { this.startSearch(); return }
+    if (this.completion !== null && this.onCompletionKey(key)) return
     if (key.ctrl && key.name === 'char') {
       switch (key.ch) {
         case 'c': return this.ctrlC()
@@ -490,6 +509,7 @@ export class App {
         case 'j': this.editor.insert('\n'); break
         default: return
       }
+      this.refreshCompletion()
       this.terminal.requestRender(true)
       return
     }
@@ -525,8 +545,87 @@ export class App {
       case 'char': this.editor.insert(key.ch ?? ''); break
       default: return
     }
+    this.refreshCompletion()
     // Typing is drawn on the keystroke, not on the next frame tick.
     this.terminal.requestRender(true)
+  }
+
+  // ── Completion and history search ──────────────────────────────────────
+
+  /** Look again at what is typed: a /command or an @file being written gets its candidates. */
+  private refreshCompletion(): void {
+    if (this.dismissed !== null && this.dismissed !== this.editor.text) this.dismissed = null
+    const usable = this.view.kind === 'main' && this.question === null && this.search === null && this.dismissed === null
+    const found = usable ? complete(this.editor.text, this.editor.cursor, this.o.commands ?? [], this.o.files) : null
+    if (found === null) { this.completion = null; return }
+    const same = this.completion !== null && this.completion.items.map((i) => i.label).join('\n') === found.items.map((i) => i.label).join('\n')
+    this.completion = { ...found, index: same ? this.completion!.index : 0 }
+  }
+
+  /** Keys while the list is open. Returns false for keys the input box should get instead. */
+  private onCompletionKey(key: KeyEvent): boolean {
+    const c = this.completion!
+    switch (key.name) {
+      case 'up': c.index = (c.index + c.items.length - 1) % c.items.length; break
+      case 'down': c.index = (c.index + 1) % c.items.length; break
+      case 'tab': this.acceptCompletion(false); return true
+      case 'enter':
+        if (key.alt || key.shift) return false
+        this.acceptCompletion(true)
+        return true
+      case 'escape': this.dismissed = this.editor.text; this.completion = null; break
+      default: return false
+    }
+    this.terminal.requestRender(true)
+    return true
+  }
+
+  /** Put the picked candidate in; Enter on a command that takes nothing runs it. */
+  private acceptCompletion(enter: boolean): void {
+    const c = this.completion!
+    const item = c.items[c.index]
+    this.completion = null
+    if (enter && item.run) {
+      this.editor.set(item.insert.trimEnd())
+      this.submit()
+    } else this.editor.replace(c.from, c.to, item.insert)
+    this.refreshCompletion()
+    this.terminal.requestRender(true)
+  }
+
+  private startSearch(): void {
+    this.completion = null
+    this.search = { query: '', skip: 0, original: this.editor.text, found: false }
+    this.showSearchMatch()
+  }
+
+  /** The newest entry with the query in it (skipping as many older ones as Ctrl+R asked), shown in the box. */
+  private showSearchMatch(): void {
+    const s = this.search!
+    const query = s.query.toLowerCase()
+    const matches: string[] = []
+    const past = this.editor.past
+    for (let i = past.length - 1; i >= 0; i--) {
+      if (past[i].toLowerCase().includes(query) && !matches.includes(past[i])) matches.push(past[i])
+    }
+    s.found = matches.length > 0
+    s.skip = Math.min(s.skip, Math.max(0, matches.length - 1))
+    this.editor.set(s.found ? matches[s.skip] : s.original)
+    this.terminal.requestRender(true)
+  }
+
+  /** Keys while searching. Returns false for keys that end the search and then do what they do. */
+  private onSearchKey(key: KeyEvent): boolean {
+    const s = this.search!
+    if (key.ctrl && key.name === 'char' && key.ch === 'r') { s.skip++; this.showSearchMatch(); return true }
+    const cancel = key.name === 'escape' || (key.ctrl && key.name === 'char' && (key.ch === 'g' || key.ch === 'c'))
+    if (cancel) { this.editor.set(s.original); this.search = null; this.terminal.requestRender(true); return true }
+    if (key.name === 'enter' && !key.alt && !key.shift) { this.search = null; this.terminal.requestRender(true); return true }
+    if (key.name === 'backspace') { s.query = graphemes(s.query).slice(0, -1).join(''); s.skip = 0; this.showSearchMatch(); return true }
+    if (key.name === 'char' && !key.ctrl && !key.alt) { s.query += key.ch ?? ''; s.skip = 0; this.showSearchMatch(); return true }
+    // Anything else keeps the match in the box and is handled as usual.
+    this.search = null
+    return false
   }
 
   /** Keys while a question is open. Returns false for keys the input box should get instead. */
@@ -578,6 +677,7 @@ export class App {
     const text = this.editor.text
     if (text.trim() === '') return
     this.editor.submit()
+    this.o.remember?.(text)
     if (this.o.intercept?.(text.trim()) === true) return
     if (this.view.kind === 'agent') {
       if (this.view.mode !== 'continuable') { this.showToast('이 subagent는 one-shot이라 메시지를 받을 수 없음'); return }
@@ -693,7 +793,8 @@ export class App {
     const allRows = this.rows()
     const panel = panelWindow(allRows, this.panelIndex, PANEL_MAX_ROWS)
     const panelShown = panel.rows.length
-    const bottom = 1 /* divider */ + 1 /* status */ + panelShown + choiceRows + questionLines.length + editorRows + 2 /* box */ + 1 /* hint */
+    const completionLines = this.completionLines(cols)
+    const bottom = 1 /* divider */ + 1 /* status */ + panelShown + choiceRows + questionLines.length + completionLines.length + editorRows + 2 /* box */ + 1 /* hint */
     const transcriptTop = 1 + stripRows
     const transcriptHeight = Math.max(1, rows - transcriptTop - bottom)
     if (stripRows > 0) this.drawInterview(screen, 1, cols)
@@ -702,7 +803,12 @@ export class App {
     const panelTop = panelShown === 0 ? -1 : statusRow + 1
     const choiceRow = choiceRows === 0 ? -1 : statusRow + 1 + panelShown
     const questionTop = questionLines.length === 0 ? -1 : statusRow + 1 + panelShown + choiceRows
-    const editorTop = statusRow + 1 + panelShown + choiceRows + questionLines.length
+    const completionTop = statusRow + 1 + panelShown + choiceRows + questionLines.length
+    const editorTop = completionTop + completionLines.length
+    completionLines.forEach((line, i) => {
+      const x = screen.put(1, completionTop + i, line.label, line.selected ? s({ ...theme.accent, bold: true }) : s(theme.text))
+      if (line.hint !== '') screen.put(x + 2, completionTop + i, line.hint, s(theme.muted))
+    })
     let questionRowsAt = -1
     questionLines.forEach((line, i) => {
       if (line.optionRow && questionRowsAt === -1) questionRowsAt = questionTop + i
@@ -774,7 +880,10 @@ export class App {
     screen.cursor = this.focus === 'editor' ? { x: 4 + editor.cursor.x, y: editorTop + 1 + (editor.cursor.y - first) } : null
 
     // Hint line: what the keys do here.
-    const hint = this.question?.typing ? '직접 입력 후 ↵ · esc 선택지로'
+    const search = this.search
+    const hint = search !== null ? `(기록 검색) ${search.query}${search.found ? '' : ' · 일치 없음'} · ctrl+r 이전 · ↵ 고르기 · esc 취소`
+      : this.completion !== null ? '↑↓ 고르기 · tab 넣기 · ↵ 실행 · esc 닫기'
+      : this.question?.typing ? '직접 입력 후 ↵ · esc 선택지로'
       : this.question !== null ? `↑↓ 이동${this.question.current?.multiSelect ? ' · space 선택' : ''} · ↵ 확정 · esc 건너뛰기 · 글자를 치면 직접 입력`
       : this.focus === 'panel' ? '↑↓ 이동 · ↵ 열기 · esc 입력창으로'
       : this.view.kind === 'agent' ? `↵ ${this.view.label}에게 보내기 · ctrl+x 중단 · esc main으로`
@@ -782,6 +891,20 @@ export class App {
           : this.status.running ? 'esc 중단 · 휠 스크롤 · 드래그 복사'
             : `↵ 전송 · alt+↵ 줄바꿈 · 드래그 복사${allRows.length > 0 ? ' · tab 패널' : ''} · /help · ctrl+c 종료`
     screen.put(1, editorTop + 2 + editorRows, hint, s(theme.dim))
+  }
+
+  /** The completion list, a window of rows around the picked candidate. */
+  private completionLines(cols: number): Array<{ label: string; hint: string; selected: boolean }> {
+    const c = this.completion
+    if (c === null) return []
+    const first = Math.max(0, Math.min(c.index - COMPLETION_MAX_ROWS + 1, c.items.length - COMPLETION_MAX_ROWS))
+    const shown = c.items.slice(Math.max(0, first), Math.max(0, first) + COMPLETION_MAX_ROWS)
+    const labelWidth = Math.min(Math.max(...shown.map((i) => stringWidth(i.label))), Math.floor(cols / 2))
+    return shown.map((item, k) => ({
+      label: `${Math.max(0, first) + k === c.index ? '❯' : ' '} ${item.label}${' '.repeat(Math.max(0, labelWidth - stringWidth(item.label)))}`,
+      hint: item.hint,
+      selected: Math.max(0, first) + k === c.index,
+    }))
   }
 
   /** The question panel: what is asked, then one row per option and "직접 입력…". */
