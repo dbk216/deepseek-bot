@@ -56,7 +56,7 @@ import { createDiscordTransport } from './transports/discord.js'
 import { createProgressTracker } from './progress.js'
 import { writeInside } from './safeWrite.js'
 import { createUsageTracker, emptyUsageStore } from './usage.js'
-import { createRecallContext } from './recallContext.js'
+import { createRecallContext, recallIndexPath } from './recallContext.js'
 import { analyzeNotes } from './notes.js'
 import { guardFetchedText } from './injection.js'
 import type { SlackHistoryResponse } from './types/slack.js'
@@ -656,7 +656,8 @@ export function apply(ctx, config) {
     if (typeof prompt === 'string' && prompt !== '') {
       // Built here because the index lives in the conversation's home, known only now.
       const recallContext = createRecallContext({
-        indexPath: join(cwd, 'memory', 'recall-index.jsonl'),
+        indexPath: recallIndexPath(cwd),
+        sessionId: sessionId === '' ? null : sessionId,
         topN: cfg.recallTopN, maxChars: cfg.recallMaxChars, triggerWords: cfg.recallTriggerWords,
         // This conversation's channel only: a DM's words must not surface in a channel's answer.
         channel: origin?.channel ?? null,
@@ -2133,7 +2134,7 @@ export function apply(ctx, config) {
         // than a text file with a .docx name.
         const spec = step.expectFile
         const cwd = await sessionCwd()
-        const abs = join(cwd, spec.path)
+        const abs = spec.path.startsWith('/') ? spec.path : join(cwd, spec.path)
         try {
           const stat = statSync(abs)
           const bytes = readFileSync(abs)

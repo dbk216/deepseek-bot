@@ -11,6 +11,7 @@
  * Run: node test/resources.test.mjs
  */
 import './dist-fresh.mjs'
+import './scratch-dsh-home.mjs'   // the recall index must not land in the real ~/.dsh
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

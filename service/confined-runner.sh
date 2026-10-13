@@ -108,7 +108,8 @@ profile() {
   # here, outside the agent's home, where they used to be readable and writable by the agent.
   # The session store: every profile's conversations, this agent's and everybody else's. The agent
   # reads its own past through the recall index in its home, never through these files.
-  for denied in "$HOME/.dsh/service/logs" "$HOME/.dsh/sessions"; do
+  # The recall index too: every channel's history, which the adapter hands out one channel at a time.
+  for denied in "$HOME/.dsh/service/logs" "$HOME/.dsh/sessions" "$HOME/.dsh/recall"; do
     [ -d "$denied" ] || continue
     printf '(deny file-read* (subpath %s))\n' "$(sbpl "$denied")"
     resolved="$(cd "$denied" && pwd -P)"

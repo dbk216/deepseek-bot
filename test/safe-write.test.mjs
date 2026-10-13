@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { writeInside } from '../dist/safeWrite.js'
 import { writeAttachments } from '../dist/transports/attachments.js'
+import { recallIndexPath } from '../dist/recallContext.js'
 
 const results = []
 function check(name, ok, detail = '') {
@@ -69,35 +70,34 @@ function fixture() {
   f.done()
 }
 
-// 4. The recall indexer, as run after every turn and by launchd.
+// 4. The recall indexer, as run after every turn and by launchd. Its index now lives under the harness
+// home, where the agent cannot write; what is left of the old one in the agent's home is removed —
+// a link there is removed as a link, and a memory directory linked elsewhere is not followed.
 {
   const f = fixture()
   const dsh = join(f.base, 'dsh')
   mkdirSync(join(dsh, 'sessions'), { recursive: true })
-  // The control: on an ordinary home the indexer writes its index. Without it, an indexer that died
-  // early for any reason would pass the checks below.
-  execFileSync(process.execPath, ['dist/recall/deepbot-recall.js', 'index', '--quiet'],
+  const index = () => execFileSync(process.execPath, ['dist/recall/deepbot-recall.js', 'index', '--quiet'],
     { encoding: 'utf8', env: { ...process.env, DSH_HOME: dsh, DEEPBOT_HOME: f.home }, stdio: 'pipe' })
+  // The control: the indexer runs and writes its index where it should, outside the home.
+  index()
   let wrote = false
-  try { wrote = lstatSync(join(f.home, 'memory', 'recall-index.jsonl')).isFile() } catch { /* not written */ }
-  check('on an ordinary home the indexer writes its index', wrote)
-  rmSync(join(f.home, 'memory'), { recursive: true, force: true })
+  try { wrote = lstatSync(recallIndexPath(f.home, dsh)).isFile() } catch { /* not written */ }
+  check('the indexer writes its index under the harness home', wrote, recallIndexPath(f.home, dsh))
   mkdirSync(join(f.home, 'memory'))
+  writeFileSync(join(f.home, 'memory', 'recall-index.jsonl'), '{"text":"an old copy every tool could read"}\n')
+  index()
+  let oldGone = true
+  try { lstatSync(join(f.home, 'memory', 'recall-index.jsonl')); oldGone = false } catch { /* removed */ }
+  check('an old index in the agent home is removed', oldGone)
   symlinkSync(f.launcher, join(f.home, 'memory', 'recall-index.jsonl'))
-  try {
-    execFileSync(process.execPath, ['dist/recall/deepbot-recall.js', 'index', '--quiet'],
-      { encoding: 'utf8', env: { ...process.env, DSH_HOME: dsh, DEEPBOT_HOME: f.home }, stdio: 'pipe' })
-  } catch { /* a refusal is an acceptable outcome; the file below is what matters */ }
-  check('the indexer does not write through a planted link', readFileSync(f.launcher, 'utf8') === '#!/bin/bash\necho original\n')
+  index()
+  check('a link left at the old name is removed, not followed', readFileSync(f.launcher, 'utf8') === '#!/bin/bash\necho original\n')
   rmSync(join(f.home, 'memory'), { recursive: true, force: true })
+  writeFileSync(join(f.outside, 'recall-index.jsonl'), 'outside, keep me\n')
   symlinkSync(f.outside, join(f.home, 'memory'))
-  try {
-    execFileSync(process.execPath, ['dist/recall/deepbot-recall.js', 'index', '--quiet'],
-      { encoding: 'utf8', env: { ...process.env, DSH_HOME: dsh, DEEPBOT_HOME: f.home }, stdio: 'pipe' })
-  } catch { /* refused */ }
-  let wroteOutside = true
-  try { lstatSync(join(f.outside, 'recall-index.jsonl')) } catch { wroteOutside = false }
-  check('nor into a linked memory directory', !wroteOutside)
+  index()
+  check('a memory directory linked elsewhere is not followed', readFileSync(join(f.outside, 'recall-index.jsonl'), 'utf8') === 'outside, keep me\n')
   f.done()
 }
 

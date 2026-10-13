@@ -8,6 +8,7 @@
  * Run: node test/edges.test.mjs
  */
 import './dist-fresh.mjs'
+import './scratch-dsh-home.mjs'   // the recall index must not land in the real ~/.dsh
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

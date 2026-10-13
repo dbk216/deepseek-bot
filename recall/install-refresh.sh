@@ -22,7 +22,8 @@ AGENT_HOME="${DEEPBOT_HOME:-$HOME/dsh-agent}"
 REFRESH_MIN="${REFRESH_MIN:-10}"
 NODE="${DEEPBOT_NODE:-$(command -v node || echo /usr/local/bin/node)}"
 SCRIPT_DIR="$(pwd)"
-INDEX="$AGENT_HOME/memory/recall-index.jsonl"
+# Outside the agent's home (recallIndexPath in recallContext.ts): the same id the indexer derives.
+INDEX="${DSH_HOME:-$HOME/.dsh}/recall/$(cd "$AGENT_HOME" 2>/dev/null && pwd | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+|-+$//g')/recall-index.jsonl"
 
 case "${1:-}" in
 --status)

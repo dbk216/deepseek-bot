@@ -16,14 +16,7 @@
       "session": "B",
       "say": "내가 좋아하는 음식이 뭐였지?",
       "expectContains": "국밥",
-      "expectToolUse": [
-        "bash",
-        "grep",
-        "read",
-        "glob",
-        "fs_read",
-        "fs_grep"
-      ]
+      "_why_no_tools": "The index is outside the agent's home now: the passage arrives in the injected block, so no tool call is expected."
     },
     {
       "session": "B",
@@ -35,9 +28,14 @@
         "찾지 못",
         "없는 것으로",
         "not found",
-        "no record"
+        "no record",
+        "못 찾",
+        "없어",
+        "모르겠",
+        "기록이 없"
       ],
-      "_why": "S2: never invent. It may name the thing it declines to claim, so the check is \"admits it does not know\", not \"never mentions it\"."
+      "_why": "S2: never invent. It may name the thing it declines to claim, so the check is \"admits it does not know\", not \"never mentions it\".",
+      "_why_banmal": "The persona speaks 반말: \"못 찾았어\" and \"없어\" are the same answer as \"찾지 못했습니다\"."
     }
   ]
 }

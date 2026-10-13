@@ -26,9 +26,10 @@
  * Zero dependencies. Node 22+ (needs node:zlib zstd support).
  */
 
-import { readFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, mkdirSync, existsSync, readdirSync, statSync, lstatSync, realpathSync, rmSync } from 'node:fs'
 import { zstdDecompressSync } from 'node:zlib'
 import { writeInside } from '../safeWrite.js'
+import { recallIndexPath } from '../recallContext.js'
 import { join, dirname, basename, sep } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -277,6 +278,7 @@ function buildIndex(outFile, quiet) {
       sessions: perSession.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)),
     }, null, 1),
   )
+  removeOldIndex()
   if (!quiet) {
     console.log(`indexed ${all.length} messages from ${perSession.length} session(s) -> ${outFile}`)
     if (skippedOtherCwd > 0) {
@@ -287,6 +289,23 @@ function buildIndex(outFile, quiet) {
     }
   }
   return { messages: all.length, sessions: perSession.length }
+}
+
+/**
+ * The index used to be written into the agent's home, where the agent could read all of it. Remove
+ * what is left there — the file or a link in its place, never through a directory that resolves
+ * outside the home, since this runs unconfined.
+ */
+function removeOldIndex() {
+  for (const name of ['recall-index.jsonl', 'recall-index.sessions.json']) {
+    const old = join(AGENT_HOME, 'memory', name)
+    try {
+      lstatSync(old)
+      const dir = realpathSync(dirname(old))
+      const home = realpathSync(AGENT_HOME)
+      if (dir === home || dir.startsWith(home + sep)) rmSync(old, { force: true })
+    } catch { /* not there */ }
+  }
 }
 
 function loadIndex(indexFile) {
@@ -316,7 +335,8 @@ function snippet(text, query, width = 160) {
   return (from > 0 ? '…' : '') + flat.slice(from, from + width)
 }
 
-const INDEX_DEFAULT = join(AGENT_HOME, 'memory', 'recall-index.jsonl')
+// Outside the agent's home: there the agent could read every channel's history with its own tools.
+const INDEX_DEFAULT = recallIndexPath(AGENT_HOME, DSH_HOME)
 
 switch (command) {
   case 'index':

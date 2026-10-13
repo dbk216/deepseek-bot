@@ -15,6 +15,19 @@
  * cache safety — a per-turn block there would invalidate the cache on every turn.
  */
 import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
+
+/**
+ * Where a home's recall index lives: under the harness's home, outside the agent's. In the agent's
+ * home the agent could read every channel's history with its own tools — the channel filter below
+ * only governs what is injected — and an unconfined indexer wrote where the agent could plant links.
+ * The sandbox runner and the tools' read scope both deny this directory.
+ */
+export function recallIndexPath(home: string, dshHome: string = process.env.DSH_HOME ?? join(homedir(), '.dsh')): string {
+  const id = resolve(home).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+  return join(dshHome, 'recall', id, 'recall-index.jsonl')
+}
 
 export interface RecallRow {
   ts?: number
@@ -26,7 +39,7 @@ export interface RecallRow {
 }
 
 export interface RecallOptions {
-  /** The JSONL index, usually `<home>/memory/recall-index.jsonl`. */
+  /** The JSONL index, `recallIndexPath(home)`. */
   indexPath: string
   /** How many passages to show. */
   topN?: number
@@ -42,6 +55,8 @@ export interface RecallOptions {
   channel?: string | null
   /** The channel of a session the adapter still maps, for a row the indexer could not place. */
   sessionChannel?: (sessionId: string) => string | null
+  /** The session being answered: its own turns are already in its context. */
+  sessionId?: string | null
   now?: () => number
 }
 
@@ -56,6 +71,20 @@ export function words(text: string): string[] {
     .toLowerCase()
     .split(/[^0-9a-z가-힣]+/u)
     .filter((w) => w.length > 1)
+}
+
+// Korean particles, longest first. A query word carries its particle ("롤백을") and a passage may not
+// ("롤백"), so the query side is stripped; matching is by substring, so the passage side need not be.
+const PARTICLES = ['으로부터', '에서부터', '이라고', '에게서', '한테서', '라고', '으로', '에서', '에게', '한테', '까지',
+  '부터', '처럼', '보다', '이나', '이랑', '하고', '은', '는', '이', '가', '을', '를', '에', '의', '로', '와', '과', '도', '만', '랑']
+
+/** A query word without its trailing particle, when what is left is still a word. */
+export function stem(word: string): string {
+  if (!/[가-힣]$/u.test(word)) return word
+  for (const particle of PARTICLES) {
+    if (word.endsWith(particle) && word.length - particle.length >= 2) return word.slice(0, -particle.length)
+  }
+  return word
 }
 
 export function createRecallContext(options: RecallOptions) {
@@ -97,21 +126,33 @@ export function createRecallContext(options: RecallOptions) {
      */
     block(prompt: string): string {
       try {
-        if (!this.triggered(prompt)) return ''
-        const query = words(prompt)
+        const query = [...new Set(words(prompt).map(stem))]
         if (query.length === 0) return ''
         const channel = options.channel ?? null
-        const ranked = load()
+        const own = options.sessionId ?? null
+        const rows = load()
           .filter((row) => channel === null
             || (row.channel ?? (row.sessionId !== undefined ? options.sessionChannel?.(row.sessionId) : null) ?? null) === channel)
-          .map((row) => {
-            const text = String(row.text).toLowerCase()
-            return { row, score: query.reduce((n, w) => n + (text.includes(w) ? 1 : 0), 0) }
+          .filter((row) => own === null || row.sessionId !== own)
+        if (rows.length === 0) return ''
+        const texts = rows.map((row) => String(row.text).toLowerCase())
+        // Inverse document frequency: a word in every passage says nothing about which one is meant.
+        const df = new Map(query.map((w) => [w, texts.reduce((n, text) => n + (text.includes(w) ? 1 : 0), 0)]))
+        const idf = (w: string) => Math.log(1 + rows.length / Math.max(1, df.get(w) ?? 0))
+        // A word few passages share; two of them in one passage is very likely the same subject.
+        const rare = Math.max(2, Math.ceil(rows.length * 0.02))
+        const ranked = rows
+          .map((row, i) => {
+            const matched = query.filter((w) => texts[i].includes(w))
+            return { row, score: matched.reduce((n, w) => n + idf(w), 0), distinctive: matched.filter((w) => (df.get(w) ?? 0) <= rare).length }
           })
           .filter((hit) => hit.score > 0)
           .sort((a, b) => b.score - a.score || Number(b.row.ts ?? 0) - Number(a.row.ts ?? 0))
           .slice(0, topN)
         if (ranked.length === 0) return ''
+        // Unprompted — no word pointing at the past — only a strong match is worth the interruption.
+        // It used to need a trigger word, so "did anyone say X?" found nothing.
+        if (!this.triggered(prompt) && ranked[0].distinctive < 2) return ''
 
         const lines = ranked.map(({ row }) => {
           const text = String(row.text).replace(/\s+/g, ' ').trim().slice(0, 240)

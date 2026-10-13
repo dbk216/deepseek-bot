@@ -83,6 +83,9 @@ for (const resolved of [false, true]) {
   mkdirSync(join(fakeHome, '.dsh', 'service', 'logs'), { recursive: true })
   // Every profile's session logs, the agent's own and everybody else's.
   mkdirSync(join(fakeHome, '.dsh', 'sessions', 'bucket', 's1'), { recursive: true })
+  // The recall index: every channel's history, handed out by the adapter one channel at a time.
+  mkdirSync(join(fakeHome, '.dsh', 'recall', 'home'), { recursive: true })
+  writeFileSync(join(fakeHome, '.dsh', 'recall', 'home', 'recall-index.jsonl'), 'canary-recall-77b\n')
   writeFileSync(join(fakeHome, '.dsh', 'sessions', 'bucket', 's1', 'session.v4.jsonl.zstd'), 'canary-session-a41\n')
   writeFileSync(join(fakeHome, '.dsh', 'service', 'logs', 'gateway.out.log'), 'token=canary-ui-6d2\n')
   const env = { ...process.env, HOME: fakeHome }
@@ -98,6 +101,7 @@ for (const resolved of [false, true]) {
   check('nor .credentials.yaml' + as, !read('.credentials.yaml').includes('canary-cred-9b7'))
   check('nor a backup of it' + as, !read('.credentials.yaml.bak-20261008').includes('canary-bak-3c4'))
   check('nor the gateway\'s log, which carries the web UI token' + as, !read(join('service', 'logs', 'gateway.out.log')).includes('canary-ui-6d2'))
+  check('nor the recall index' + as, !read(join('recall', 'home', 'recall-index.jsonl')).includes('canary-recall-77b'))
   check('nor the session store' + as, !read(join('sessions', 'bucket', 's1', 'session.v4.jsonl.zstd')).includes('canary-session-a41'))
   check('the rest of ~/.dsh stays readable' + as, read('other.txt').includes('readable-2e8'), read('other.txt').slice(0, 40))
   rmSync(made, { recursive: true, force: true })

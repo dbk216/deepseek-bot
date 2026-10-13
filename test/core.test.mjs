@@ -14,11 +14,13 @@
  * Run: node test/core.test.mjs
  */
 import './dist-fresh.mjs'   // fails loudly on a stale dist
+import './scratch-dsh-home.mjs'   // the recall index must not land in the real ~/.dsh
 
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { apply } from '../dist/index.js'
+import { recallIndexPath } from '../dist/recallContext.js'
 import { createFakeTransport } from './fake-transport.mjs'
 
 const results = []
@@ -813,8 +815,13 @@ for (const remove of [false, true]) {
 // 34. Recall stays in the conversation's channel: the turn hands its channel to the ranking.
 {
   const home = mkdtempSync(join(tmpdir(), 'home-'))
-  mkdirSync(join(home, 'memory'), { recursive: true })
-  writeFileSync(join(home, 'memory', 'recall-index.jsonl'), [
+  // The index lives under the harness home, outside the agent's: a scratch one, not the real ~/.dsh.
+  const dshHome = mkdtempSync(join(tmpdir(), 'dsh-'))
+  const previousDsh = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+  const index = recallIndexPath(home)
+  mkdirSync(dirname(index), { recursive: true })
+  writeFileSync(index, [
     { ts: 1, role: 'user', sessionId: 'a', channel: 'C_ALLOWED', text: '지난번 배포 롤백 same-channel-4e1' },
     { ts: 2, role: 'user', sessionId: 'b', channel: 'D_SECRET', text: '지난번 배포 롤백 dm-secret-8b6' },
     // No channel in the row: one session the adapter maps to this channel, one it does not know.
@@ -830,7 +837,8 @@ for (const remove of [false, true]) {
   check('and not one from a DM', !sent.includes('dm-secret-8b6'))
   check('a row from a session mapped to this channel counts as this channel', sent.includes('mapped-9d3'))
   check('a row nobody can place is left out', !sent.includes('unknown-1f7'))
-  rmSync(home, { recursive: true, force: true })
+  if (previousDsh === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = previousDsh
+  for (const dir of [home, dshHome]) rmSync(dir, { recursive: true, force: true })
   t.done()
 }
 

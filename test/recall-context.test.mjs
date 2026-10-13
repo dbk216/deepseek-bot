@@ -10,7 +10,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createRecallContext } from '../dist/recallContext.js'
+import { createRecallContext, recallIndexPath } from '../dist/recallContext.js'
 
 const results = []
 function check(name, ok, detail = '') {
@@ -83,6 +83,37 @@ check('an untriggered block is empty', ctx.block('이거 요약해줘') === '')
   check('a mapped session supplies a missing channel', mapped.includes('unknown-5c2') && !mapped.includes('private-3f9'))
   const anywhere = createRecallContext({ indexPath: scoped }).block('지난번 배포 롤백 어떻게 했지')
   check('without a channel nothing is filtered', ['public-7a1', 'private-3f9', 'unknown-5c2'].every((m) => anywhere.includes(m)))
+}
+
+// 6. Ranking that knows which words matter, and recall without a trigger word when the match is strong.
+// It used to need a word like "지난번", so "did anyone say 테스트-1234?" found nothing; and every shared
+// word counted the same, so two common words outranked one rare one.
+{
+  const ranked = join(dir, 'ranked.jsonl')
+  const filler = Array.from({ length: 40 }, (_, i) => ({ ts: i + 1, role: 'user', sessionId: `f${i}`, text: `오늘 배포 회의 ${i}번째 메모` }))
+  writeFileSync(ranked, [
+    ...filler,
+    { ts: 100, role: 'user', sessionId: 'rare', text: '테스트-1234 라고 적어둔 거 확인용' },
+    { ts: 101, role: 'user', sessionId: 'common', text: '오늘 배포 회의는 짧게' },
+    { ts: 102, role: 'user', sessionId: 'rollback', text: '롤백 창은 15분으로 정했어' },
+    { ts: 103, role: 'user', sessionId: 'current', text: '테스트-1234 다시 말해볼게' },
+  ].map((r) => JSON.stringify(r)).join('\n'))
+  const ctx2 = createRecallContext({ indexPath: ranked, sessionId: 'current' })
+  const strong = ctx2.block('누군가 테스트-1234 라고 말한 적 있어?')
+  check('a strong match is recalled without a trigger word', strong.includes('테스트-1234 라고 적어둔'), strong.slice(0, 80) || '(empty)')
+  check('the conversation being answered is not recalled to itself', !strong.includes('다시 말해볼게'))
+  check('common words alone do not interrupt an ordinary message', ctx2.block('오늘 배포 회의 어떻게 돼?') === '')
+  const weighted = ctx2.block('지난번에 오늘 배포 회의랑 테스트-1234 얘기')
+  check('a rare word outranks common ones', weighted.indexOf('테스트-1234 라고') >= 0
+    && (weighted.indexOf('오늘 배포 회의는') < 0 || weighted.indexOf('테스트-1234 라고') < weighted.indexOf('오늘 배포 회의는')), weighted.split('\n').slice(3, 5).join(' | '))
+  check('a particle on the question does not hide the passage', ctx2.block('지난번 롤백을 어떻게 했지').includes('롤백 창은'))
+}
+
+// 7. The index lives outside the agent's home, where its tools and commands cannot read it.
+{
+  const path = recallIndexPath('/Users/someone/dsh-agent', '/Users/someone/.dsh')
+  check('the index path is under the harness home, not the agent home', path.startsWith('/Users/someone/.dsh/recall/') && !path.startsWith('/Users/someone/dsh-agent'), path)
+  check('and two homes get two indexes', recallIndexPath('/a/home-1', '/d') !== recallIndexPath('/a/home-2', '/d'))
 }
 
 rmSync(dir, { recursive: true, force: true })

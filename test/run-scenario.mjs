@@ -27,6 +27,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir, tmpdir } from 'node:os'
+import { recallIndexPath } from '../dist/recallContext.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '..')
@@ -112,7 +113,9 @@ rmSync(RESULT, { force: true })
 // Paths in a scenario are written as {HOME} and {LIVE_HOME}, so the files name no particular machine;
 // the plugin is handed a copy with them filled in.
 const resolvedScenario = join(tmpdir(), `deepbot-scenario-${process.pid}-${basename(scenario)}`)
-const resolvedText = readFileSync(scenario, 'utf8').replaceAll('{LIVE_HOME}', LIVE_HOME).replaceAll('{HOME}', homedir())
+// {RECALL_INDEX}: the test home's recall index, which lives under the harness home, not in the agent's.
+const RECALL_INDEX = recallIndexPath(TEST_HOME)
+const resolvedText = readFileSync(scenario, 'utf8').replaceAll('{RECALL_INDEX}', RECALL_INDEX).replaceAll('{LIVE_HOME}', LIVE_HOME).replaceAll('{HOME}', homedir())
 writeFileSync(resolvedScenario, resolvedText)
 
 // Files a scenario needs outside the agent's home — a canary it must not be able to read — made here and
@@ -124,6 +127,8 @@ for (const [path, body] of outsideFiles) {
   console.log(`outside : ${path}`)
 }
 process.on('exit', () => {
+  // The index outlives the fresh home otherwise, one directory per run under ~/.dsh/recall.
+  if (!keep) rmSync(dirname(RECALL_INDEX), { recursive: true, force: true })
   for (const [path] of outsideFiles) rmSync(path, { force: true })
   for (const dir of new Set(outsideFiles.map(([path]) => dirname(path)))) {
     try { rmSync(dir, { recursive: false }) } catch { /* not empty, or gone */ }

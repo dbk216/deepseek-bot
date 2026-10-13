@@ -235,10 +235,12 @@ wires up what it does not turn on by default, and adds the consumer the agent pl
   `profile/cordis.patch.yml` opens it on a real file at startup. The agent plane still gets no
   tool and no injected context from *that* index — its consumers are the web UI and the
   `@session` reference source.
-- Recall instead reads `memory/recall-index.jsonl`, a plain-text index of past messages built by
-  `recall/deepbot-recall.ts` (CLI: `index`, `search`, `recent`, `show`, `sessions`). The host
-  builds it, because the session store lives outside the agent's home and the agent runs confined
-  to that home; the agent only reads the index.
+- Recall instead reads a plain-text index of past messages, `~/.dsh/recall/<home>/recall-index.jsonl`,
+  built by `recall/deepbot-recall.ts` (CLI: `index`, `search`, `recent`, `show`, `sessions`). The
+  host builds it and **only the adapter reads it**: it lives outside the agent's home, and the
+  sandbox runner and the tools' read scope both deny it, so the agent receives past conversations
+  only as the injected block — one channel at a time. It used to sit in the agent's home, where the
+  agent could read every channel's history with its own tools.
 - The index is refreshed after **every turn** (`autoIndex`, default on). Measured: the indexer
   costs about 0.4 s for 61 session logs, which is affordable; a ten-minute window made "what did
   we just discuss?" fail in exactly the situation it is asked. `recall/install-refresh.sh`
@@ -249,9 +251,13 @@ wires up what it does not turn on by default, and adds the consumer the agent pl
   only in that DM. A row the indexer could not place takes its channel from the adapter's session
   mapping when the session is still mapped, and is left out otherwise. Before this, one shared word was
   enough to put a DM into a public channel's answer. A turn with no conversation (a scenario) is not
-  filtered. **Not closed:** the agent can still read the whole index file with its own tools, which
-  `AGENTS.md` tells it to do when asked about the past; closing that needs a per-channel index or a
-  read rule, and is not done. `test/recall.test.mjs`, `test/recall-context.test.mjs`, `test/core.test.mjs`.
+  filtered.
+- **Ranking weighs words by how rare they are** (IDF), strips Korean particles from the question, and
+  leaves out the conversation being answered. A message that points at the past ("지난번…", "before")
+  gets the best matches; one that does not gets them only when a passage shares at least two rare
+  words with it — so "did anyone say 테스트-1234?" is answered, and an ordinary message is not
+  interrupted. Lexical still: a paraphrase with no word in common is missed.
+  `test/recall.test.mjs`, `test/recall-context.test.mjs` 25/25, `test/core.test.mjs`.
 
 ## Memory: the layers, and who writes what
 
@@ -260,7 +266,7 @@ wires up what it does not turn on by default, and adds the consumer the agent pl
 | Working | the current session log | the harness | always |
 | Identity | `SOUL.md`, `AGENTS.md` | you (scaffolded by the installer) | every turn |
 | Semantic | `USER.md`, `MEMORY.md`, `memory/<topic>.md` | the agent, under the rules in `agent/AGENTS.md`; you may edit them | every turn |
-| Episodic | `memory/recall-index.jsonl` | the host-side indexer | when a message points at the past |
+| Episodic | `~/.dsh/recall/<home>/recall-index.jsonl` | the host-side indexer; only the adapter reads it | when a message points at the past or closely matches |
 
 All four files in the agent home are read at the start of **every** turn, in this order, with
 these budgets:

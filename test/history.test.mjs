@@ -14,6 +14,7 @@
  * Run: node test/history.test.mjs
  */
 import './dist-fresh.mjs'   // fails loudly on a stale dist
+import './scratch-dsh-home.mjs'   // the recall index must not land in the real ~/.dsh
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
