@@ -58,7 +58,8 @@ cat > "$PLIST" <<PLIST_EOF
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>DEEPBOT_HOME</key><string>$AGENT_HOME</string>
+    <key>DEEPBOT_HOME</key><string>$AGENT_HOME</string>${DEEPBOT_DENY_READ:+
+    <key>DEEPBOT_DENY_READ</key><string>$DEEPBOT_DENY_READ</string>}
   </dict>
   <key>StartInterval</key><integer>$INTERVAL_S</integer>
   <key>RunAtLoad</key><false/>

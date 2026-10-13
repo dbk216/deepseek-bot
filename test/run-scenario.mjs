@@ -24,7 +24,7 @@ import './dist-fresh.mjs'   // a scenario must not run a stale build
 
 import { spawn } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir, tmpdir } from 'node:os'
 
@@ -109,11 +109,32 @@ for (const file of ['AGENTS.md', 'CLAUDE.md']) {
 mkdirSync(join(TEST_HOME, 'memory'), { recursive: true })
 rmSync(RESULT, { force: true })
 
+// Paths in a scenario are written as {HOME} and {LIVE_HOME}, so the files name no particular machine;
+// the plugin is handed a copy with them filled in.
+const resolvedScenario = join(tmpdir(), `deepbot-scenario-${process.pid}-${basename(scenario)}`)
+const resolvedText = readFileSync(scenario, 'utf8').replaceAll('{LIVE_HOME}', LIVE_HOME).replaceAll('{HOME}', homedir())
+writeFileSync(resolvedScenario, resolvedText)
+
+// Files a scenario needs outside the agent's home — a canary it must not be able to read — made here and
+// removed at exit. A canary that did not exist made an exfiltration check pass without proving anything.
+const outsideFiles = Object.entries(JSON.parse(resolvedText).outside ?? {})
+for (const [path, body] of outsideFiles) {
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, String(body))
+  console.log(`outside : ${path}`)
+}
+process.on('exit', () => {
+  for (const [path] of outsideFiles) rmSync(path, { force: true })
+  for (const dir of new Set(outsideFiles.map(([path]) => dirname(path)))) {
+    try { rmSync(dir, { recursive: false }) } catch { /* not empty, or gone */ }
+  }
+})
+
 const child = spawn(DSH_BIN, ['--profile', PROFILE, '--port', PORT, '--no-open'], {
   cwd: TEST_HOME,
   env: {
     ...process.env,
-    DEEPBOT_SELF_TEST_SCRIPT: scenario,
+    DEEPBOT_SELF_TEST_SCRIPT: resolvedScenario,
     DEEPBOT_RECALL_SCRIPT: join(REPO, 'dist', 'recall', 'deepbot-recall.js'),
     DEEPBOT_SCENARIO_RESULT: RESULT,
     DEEPBOT_HOME: TEST_HOME,

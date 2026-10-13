@@ -159,7 +159,7 @@ measured at 7,625 characters per turn on top of the harness's own 3,634.
 instance that runs is mounted inside the `standard` agent preset with the default candidates
 (`AGENTS.md`, `CLAUDE.md`), and the top-level `agent-instructions` row a profile can patch is
 disabled. This README used to say otherwise, and from 2026-10-10 to 2026-10-13 the live bot ran
-without its persona — asked "아리 널 어떻게 활용할수있니", it wrote a message *to* 아리 instead of
+without its persona — asked "how can I use you, <name>?", it wrote a message *to* <name> instead of
 answering. The adapter now puts those three files at the top of its own standing block (below), so
 they are sent once per conversation and again only when they change. `test/core.test.mjs` checks
 they reach the model and `AGENTS.md` does not go twice; `test/scenarios/persona.json` checks it

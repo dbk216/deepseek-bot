@@ -92,7 +92,7 @@ function transportFor(api, cwd, extra = {}) {
 
 /** A guild message. The guild id is what makes it a guild message rather than a DM. */
 function message(overrides = {}) {
-  return { id: '100', channel_id: 'C1', guild_id: 'G1', content: 'hello', author: { id: '5', username: 'someone' }, ...overrides }
+  return { id: '100', channel_id: 'C1', guild_id: 'G1', content: 'hello', author: { id: '5', username: 'alice' }, ...overrides }
 }
 
 // 1. Identity and the intents the gateway is identified with.
@@ -114,7 +114,7 @@ function message(overrides = {}) {
 
 // 2. A direct message is addressed; a guild message needs a mention or a reply.
 {
-  const api = fakeDiscord({ updates: [{ id: '200', channel_id: 'D1', content: 'hi', author: { id: '5', username: 'someone' } }] })
+  const api = fakeDiscord({ updates: [{ id: '200', channel_id: 'D1', content: 'hi', author: { id: '5', username: 'alice' } }] })
   const t = transportFor(api, mkdtempSync(join(tmpdir(), 'dc-')))
   const received = []
   await t.connect({ onMessage: (m) => received.push(m) })
@@ -146,7 +146,7 @@ function message(overrides = {}) {
 
 // 3. Empty content is a permission problem, not silence.
 {
-  const api = fakeDiscord({ updates: [{ id: '300', channel_id: 'D1', content: '', author: { id: '5', username: 'someone' } }] })
+  const api = fakeDiscord({ updates: [{ id: '300', channel_id: 'D1', content: '', author: { id: '5', username: 'alice' } }] })
   const t = transportFor(api, mkdtempSync(join(tmpdir(), 'dc-')))
   const received = []
   await t.connect({ onMessage: (m) => received.push(m) })
@@ -199,7 +199,7 @@ function message(overrides = {}) {
 
 // 6. A history failure degrades to what the process has seen rather than failing the turn.
 {
-  const api = fakeDiscord({ historyFails: true, updates: [{ id: '400', channel_id: 'D1', content: 'something said', author: { id: '5', username: 'someone' } }] })
+  const api = fakeDiscord({ historyFails: true, updates: [{ id: '400', channel_id: 'D1', content: 'something said', author: { id: '5', username: 'alice' } }] })
   const t = transportFor(api, mkdtempSync(join(tmpdir(), 'dc-')))
   await t.connect({ onMessage: () => {} })
   await sleep(60)

@@ -97,7 +97,8 @@ cat > "$PLIST" <<PLIST_EOF
   <key>EnvironmentVariables</key>
   <dict>
     <key>DEEPBOT_PROFILE</key><string>$PROFILE</string>
-    <key>DEEPBOT_HOME</key><string>$AGENT_HOME</string>
+    <key>DEEPBOT_HOME</key><string>$AGENT_HOME</string>${DEEPBOT_DENY_READ:+
+    <key>DEEPBOT_DENY_READ</key><string>$DEEPBOT_DENY_READ</string>}
     <key>DEEPBOT_PORT</key><string>$PORT</string>
     <key>DSH_BIN</key><string>$DSH_BIN</string>
   <key>DEEPBOT_REPO</key><string>$REPO_DIR</string>

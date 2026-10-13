@@ -135,7 +135,7 @@ Requirements that came directly from a real outage:
   at `tools/pre-execute` by a read scope (`readScope`, covering `read`, `read_image`,
   `grep`, `glob`), because `dsh-fs-sandbox` fences mutation and documents that it does not
   restrict observation. Measured: `isolation.json` 4/4 — the fs tool refuses a canary
-  outside the workspace, `cat` refuses it, `~/.other-agent` refuses it, and reads inside the
+  outside the workspace, `cat` refuses it, a path listed in `DEEPBOT_DENY_READ` refuses it, and reads inside the
   workspace still work.
   The scope is a **policy** boundary, not a kernel one: it is a list of tools that must
   grow with the composition, symlinks are resolved when the path exists, and the readable

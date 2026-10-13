@@ -587,8 +587,8 @@ export function apply(ctx, config) {
     const cwd = await sessionCwd()
 
     const standing = []
-    // Who the agent is and what it knows, first. Without these, asked "아리 널 어떻게 활용할수있니",
-    // the model did not know it was 아리 and wrote a message to 아리 instead of answering. Read from
+    // Who the agent is and what it knows, first. Without these, asked "how can I use you, <name>?",
+    // the model did not know it was <name> and wrote a message *to* <name> instead of answering. Read from
     // the conversation's own directory, so a tenant gets its own persona rather than the home's.
     const home = await cwdFor(sessionKey)
     for (const [file, limit, heading] of [
@@ -1524,7 +1524,7 @@ export function apply(ctx, config) {
       const firstSeq = agent.session.seq
       const { preamble } = await contextPreamble(origin ?? null, historyText, attachmentText, sessionKey, prompt, sessionId)
       // Whose message this is, in the platform's mention form: the persona names people that way
-      // (`<@U…>는 케이홉`), which means nothing to a model that cannot see who is speaking. A line of
+      // (`<@U…>는 길동`), which means nothing to a model that cannot see who is speaking. A line of
       // its own, before the marker: the recall indexer keeps only what follows the last
       // `[user message]`, so a marker carrying the name would index the whole preamble as speech.
       const speaker = typeof origin?.user === 'string' && origin.user !== '' ? `[speaker] <@${origin.user}>\n` : ''

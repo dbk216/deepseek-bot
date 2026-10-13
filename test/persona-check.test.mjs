@@ -63,7 +63,7 @@ r = run({ ...GOOD, 'USER.md': `2026-01-01: token is ${FAKE_TOKEN}\n` })
 check('a secret in a persona file is an error', r.status === 1)
 check('it names the secret type', /Slack token/.test(r.output))
 
-const shared = '2026-01-01: The deploy command is example-deploy document-harness dev.\n'
+const shared = '2026-01-01: The deploy command is ./deploy web dev.\n'
 r = run({ ...GOOD, 'USER.md': shared, 'MEMORY.md': shared })
 check('the same fact in two files warns', /injected twice/.test(r.output), 'not injected twice')
 check('a duplicate is not fatal', r.status === 0)

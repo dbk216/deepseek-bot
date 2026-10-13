@@ -73,10 +73,10 @@ function transportFor(api, cwd, extra = {}) {
 }
 
 function privateMessage(overrides = {}) {
-  return { update_id: 1, message: { message_id: 10, from: { id: 5, username: 'someone' }, chat: { id: 7, type: 'private' }, text: 'hello', ...overrides } }
+  return { update_id: 1, message: { message_id: 10, from: { id: 5, username: 'alice' }, chat: { id: 7, type: 'private' }, text: 'hello', ...overrides } }
 }
 function groupMessage(overrides = {}) {
-  return { update_id: 2, message: { message_id: 11, from: { id: 5, username: 'someone' }, chat: { id: 8, type: 'supergroup' }, text: 'hello all', ...overrides } }
+  return { update_id: 2, message: { message_id: 11, from: { id: 5, username: 'alice' }, chat: { id: 8, type: 'supergroup' }, text: 'hello all', ...overrides } }
 }
 
 // 1. Identity

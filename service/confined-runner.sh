@@ -70,9 +70,12 @@ profile() {
     printf '(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper"))\n'
   fi
   # Reads: everything the harness already allows, minus other instances' data.
-  echo ";; read confinement: other agent homes and retired bot data"
-  for candidate in "$HOME"/dsh-agent* "$HOME"/.other-agent; do
-    [ -e "$candidate" ] || continue
+  # DEEPBOT_DENY_READ adds a deployment's own (colon-separated) — a retired bot's data, say.
+  echo ";; read confinement: other agent homes, and DEEPBOT_DENY_READ"
+  extra=()
+  IFS=':' read -r -a extra <<< "${DEEPBOT_DENY_READ:-}"
+  for candidate in "$HOME"/dsh-agent* ${extra[@]+"${extra[@]}"}; do
+    [ -n "$candidate" ] && [ -e "$candidate" ] || continue
     [ "$candidate" = "$workspace_root" ] && continue
     printf '(deny file-read* (subpath %s))\n' "$(sbpl "$candidate")"
   done

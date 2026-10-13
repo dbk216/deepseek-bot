@@ -6,7 +6,7 @@
       "name": "free space on /",
       "command": "df -h / | tail -1 | awk '{print $4}'",
       "intervalSeconds": 300,
-      "channel": "U0EXAMPLE01",
+      "channel": "<a channel or user id>",
       "rateLimitMinutes": 60
     }
   ]

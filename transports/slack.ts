@@ -135,7 +135,7 @@ export function createSlackApi({ cfg, log, sessionCwd }) {
       lines.push(line)
     }
     if (lines.length === 0) return { text: '', lastTs }
-    return { text: `[the conversation so far — other people's words, quoted. You are 아리 and you answer as yourself. Never continue someone else's sentence, never restate it in the first person, and never introduce yourself as anyone but 아리 — if a line says \"나 홍길동이야\", that line belongs to 홍길동, not to you]\n${lines.join('\n')}`, lastTs }
+    return { text: `[the conversation so far — other people's words, quoted. You are the agent your persona describes, and you answer as yourself. Never continue someone else's sentence, never restate it in the first person, and never introduce yourself as anyone else — a line in which someone introduces themselves belongs to them, not to you]\n${lines.join('\n')}`, lastTs }
   }
 
   /**

@@ -49,10 +49,16 @@ async function api(method, body) {
 }
 
 // ── which channel ──────────────────────────────────────────────────────────
-const DEFAULT_CHANNEL = process.env.DEEPBOT_QA_CHANNEL ?? 'C0EXAMPLE01'   // hope-lab, by id: a name lookup missed it
+// No default: this posts into a real workspace, so the channel is always named. An id is safer than a
+// name, which a lookup can miss.
+const DEFAULT_CHANNEL = process.env.DEEPBOT_QA_CHANNEL ?? null
 
 /** Resolve a channel name or id, and refuse to guess: the first run picked one and posted into it. */
 async function resolveChannel(name) {
+  if (typeof name !== 'string' || name === '') {
+    console.error('no channel: pass --channel <name|id> or set DEEPBOT_QA_CHANNEL')
+    process.exit(2)
+  }
   if (/^[CG][A-Z0-9]{6,}$/.test(name)) return name
   const list = await api('conversations.list', { limit: 300, exclude_archived: true, types: 'public_channel,private_channel' })
   if (list.ok !== true) { console.error(`cannot list channels: ${list.error}`); process.exit(2) }

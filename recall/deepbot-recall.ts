@@ -135,9 +135,7 @@ const BOILERPLATE_PREFIXES = [
   'The approval policy changed',
   'You are a delegated subagent',
   '<system-reminder>',
-  'A previous `other-agent update`',
   'Background subagent ',
-  '실패한 부분을 정확히 말하면',
 ]
 /**
  * Strip this adapter's own injected preamble from a user message.

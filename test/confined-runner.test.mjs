@@ -50,7 +50,13 @@ check('read-only does not allow the workspace', !/allow file-write\* \(subpath/.
 check('read-only still allows the null sink', /\(allow file-write\* \(literal "\/dev\/null"\)/.test(ro))
 check('other agent homes are denied reads', /\(deny file-read\* \(subpath "[^"]*dsh-agent-test[^"]*"\)\)/.test(ws) || /deny file-read\*/.test(ws), ws.split('\n').filter((l) => l.includes('file-read')).join(' | '))
 check("the instance's own root is not denied a read", !/\(deny file-read\* \(subpath "\$\{?HOME/.test(ws) && !ws.includes(`(deny file-read* (subpath "${HOME}/dsh-agent"))`))
-check('the retired bot data is denied', ws.includes('(deny file-read* (subpath') && /\.other-agent/.test(ws))
+{
+  // A deployment's own extra paths — a retired bot's data on the machine this was written on.
+  const extraDir = mkdtempSync(join(tmpdir(), 'retired-bot-'))
+  const withExtra = execFileSync(RUNNER, ['--print-profile', ...WORKSPACE_WRITE, '--', 'true'], { encoding: 'utf8', env: { ...process.env, DEEPBOT_DENY_READ: `/nonexistent:${extraDir}` } })
+  check('DEEPBOT_DENY_READ adds its paths to the denied reads', withExtra.includes(`(deny file-read* (subpath "${extraDir}"))`) && !withExtra.includes('/nonexistent'))
+  rmSync(extraDir, { recursive: true, force: true })
+}
 check('a missing separator is refused rather than guessed', (() => {
   try { execFileSync(RUNNER, READ_ONLY, { encoding: 'utf8', stdio: 'pipe' }); return false }
   catch (e) { return e.status === 64 }

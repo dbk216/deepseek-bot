@@ -11,7 +11,8 @@
 # Usage: run-scenarios.sh [--quick] [--timeout <seconds>]
 set -uo pipefail
 
-REPO="${DEEPBOT_REPO:-/Users/someone/deepbot}"
+# The repository this script lives in, unless told otherwise.
+REPO="${DEEPBOT_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 NODE="${DEEPBOT_NODE:-$HOME/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node}"
 STATE_DIR="${DEEPBOT_STATE_DIR:-$HOME/.dsh/slack-state}"
 REPORT="$STATE_DIR/scenario-report.txt"

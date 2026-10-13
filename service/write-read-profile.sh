@@ -28,7 +28,8 @@ HOME_DIR="$(dirname "$OWN_HOME")"
   echo ";; that belongs to a different instance or a retired bot."
   echo "(allow default)"
   # Retired bots' data: tokens, sessions, configs.
-  [ -d "$HOME_DIR/.other-agent" ] && echo "(deny file-read* (subpath \"$HOME_DIR/.other-agent\"))"
+  IFS=':' read -r -a extra <<< "${DEEPBOT_DENY_READ:-}"
+  for dir in ${extra[@]+"${extra[@]}"}; do [ -n "$dir" ] && [ -d "$dir" ] && echo "(deny file-read* (subpath \"$dir\"))"; done
   # Every sibling agent home except our own.
   for candidate in "$HOME_DIR"/dsh-agent*; do
     [ -e "$candidate" ] || continue

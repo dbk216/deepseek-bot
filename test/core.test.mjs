@@ -361,7 +361,7 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   const home = process.cwd()
   check('a read inside the workspace is allowed', t.gate(exec('read', { file_path: join(home, 'README.md') })) === 'delegated')
   check('a relative read is resolved against the workspace', t.gate(exec('read', { file_path: 'index.ts' })) === 'delegated')
-  const denied = t.gate(exec('read', { file_path: `${process.env.HOME}/.other-agent/profiles/ari/.env` }))
+  const denied = t.gate(exec('read', { file_path: `${process.env.HOME}/.other-bot/profiles/default/.env` }))
   check('a read outside is denied', denied?.kind === 'deny', JSON.stringify(denied))
   check('and the denial says what to do instead', /put the file there|paste its contents/.test(String(denied?.reason)), String(denied?.reason).slice(0, 90))
   check('the denial is logged', t.logs.some((l) => /read outside the sandbox denied/.test(l)))
@@ -645,7 +645,7 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   writeFileSync(join(home, 'AGENTS.md'), 'agents-marker-8d5\n')
   const t = boot({ agent: 'ready', home })
   await sleep(80)
-  t.transport.deliver(t.transport.message({ text: '아리 널 어떻게 활용할수있니', user: 'U_USER' }))
+  t.transport.deliver(t.transport.message({ text: '아리 널 어떻게 활용할수있니', user: 'U_OWNER' }))
   await sleep(400)
   const sent = t.followups.map(textOf).join('\n')
   check('the persona reaches the model', sent.includes('persona-marker-7f3'), sent.slice(0, 80) || '(no followup)')
@@ -653,9 +653,9 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   check('AGENTS.md is left to the harness rather than sent twice', !sent.includes('agents-marker-8d5'))
   check('the persona comes before the question',
     sent.indexOf('persona-marker-7f3') >= 0 && sent.indexOf('persona-marker-7f3') < sent.indexOf('아리 널 어떻게'))
-  // The persona names people by their platform id (`<@U…>는 케이홉`), which is useless unless the
+  // The persona names people by their platform id (`<@U…>는 길동`), which is useless unless the
   // model knows whose message it is reading.
-  check('the model is told who is speaking', sent.includes('[speaker] <@U_USER>\n[user message]'),
+  check('the model is told who is speaking', sent.includes('[speaker] <@U_OWNER>\n[user message]'),
     (sent.match(/\[speaker\][^\n]*/) ?? ['(no speaker line)'])[0])
   // The recall indexer keeps what follows the last `[user message]` and nothing else
   // (recall/deepbot-recall.ts, stripInjectedPreamble). Anything else there would be indexed as speech.
