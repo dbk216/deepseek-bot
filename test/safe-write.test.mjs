@@ -92,7 +92,11 @@ function fixture() {
   check('an old index in the agent home is removed', oldGone)
   symlinkSync(f.launcher, join(f.home, 'memory', 'recall-index.jsonl'))
   index()
-  check('a link left at the old name is removed, not followed', readFileSync(f.launcher, 'utf8') === '#!/bin/bash\necho original\n')
+  check('a link left at the old name is not followed', readFileSync(f.launcher, 'utf8') === '#!/bin/bash\necho original\n')
+  // And removed: the indexer no longer writes there, so "not followed" alone could not fail.
+  let linkGone = true
+  try { lstatSync(join(f.home, 'memory', 'recall-index.jsonl')); linkGone = false } catch { /* removed */ }
+  check('and the link itself is removed', linkGone)
   rmSync(join(f.home, 'memory'), { recursive: true, force: true })
   writeFileSync(join(f.outside, 'recall-index.jsonl'), 'outside, keep me\n')
   symlinkSync(f.outside, join(f.home, 'memory'))
