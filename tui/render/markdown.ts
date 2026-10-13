@@ -89,10 +89,11 @@ export function inline(text: string, base: string, s: MarkdownStyles): Span[] {
       // Shown as well, for a terminal without hyperlinks and for a copy.
       if (url !== label) push(` (${url})`, s.dim)
     } else if (m[7]) {
-      // A path that goes on outside ASCII ("…/w/대한민국") is cut short here: shown, but not linked
-      // to a page it does not name. After a host or a word ("x.com에서") what follows is the sentence.
+      // Only a bare host may run straight into the sentence ("x.com에서"): with a path, what follows
+      // in another script is as likely the rest of the path as a particle, and no link is better
+      // than a link to the wrong page. The same for a match that filled the bound: it is a prefix.
       const next = text.charCodeAt(at + token.length)
-      const cutShort = next > 0x7f && /[/=\-_%#?&]$/.test(token)
+      const cutShort = (next > 0x7f && !/^https?:\/\/[^/?#]+\/?$/.test(token)) || m[0].length - m[0].indexOf('//') - 2 >= 2001
       push(token, cutShort ? base : s.link, cutShort ? undefined : safeUrl(token))
     }
     else push(SHORTCODES[token.slice(1, -1)], base)

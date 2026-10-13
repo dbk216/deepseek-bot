@@ -643,6 +643,14 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.key('\x1b[A'); t.key('\x1b[A')   // back to /help
   t.key('\x7f')
   check('complete: deleting in a recalled command opens its list', t.app.editor.text === '/hel' && t.app.completion !== null, JSON.stringify(t.app.editor.text))
+  // A delete that removes nothing changes nothing: the entry is still one being walked through.
+  t.app.editor.set('')
+  t.key('draft')
+  t.key('\x1b[A')          // the newest entry
+  const recalled = t.app.editor.text
+  t.key('\x0b')            // ctrl+k at the end: nothing to delete
+  t.key('\x1b[B')          // down: back to what was being typed
+  check('history: a delete that removes nothing does not end the walk', recalled !== 'draft' && t.app.editor.text === 'draft', JSON.stringify([recalled, t.app.editor.text]))
 }
 
 {

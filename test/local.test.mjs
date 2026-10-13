@@ -26,6 +26,7 @@ const { createCompositeTransport } = await import('../dist/transports/composite.
 const { encode, FrameReader, PROTOCOL_VERSION } = await import('../dist/tui/protocol.js')
 const { recallIndexPath } = await import('../dist/recallContext.js')
 const { Connection } = await import('../dist/tui/client.js')
+const { toolCallBlock } = await import('../dist/tui/blocks.js')
 const { createFakeTransport } = await import('./fake-transport.mjs')
 
 const results = []
@@ -507,6 +508,8 @@ function boot({ state = {}, config = {} } = {}) {
   // throws falls back to the first argument; another session's calls (a subagent's) are not shown here.
   const big = Array.from({ length: 2000 }, (_, i) => `line ${i}`).join('\n')
   emit('session/event', agent.session, { type: 'tool/call', data: { name: 'str_replace_editor', callId: 'c3',
+    arguments: JSON.stringify({ command: 'str_replace', path: '/w/big.ts', old_str: big, new_str: big.replace(/line/g, 'LINE') }) } })
+  emit('session/event', agent.session, { type: 'tool/call', data: { name: 'str_replace_editor', callId: 'c3b',
     arguments: JSON.stringify({ command: 'str_replace', path: '/w/big.ts', old_str: big, new_str: `top\n${big}` }) } })
   emit('session/event', agent.session, { type: 'tool/call', data: { name: 'later', callId: 'c4', arguments: JSON.stringify({ path: '/w/x' }) } })
   emit('session/event', { id: 'child-session', header: { id: 'child-session' } }, { type: 'tool/call', data: { name: 'bash', callId: 'c5', arguments: JSON.stringify({ command: 'child only' }) } })
@@ -514,14 +517,36 @@ function boot({ state = {}, config = {} } = {}) {
   const later = c.frames.filter((f) => f.type === 'stream' && f.kind === 'tool')
   const cut = later.find((f) => f.callId === 'c3')?.diff?.[0]
   check('tools: a large edit is cut to few enough lines to compare', cut?.old.split('\n').length <= 400 && cut.new.split('\n').length <= 400, `${cut?.old.split('\n').length} / ${cut?.new.split('\n').length}`)
-  check('tools: a large edit is cut at a line boundary and marked as cut', cut?.oldCut === true && cut?.newCut === true && cut.old.length <= 8000 && /^line \d+$/.test(cut.old.split('\n').at(-1)) && /^line \d+$/.test(cut.new.split('\n').at(-1)), JSON.stringify({ oldCut: cut?.oldCut, newCut: cut?.newCut, oldEnd: cut?.old?.slice(-20), newEnd: cut?.new?.slice(-20) }))
+  const top = later.find((f) => f.callId === 'c3b')?.diff?.[0]
+  check('tools: a line put on top of a large file is sent as that line, whole and unmarked', top?.old === null && top.new === 'top' && top.oldCut === undefined && top.newCut === undefined, JSON.stringify(top))
+  check('tools: a large edit is cut at a line boundary and marked as cut', cut?.oldCut === true && cut?.newCut === true && cut.old.length <= 8000 && /^line \d+$/.test(cut.old.split('\n').at(-1)) && /^LINE \d+$/.test(cut.new.split('\n').at(-1)), JSON.stringify({ oldCut: cut?.oldCut, newCut: cut?.newCut, oldEnd: cut?.old?.slice(-20), newEnd: cut?.new?.slice(-20) }))
   // Which side was cut is said per side; a text of exactly the line limit that ends in a newline is whole.
-  const exact = `${Array.from({ length: 400 }, (_, i) => `l${i}`).join('\n')}\n`
+  const exact = `${Array.from({ length: 400 }, (_, i) => `o${i}`).join('\n')}\n`
   emit('session/event', agent.session, { type: 'tool/call', data: { name: 'str_replace_editor', callId: 'c6',
-    arguments: JSON.stringify({ command: 'str_replace', path: '/w/e.ts', old_str: exact, new_str: `${exact}${'x\n'.repeat(50)}` }) } })
+    arguments: JSON.stringify({ command: 'str_replace', path: '/w/e.ts', old_str: exact, new_str: `${Array.from({ length: 600 }, (_, i) => `n${i}`).join('\n')}\n` }) } })
   await sleep(80)
   const sides = c.frames.find((f) => f.type === 'stream' && f.kind === 'tool' && f.callId === 'c6')?.diff?.[0]
   check('tools: only the side that was cut is marked', sides !== undefined && sides.oldCut === undefined && sides.newCut === true, JSON.stringify({ oldCut: sides?.oldCut, newCut: sides?.newCut }))
+  // An edit is sent as the part that changed: the lines both whole texts share, first and last, are
+  // set aside in the core, which has the whole texts. So a cut never makes text that is still in the
+  // file look removed — the fixtures end in a newline and share blank lines and braces on purpose.
+  const drawn = (frame) => toolCallBlock(frame, { expanded: true }, 'none').lines(200).map((l) => l.spans.map((sp) => sp.text).join(''))
+  const added = Array.from({ length: 260 }, (_, i) => (i % 5 === 4 ? '' : i % 5 === 3 ? '}' : `const v${i} = ${i}`)).join('\n')
+  const stays = Array.from({ length: 120 }, (_, i) => (i % 4 === 3 ? '}' : `keep${i}()`)).join('\n')
+  const gone = Array.from({ length: 450 }, (_, i) => (i % 4 === 3 ? '}' : `gone${i}()`)).join('\n')
+  const sendEdit = (callId, old_str, new_str) => emit('session/event', agent.session, { type: 'tool/call', data: { name: 'str_replace_editor', callId, arguments: JSON.stringify({ command: 'str_replace', path: '/w/app.ts', old_str, new_str }) } })
+  sendEdit('c7', 'export default App\n', `${added}\nexport default App\n`)
+  sendEdit('c8', `${stays}\n`, `${gone}\n${stays}\n`)
+  sendEdit('c9', `${gone}\n${stays}\n`, `${stays}\n`)
+  await sleep(80)
+  const sent = (id) => c.frames.find((f) => f.type === 'stream' && f.kind === 'tool' && f.callId === id)
+  const above = sent('c7')
+  check('tools: lines put above a file\'s last line are sent without that line', above?.diff?.[0]?.old === null && !above.diff[0].new.includes('export default App'), JSON.stringify({ old: above?.diff?.[0]?.old, newEnd: above?.diff?.[0]?.new?.slice(-30) }))
+  check('tools: and the card shows no removal', above !== undefined && !drawn(above).some((row) => /^\s+- /.test(row)) && drawn(above).some((row) => row.includes('+ const v0 = 0')), JSON.stringify(above === undefined ? [] : drawn(above).filter((row) => /^\s+- /.test(row)).slice(0, 3)))
+  const grown = sent('c8')
+  check('tools: 450 lines above 120 that stay show additions only, cut and marked', grown?.diff?.[0]?.old === null && grown.diff[0].newCut === true && !drawn(grown).some((row) => /^\s+- /.test(row)) && drawn(grown).some((row) => row.includes('+ gone0()')), JSON.stringify(grown === undefined ? [] : drawn(grown).filter((row) => /^\s+- /.test(row)).slice(0, 3)))
+  const shrunk = sent('c9')
+  check('tools: 450 lines deleted above 120 that stay show removals only', shrunk?.diff?.[0]?.new === null && shrunk.diff[0].oldCut === true && !drawn(shrunk).some((row) => /^\s+\+ /.test(row)) && drawn(shrunk).some((row) => row.includes('- gone0()')), JSON.stringify(shrunk === undefined ? [] : drawn(shrunk).filter((row) => /^\s+\+ /.test(row)).slice(0, 3)))
   check('tools: a presenter that answers with a promise is not waited for: the first argument is the title', later.find((f) => f.callId === 'c4')?.title === '/w/x')
   check('tools: another session\'s tool call is not shown in this conversation', !later.some((f) => f.callId === 'c5'))
   check('stream: a terminal turn posts no progress message (the steps are already on screen)', !c.frames.some((f) => f.type === 'post' && /작업 중/.test(f.text)))

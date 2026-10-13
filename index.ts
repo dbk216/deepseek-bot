@@ -1170,24 +1170,47 @@ export function apply(ctx, config) {
     } catch { card = undefined }
     const first = typeof args === 'string' ? args : args !== null && typeof args === 'object' ? Object.values(args).find((v) => typeof v === 'string') : undefined
     const title = clip(typeof card?.title === 'string' ? card.title : typeof first === 'string' ? first : '', 300)
-    // The first three files of an edit, each side cut to whole lines within a budget. Which side
-    // was cut is said, so the card can tell a real change from a line that only fell past a cut.
-    // Lines as well as characters: the card compares the two sides line by line, and past a few
-    // hundred a side it would not compare them at all.
-    const side = (text: string) => {
-      let kept = text
-      if (kept.length > 8000) { const head = kept.slice(0, 8000); const end = head.lastIndexOf('\n'); kept = end > 0 ? head.slice(0, end) : head }
-      const lines = kept.split('\n')
-      // A final newline is not a line of its own: 400 lines that end in one are whole.
-      const count = lines.length - (kept.endsWith('\n') ? 1 : 0)
-      if (count > 400) kept = lines.slice(0, 400).join('\n')
-      return { text: kept, cut: kept.length < text.length }
+    // The first three files of an edit, each sent as the part that changed. The whole texts are here
+    // and only here, so this is where the lines they share — first and last — are set aside: what is
+    // left is the change, and a small edit to a large file is sent whole. A terminal that got each
+    // side cut instead could not tell a removed line from one that only fell past the cut.
+    // Only a change too large in itself is cut: at whole lines, within a budget of lines (the card
+    // compares line by line) and of characters. Which side was cut is said, because it makes the
+    // other side's unmatched lines uncertain. A side with no lines left is null.
+    const linesOf = (text: unknown): string[] => {
+      if (typeof text !== 'string' || text === '') return []
+      const lines = text.split('\n')
+      if (lines[lines.length - 1] === '') lines.pop()   // a final newline is not a line of its own
+      return lines
+    }
+    const within = (lines: string[]) => {
+      const kept: string[] = []
+      let size = 0
+      for (const line of lines) {
+        if (kept.length >= 400 || size + line.length + 1 > 8000) break
+        kept.push(line)
+        size += line.length + 1
+      }
+      if (kept.length === 0 && lines.length > 0) return { lines: [clip(lines[0], 8000)], cut: true }
+      return { lines: kept, cut: kept.length < lines.length }
     }
     const diff = card?.card === 'diff' && Array.isArray(card.diffs)
       ? card.diffs.slice(0, 3).map((d: any) => {
-          const before = typeof d?.oldText === 'string' ? side(d.oldText) : null
-          const after = side(String(d?.newText ?? ''))
-          return { path: clip(String(d?.path ?? ''), 300), old: before === null ? null : before.text, new: after.text, ...(before?.cut === true ? { oldCut: true } : {}), ...(after.cut ? { newCut: true } : {}) }
+          const a = linesOf(d?.oldText)
+          const b = linesOf(d?.newText)
+          let start = 0
+          while (start < a.length && start < b.length && a[start] === b[start]) start++
+          let endA = a.length
+          let endB = b.length
+          while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB-- }
+          const before = within(a.slice(start, endA))
+          const after = within(b.slice(start, endB))
+          return {
+            path: clip(String(d?.path ?? ''), 300),
+            old: before.lines.length === 0 ? null : before.lines.join('\n'),
+            new: after.lines.length === 0 ? null : after.lines.join('\n'),
+            ...(before.cut ? { oldCut: true } : {}), ...(after.cut ? { newCut: true } : {}),
+          }
         })
       : undefined
     return { kind: 'tool', name, ...(typeof data?.callId === 'string' ? { callId: data.callId } : {}), ...(title !== '' ? { title } : {}), ...(diff !== undefined ? { diff } : {}) }

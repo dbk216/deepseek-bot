@@ -70,7 +70,7 @@ export class Editor {
     this.browsing = -1
   }
 
-  // Deleting, like typing, makes a recalled entry text being written again.
+  // Deleting, like typing, makes a recalled entry text being written again — when it removes something.
   backspace(): void {
     if (this.pos === 0) return
     this.chars.splice(this.pos - 1, 1)
@@ -99,16 +99,16 @@ export class Editor {
   killLine(): void {
     const end = this.pos
     this.home()
+    if (end > this.pos) this.browsing = -1
     this.chars.splice(this.pos, end - this.pos)
-    this.browsing = -1
   }
 
   /** Delete to the end of the line (Ctrl+K). */
   killToEnd(): void {
     let end = this.pos
     while (end < this.chars.length && this.chars[end] !== '\n') end++
+    if (end > this.pos) this.browsing = -1
     this.chars.splice(this.pos, end - this.pos)
-    this.browsing = -1
   }
 
   /** Delete the word before the cursor (Ctrl+W / Alt+Backspace). */
@@ -116,8 +116,8 @@ export class Editor {
     const end = this.pos
     while (this.pos > 0 && /\s/.test(this.chars[this.pos - 1])) this.pos--
     while (this.pos > 0 && !/\s/.test(this.chars[this.pos - 1])) this.pos--
+    if (end > this.pos) this.browsing = -1
     this.chars.splice(this.pos, end - this.pos)
-    this.browsing = -1
   }
 
   /** Take the text for sending: records history and clears. */

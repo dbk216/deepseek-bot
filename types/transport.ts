@@ -96,11 +96,12 @@ export type StreamFrame =
   /** The model's reasoning, apart from the answer. */
   | { kind: 'thinking'; text: string }
   /**
-   * A tool call: the tool's own title for it when it has one, and an edit's before and after. A side
-   * too long to send whole is cut at a line and marked (`oldCut`, `newCut`): which side was cut
-   * decides what a reader may conclude from the lines near the cut.
+   * A tool call: the tool's own title for it when it has one, and an edit as the part that changed —
+   * the lines before and after it that both texts share are not sent; a side with no lines is null.
+   * A change too long to send whole is cut at a line and marked (`oldCut`, `newCut`): a cut side
+   * makes the other side's unmatched lines uncertain.
    */
-  | { kind: 'tool'; name: string; callId?: string; title?: string; diff?: Array<{ path: string; old: string | null; new: string; oldCut?: boolean; newCut?: boolean }> }
+  | { kind: 'tool'; name: string; callId?: string; title?: string; diff?: Array<{ path: string; old: string | null; new: string | null; oldCut?: boolean; newCut?: boolean }> }
   /** A call's result, by its call id: whether it failed, and its text (cut). */
   | { kind: 'tool.result'; callId: string; ok: boolean; text: string }
 

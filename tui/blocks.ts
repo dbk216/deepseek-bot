@@ -128,7 +128,7 @@ export interface ToolStep {
   name: string
   callId?: string
   title?: string
-  diff?: Array<{ path: string; old: string | null; new: string; oldCut?: boolean; newCut?: boolean }>
+  diff?: Array<{ path: string; old: string | null; new: string | null; oldCut?: boolean; newCut?: boolean }>
 }
 
 export interface ToolCallBlock extends Block {
@@ -142,21 +142,22 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
   const style = sgr(theme.tool, mode)
   const removed = sgr(theme.danger, mode)
   const added = sgr(theme.ok, mode)
-  // Only what changed: the lines around a change are in the file. Of a cut edit, a change after
-  // the last line both sides share may be no change at all — the other side's copy of that line can
-  // lie past its cut. So there a removal is withheld when the new side was cut (the line may still
-  // be in the file), and an addition when the old side was (it may have been there already).
+  // Only what changed: the lines around a change are in the file (and the core sends the changed
+  // part alone). When a side was cut, the other side's unmatched lines prove nothing — its copy of
+  // them can lie past the cut, and a line the two sides share may be a blank line or a brace, so no
+  // line anchors anything. A removal is therefore withheld when the new side was cut (the text may
+  // still be in the file), and an addition when the old side was (it may have been there already).
   let uncompared = false
   let withheld = 0
+  const linesOf = (text: string | null) => (text === null ? [] : text.split('\n'))
   const changes = (step.diff ?? []).flatMap((d) => {
-    const ops = lineDiff(d.old === null ? [] : d.old.split('\n'), d.new.split('\n'))
+    const ops = lineDiff(linesOf(d.old), linesOf(d.new))
     // Too long to compare line by line: said, never guessed at.
     if (ops === null) { uncompared = true; return [] }
-    const shared = ops.map((l) => l.op).lastIndexOf(' ')
-    const sure = ops.slice(0, shared + 1)
-    const tail = ops.slice(shared + 1).filter((l) => !(l.op === '-' && d.newCut === true) && !(l.op === '+' && d.oldCut === true))
-    withheld += ops.length - sure.length - tail.length
-    return [...sure, ...tail].filter((l) => l.op !== ' ')
+    const changed = ops.filter((l) => l.op !== ' ')
+    const sure = changed.filter((l) => !(l.op === '-' && d.newCut === true) && !(l.op === '+' && d.oldCut === true))
+    withheld += changed.length - sure.length
+    return sure
   })
   const cut = (step.diff ?? []).some((d) => d.oldCut === true || d.newCut === true)
   let own = 0

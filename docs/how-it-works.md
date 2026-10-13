@@ -44,7 +44,7 @@ Each line is traceable to code and to something that checks it.
 | Serves Slack over **Socket Mode**: receive, reply in thread, chunk long answers, drop duplicate events | `transports/slack.ts` | `test/slack.test.mjs` 54/54; `tools/qa-slack.mjs` against a live workspace |
 | Serves **Telegram** by long polling | `transports/telegram.ts` | `test/telegram.test.mjs` 41/41 |
 | Serves **Discord** (gateway websocket + REST), with buttons for approvals | `transports/discord.ts` | `test/discord.test.mjs` 38/38 |
-| Serves a **terminal** (`deepbot-tui`) over a local socket, beside Slack or alone: streamed answers, approval buttons, a turn's questions, its subagents and shells | `transports/local.ts`, `transports/composite.ts`, `tui/` | `test/local.test.mjs` 121/121, `test/tui-*.test.mjs`; `test/tui-live.mjs` 11/11 against a model |
+| Serves a **terminal** (`deepbot-tui`) over a local socket, beside Slack or alone: streamed answers, approval buttons, a turn's questions, its subagents and shells | `transports/local.ts`, `transports/composite.ts`, `tui/` | `test/local.test.mjs` 126/126, `test/tui-*.test.mjs`; `test/tui-live.mjs` 11/11 against a model |
 | Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.mjs` 152/152; `test/scenarios/restart-1.json` + `restart-2.json` |
 | Injects **persona and notes** (`SOUL.md`/`USER.md`/`MEMORY.md` from the adapter, `AGENTS.md` from `dsh-agent-instructions`), without re-sending them every turn | `index.ts` | `test/core.test.mjs`; `test/scenarios/persona.json` 4/4 |
 | **Recalls past conversations** — rank passages, then ask for what they imply | `recall/`, `recallContext.ts` | `test/recall.test.mjs` 13/13; `test/recall-context.test.mjs` 25/25 |

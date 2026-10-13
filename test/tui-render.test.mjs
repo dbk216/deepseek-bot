@@ -356,6 +356,10 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   // its ASCII part, and a URL's own bracket pairs are not taken for the start of another URL.
   const wrong = md('https://namu.wiki/w/대한민국 그리고 https://a/(x)(y) 끝', 200)[0].spans.filter((sp) => sp.link !== undefined).map((sp) => sp.link)
   check('markdown: a path continuing outside ASCII is not linked short, and (x)(y) stays one URL', JSON.stringify(wrong) === JSON.stringify(['https://a/(x)(y)']), JSON.stringify(wrong))
+  const paths = md('https://namu.wiki/w/LG전자 와 https://example.com/docs/를 참고, https://x.com에서', 200)[0].spans.filter((sp) => sp.link !== undefined).map((sp) => sp.link)
+  check('markdown: only a bare host may run into Korean and still be a link', JSON.stringify(paths) === JSON.stringify(['https://x.com']), JSON.stringify(paths))
+  const overlong = md(`https://${'a'.repeat(2000)}.${'b'.repeat(40)} 끝`, 200)[0].spans.filter((sp) => sp.link !== undefined)
+  check('markdown: a URL longer than the bound is not linked to its first part', overlong.length === 0, `${overlong.length} link(s), ${overlong[0]?.link?.length ?? 0} chars`)
   const repeated = timed('(https://a.b/c)'.repeat(40_000))
   check('markdown: many bracketed URLs in a row are laid out quickly', repeated < 1500, `${repeated}ms`)
 
