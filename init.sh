@@ -67,7 +67,9 @@ if [ "$SKIP_PROFILE" -eq 0 ]; then
     run cp -r "$REPO_DIR/profile" "$DSH_HOME_DIR/profiles/$PROFILE"
     echo "   create  $DSH_HOME_DIR/profiles/$PROFILE"
   fi
-  DSH_BIN="$(command -v dsh || true)"
+  DSH_BIN="${DSH_BIN:-$(command -v dsh || true)}"
+  APP_DSH="/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"
+  [ -z "$DSH_BIN" ] && [ -x "$APP_DSH" ] && DSH_BIN="$APP_DSH"
   if [ -z "$DSH_BIN" ]; then
     echo "   note    the dsh CLI is not on PATH; register this repo yourself:"
     echo "           dsh plugin --profile $PROFILE add $REPO_DIR"
