@@ -1,4 +1,4 @@
-# deepbot — plan
+# deepseek-bot — plan
 
 Companion to [SPEC.md](SPEC.md). Milestones are ordered by dependency, not by enthusiasm: nothing
 is built before the thing it stands on. The detailed history of each milestone is in the git log.
@@ -17,6 +17,8 @@ is built before the thing it stands on. The detailed history of each milestone i
    service, and every change leaves it working.
 6. **Nothing machine-specific in the repository.** Paths, ids, names and credentials belong to a
    deployment's profile and environment, not to the code, the tests or the docs.
+7. **Changes reach `master` through a pull request**, after a review pass by someone other than the
+   author. The working rules are in `AGENTS.md`, the vocabulary in `CONTEXT.md`.
 
 ## Done
 

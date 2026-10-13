@@ -110,7 +110,8 @@ and by scenarios run against a real model.
 
 - [Setup and operations](docs/setup.md): creating the bot on each platform, running the services
 - [How it works](docs/how-it-works.md): the design, and the evidence behind each claim
-- [Limitations](docs/limitations.md) · [Changelog](CHANGELOG.md) · [Plan](PLAN.md) · [For contributors and agents](AGENTS.md)
+- [Limitations](docs/limitations.md) · [Changelog](CHANGELOG.md) · [Plan](PLAN.md)
+- For contributors and agents: [working rules](AGENTS.md) · [vocabulary](CONTEXT.md)
 
 ## License
 
