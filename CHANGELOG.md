@@ -50,7 +50,10 @@ the caveat about version numbers is at the bottom.
 - **Slack's working status stays** while another message in the same thread is still working.
 - **The scenario alert and the outage alert have their own rate limits**; one no longer silences the
   other.
-- **A turn begun while restart notices go out is tracked.**
+- **A turn begun while restart notices go out is tracked**, and a restart during the notices loses
+  none: each record stays until its own notice is out.
+- **Recall works for a home reached through a symlink**: the indexer names the home by its resolved
+  path, as the adapter does.
 - **A refused upload is told to the conversation** (Discord's 10 MiB limit, a Slack app without
   `files:write`).
 - **Two homes never share a recall index.** The index directory gains a hash of the home's path; the

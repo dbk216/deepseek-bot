@@ -12,10 +12,11 @@
  * Run: node test/recall.test.mjs
  */
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { zstdCompressSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { recallIndexPath } from '../dist/recallContext.js'
 
 const results = []
 function check(name, ok, detail = '') {
@@ -111,6 +112,29 @@ rmSync(dir, { recursive: true, force: true })
   check('a session without the block has none', channelsOf('s-none') === '(none)', `s-none: ${channelsOf('s-none')}`)
   check('a block that is not the adapter\'s own shape places nothing', channelsOf('s-quoted') === '(none)', `s-quoted: ${channelsOf('s-quoted')}`)
   check('only the first message, before its first marker, can place a session', channelsOf('s-gated') === '(none)', `s-gated: ${channelsOf('s-gated')}`)
+}
+
+// 5. A home reached through a symlink. The adapter names it by its resolved path (the process's cwd) and
+// the harness records that path in each session; the indexer took DEEPBOT_HOME as given, so it wrote
+// another index than the adapter reads, and skipped every session as "another working directory".
+// (Found by the verification pass.)
+{
+  const dshHome = join(dir, 'dsh-link')
+  const realHome = join(dir, 'real-home')
+  const linkHome = join(dir, 'link-home')
+  mkdirSync(realHome, { recursive: true })
+  symlinkSync(realHome, linkHome)
+  const resolved = realpathSync(realHome)
+  const at = join(dshHome, 'sessions', 'bucket', 's-link')
+  mkdirSync(at, { recursive: true })
+  writeFileSync(join(at, 'session.v4.jsonl.zstd'), Buffer.concat([
+    { type: 'session', id: 's-link', createdAt: 1, cwd: resolved },
+    { type: 'user/message', seq: 1, time: 10, data: { content: [{ type: 'text', text: 'linked-home-canary' }], source: { kind: 'user' } } },
+  ].map((e) => zstdCompressSync(Buffer.from(JSON.stringify(e) + '\n')))))
+  execFileSync(process.execPath, [CLI, 'index', '--quiet'], { encoding: 'utf8', env: { ...process.env, DSH_HOME: dshHome, DEEPBOT_HOME: linkHome } })
+  const adapterReads = recallIndexPath(resolved, dshHome)
+  check('the indexer writes the index the adapter reads', existsSync(adapterReads), adapterReads)
+  check('with the session in it', existsSync(adapterReads) && readFileSync(adapterReads, 'utf8').includes('linked-home-canary'))
 }
 
 const failed = results.filter((x) => !x.ok)

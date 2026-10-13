@@ -41,13 +41,23 @@ const DSH_HOME = process.env.DSH_HOME ?? join(homedir(), '.dsh')
  * agent's own shell agree with the gateway's configuration. The middle case
  * covers the common single-agent layout with no environment at all.
  */
+/** One directory under two names — one of them through a symlink — is still one directory. */
+function sameDirectory(a, b) {
+  if (a === b) return true
+  if (typeof a !== 'string' || typeof b !== 'string') return false
+  try { return realpathSync(a) === realpathSync(b) } catch { return false }
+}
+
 function resolveAgentHome() {
   if (process.env.DEEPBOT_HOME) return process.env.DEEPBOT_HOME
   const conventional = join(homedir(), 'dsh-agent')
   if (existsSync(conventional)) return conventional
   return join(homedir(), '.deepbot')
 }
-const AGENT_HOME = resolveAgentHome()
+// By its resolved path: the adapter names the home by its process's cwd, which is resolved, and the
+// harness records that path in each session. Taken as given, a home under a symlink got another index
+// than the adapter reads, and every session was skipped as another working directory.
+const AGENT_HOME = (() => { const home = resolveAgentHome(); try { return realpathSync(home) } catch { return home } })()
 
 const argv = process.argv.slice(2)
 const command = argv[0] ?? 'index'
@@ -249,7 +259,7 @@ function buildIndex(outFile, quiet) {
       if (!quiet) console.error(`  skip ${sessionId}: ${String(e.message ?? e)}`)
       continue
     }
-    if (!includeAllCwds && parsed.header.cwd !== wantedCwd) { skippedOtherCwd++; continue }
+    if (!includeAllCwds && !sameDirectory(parsed.header.cwd, wantedCwd)) { skippedOtherCwd++; continue }
     injected += parsed.skippedInjected ?? 0
     if (parsed.records.length === 0) continue
     all.push(...parsed.records)
