@@ -98,9 +98,11 @@ function envToken() {
   } catch { return '' }
 }
 
-async function alert(text) {
+// Each kind of alert has its own rate limit (`slot`): a scenario alert — the scenarios fail when the
+// gateway is down — must not silence the outage alert that follows it, nor the other way round.
+async function alert(text, slot = 'lastAlertAt') {
   const state = loadProbeState()
-  if (Date.now() - state.lastAlertAt < ALERT_MIN_MS) return 'alert suppressed (rate limit)'
+  if (Date.now() - (state[slot] ?? 0) < ALERT_MIN_MS) return 'alert suppressed (rate limit)'
   if (!ALERT_TO) return 'no alert target configured (DEEPBOT_ALERT_TO)'
   const token = process.env.SLACK_BOT_TOKEN || envToken()
   if (!token) return 'no Slack token available for the alert'
@@ -113,7 +115,7 @@ async function alert(text) {
     })
     const body = await res.json()
     if (!body.ok) return `alert failed: ${body.error}`
-    state.lastAlertAt = Date.now()
+    state[slot] = Date.now()
     saveProbeState(state)
     return 'alert sent'
   } catch (e) {
@@ -143,7 +145,7 @@ async function checkScenarios() {
   if (loadProbeState().scenarioReportAlerted === ran) return
   const names = [...text.matchAll(/^\s*FAIL\s+(\S+)/gm)].map((m) => m[1])
   const message = `:warning: deepbot's scenario run at ${ran}: ${failed} failed (${names.join(', ') || 'see the report'}). The report is scenario-report.txt in the plugin's state directory.`
-  const note = await alert(message)
+  const note = await alert(message, 'lastScenarioAlertAt')
   console.log(`  scenarios: ${note}${dryRun ? ` — ${message}` : ''}`)
   if (note === 'alert sent' || note.startsWith('dry-run')) {
     const state = loadProbeState(); state.scenarioReportAlerted = ran; saveProbeState(state)

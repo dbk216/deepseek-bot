@@ -50,9 +50,25 @@ check('a clean report raises nothing', !/scenarios: /.test(out))
 report('2026-10-15T00:00:00Z', 1, ['recall'])
 out = probe()
 check('the next failing report alerts again', /scenarios: dry-run/.test(out) && /recall/.test(out))
-check('the probe still reports health', /healthy/.test(out))
+check('the probe still reports health', /^healthy/m.test(out), out.trim().split('\n').slice(-1)[0])
 const state = JSON.parse(readFileSync(env.DEEPBOT_HEALTH_STATE, 'utf8'))
 check('which report was alerted is remembered', state.scenarioReportAlerted === '2026-10-15T00:00:00Z', JSON.stringify(state))
+
+
+// The two alerts have their own rate limits. They shared one: an outage alert sent in the last half hour
+// silenced the scenario alert, and a scenario alert — the scenarios fail when the gateway is down —
+// silenced the outage alert that followed it in the same probe.
+writeFileSync(env.DEEPBOT_HEALTH_STATE, JSON.stringify({ lastAlertAt: Date.now(), lastRestartAt: 0 }))
+report('2026-10-16T00:00:00Z', 1, ['persona'])
+out = probe()
+check('an outage alert just sent does not silence a scenario alert', /scenarios: dry-run: would alert/.test(out), out.trim().split('\n').find((l) => /scenarios:/.test(l)) ?? '(no scenario line)')
+writeFileSync(env.DEEPBOT_HEALTH_STATE, JSON.stringify({ lastAlertAt: 0, lastScenarioAlertAt: Date.now(), lastRestartAt: 0, scenarioReportAlerted: '2026-10-16T00:00:00Z' }))
+writeFileSync(env.DEEPBOT_HEALTH_FILE, JSON.stringify({ connected: false, updatedAt: Date.now() - 3600_000, connectedAt: 0 }))
+let down = ''
+try { execFileSync(process.execPath, [PROBE, '--dry-run', '--no-rotate'], { encoding: 'utf8', env: { ...env, DEEPBOT_RECOVERY_WAIT_MS: '100' } }) }
+catch (e) { down = String(e.stdout ?? '') }
+check('nor does a scenario alert silence an outage alert', /^unhealthy/m.test(down) && /did NOT recover/.test(down) && /dry-run: would alert/.test(down.split('did NOT recover')[1] ?? ''),
+  down.trim().split('\n').slice(-2).join(' | '))
 
 rmSync(dir, { recursive: true, force: true })
 const failed = results.filter((r) => !r.ok)
