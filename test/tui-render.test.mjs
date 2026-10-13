@@ -338,6 +338,18 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   check('markdown: a link and a bare URL carry their target, without the sentence\'s full stop', links.includes('문서→https://ex.am/ple') && links.includes('https://raw.example/path?q=1→https://raw.example/path?q=1'), JSON.stringify(links))
   check('markdown: a link to anything but http(s) or mailto is text only', !linked[0].spans.some((sp) => /javascript/.test(sp.link ?? '')) && drawn(linked[0]).includes('위험'))
   check('markdown: a URL with a control character is no link', !md('[x](https://a.b/\x1b[2Jc)')[0].spans.some((sp) => sp.link !== undefined))
+  // Found in review: C1 controls (U+0080-9F) are escapes to some terminals, and a huge URL is rewritten per row.
+  check('markdown: a URL with a C1 control or anything outside printable ASCII is no link', !md('[x](https://a/\u009c\u009d52;c;x\u009c)')[0].spans.some((sp) => sp.link !== undefined) && !md('[x](https://a/한글)')[0].spans.some((sp) => sp.link !== undefined))
+  check('markdown: a URL too long to be one is no link', !md(`[x](https://a/${'p'.repeat(3000)})`, 200)[0].spans.some((sp) => sp.link !== undefined))
+  const wiki = md('문서 https://en.wikipedia.org/wiki/Foo_(bar) 와 (참고 https://ex.am/ple)', 200)[0].spans.filter((sp) => sp.link !== undefined).map((sp) => sp.link)
+  check('markdown: a bare URL keeps its own parentheses and leaves the sentence\'s', JSON.stringify(wiki) === JSON.stringify(['https://en.wikipedia.org/wiki/Foo_(bar)', 'https://ex.am/ple']), JSON.stringify(wiki))
+  // Hostile input must not stall the layout, which runs on every streamed frame.
+  const timed = (text) => { const at = Date.now(); md(text, 80); return Date.now() - at }
+  const spaces = timed(`ls | wc\n${' '.repeat(80_000)}x`)
+  check('markdown: a line of spaces under a row with a pipe is laid out quickly', spaces < 1500, `${spaces}ms`)
+  const brackets = timed('['.repeat(80_000))
+  check('markdown: a run of brackets is laid out quickly', brackets < 1500, `${brackets}ms`)
+
   const screen = new Screen(30, 2)
   screen.put(0, 0, '문서', 'L', 30, 'https://ex.am/ple')
   screen.put(5, 0, 'plain')

@@ -67,6 +67,8 @@ Decided against:
   tmux only. Without them it flickers or loses the mouse, and keeps working.
 - The terminal's thinking block: the model route used here streams no `reasoning-delta`, so it is
   pinned against fakes only. (Tool calls, their results and an edit's diff card are verified live.)
+- Clicking a link in the terminal: the OSC 8 bytes are checked, a click is not — the terminal has
+  mouse tracking on, where most emulators want a modifier (cmd or shift) with the click.
 - With several platforms, the "already reported" stop removing a working message put up after the
   report (`index.ts`, routed through `via()`): no test reaches that branch — the immediate working
   message is replaced by the report, and the slow-turn one is not put up after it.

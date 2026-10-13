@@ -118,7 +118,7 @@ export function thinkingBlock(detail: Detail, mode: ColorMode): ThinkingBlock {
       const lines: Line[] = [{ spans: [pad('✻ ', head), { text: label, style: head }], soft: false }]
       if (!detail.expanded && !block.streaming) return lines
       const all = layout(text, width, body, { first: pad('  '), rest: pad('  ') })
-      return [...lines, ...(detail.expanded ? all.slice(0, UNFOLDED.thinking) : all.slice(-FOLDED.thinking))]
+      return [...lines, ...(detail.expanded ? fold(all, UNFOLDED.thinking, detail, head) : all.slice(-FOLDED.thinking))]
     },
   }
   return block
@@ -128,7 +128,7 @@ export interface ToolStep {
   name: string
   callId?: string
   title?: string
-  diff?: Array<{ path: string; old: string | null; new: string }>
+  diff?: Array<{ path: string; old: string | null; new: string; truncated?: boolean }>
 }
 
 export interface ToolCallBlock extends Block {
@@ -142,8 +142,15 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
   const style = sgr(theme.tool, mode)
   const removed = sgr(theme.danger, mode)
   const added = sgr(theme.ok, mode)
-  // Only what changed: the lines around a change are in the file.
-  const changes = (step.diff ?? []).flatMap((d) => lineDiff(d.old === null ? [] : d.old.split('\n'), d.new.split('\n')).filter((l) => l.op !== ' '))
+  // Only what changed: the lines around a change are in the file. Of a cut edit, the changes
+  // after the last line both sides share are left out too: past the cut, a line can look removed
+  // or added only because the other side's copy of it fell outside.
+  const changes = (step.diff ?? []).flatMap((d) => {
+    const ops = lineDiff(d.old === null ? [] : d.old.split('\n'), d.new.split('\n'))
+    const shared = ops.map((l) => l.op).lastIndexOf(' ')
+    return (d.truncated === true && shared >= 0 ? ops.slice(0, shared) : ops).filter((l) => l.op !== ' ')
+  })
+  const cut = (step.diff ?? []).some((d) => d.truncated === true)
   let own = 0
   let outcome: { ok: boolean; text: string } | null = null
   const block: ToolCallBlock = {
@@ -156,6 +163,7 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
       const out = layout(title === '' || title === step.name ? step.name : `${step.name}  ${title}`, width, style, { first: pad('⏺ ', mark), rest: pad('  ') })
       const diff = changes.flatMap((d) => layout(d.text === '' ? ' ' : d.text, width, d.op === '-' ? removed : added, { first: pad(`  ${d.op} `, d.op === '-' ? removed : added), rest: pad('    ') }))
       out.push(...fold(diff, detail.expanded ? UNFOLDED.diff : FOLDED.diff, detail, style))
+      if (cut) out.push({ spans: [pad('    '), { text: '… 큰 변경이라 앞부분만 표시 (잘림)', style }], soft: false })
       if (outcome !== null) {
         const shown = outcome.ok ? style : removed
         const text = outcome.text.replace(/\s+$/, '')

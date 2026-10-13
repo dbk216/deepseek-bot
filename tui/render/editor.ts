@@ -45,8 +45,12 @@ export class Editor {
   /** Replace the text between two cursor positions, leaving the cursor after what was put in. */
   replace(from: number, to: number, text: string): void {
     const add = graphemes(text)
-    this.chars = this.chars.slice(0, from).concat(add, this.chars.slice(to))
-    this.pos = from + add.length
+    // Held to the text as it is now: positions computed for an earlier text must not leave the
+    // cursor past the end, where the layout has no cell for it.
+    const start = Math.max(0, Math.min(from, this.chars.length))
+    const end = Math.max(start, Math.min(to, this.chars.length))
+    this.chars = this.chars.slice(0, start).concat(add, this.chars.slice(end))
+    this.pos = start + add.length
     this.browsing = -1
   }
 

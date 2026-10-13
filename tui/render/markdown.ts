@@ -33,11 +33,23 @@ const SHORTCODES: Record<string, string> = {
 }
 
 /**
- * A target the terminal may open: http(s) and mailto only, and nothing with a control character —
- * the URL is written inside an escape sequence, where one would end it and write the rest raw.
+ * A target the terminal may open: http(s) and mailto only, in printable ASCII, and not too long.
+ * The URL is written inside an escape sequence, where a control character would end it and write
+ * the rest raw — and that includes the C1 range (U+0080–9F), which some terminals read as ESC
+ * sequences. A URL in another script is still shown, as text; it is only not made clickable.
  */
 function safeUrl(url: string): string | undefined {
-  return /^(https?:\/\/|mailto:)[^\s\x00-\x1f\x7f]+$/i.test(url) ? url : undefined
+  return /^(https?:\/\/|mailto:)[\x21-\x7e]{1,2000}$/i.test(url) ? url : undefined
+}
+
+/** A bare URL without what belongs to the sentence around it: a closing bracket it never opened, a full stop. */
+function bareUrl(token: string): string {
+  let url = token
+  for (;;) {
+    const unbalanced = url.endsWith(')') && url.split('(').length < url.split(')').length
+    if (!unbalanced && !/[.,;:!?'"]$/.test(url)) return url
+    url = url.slice(0, -1)
+  }
 }
 
 /** Inline markup → styled pieces. Unknown or unbalanced markers stay as text. */
@@ -45,12 +57,13 @@ export function inline(text: string, base: string, s: MarkdownStyles): Span[] {
   const out: Span[] = []
   const push = (t: string, style: string, link?: string) => { if (t !== '') out.push(link === undefined ? { text: t, style } : { text: t, style, link }) }
   // Emphasis only at word edges, as Markdown has it: snake_case_names and 2*3*4 stay as written. A
-  // bare URL ends before the punctuation that closes its sentence.
-  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![\w*])\*[^*\s][^*\n]*?\*(?![\w*]))|((?<![\w_])_[^_\s][^_\n]*?_(?![\w_]))|(\[[^\]\n]+\]\([^)\s]+\))|(:[a-z0-9_+]+:)|(https?:\/\/[^\s<>()[\]]*[^\s<>()[\].,;:!?'"])/g
+  // link's label and target are bounded, so a run of brackets cannot make each one scan to the end.
+  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![\w*])\*[^*\s][^*\n]*?\*(?![\w*]))|((?<![\w_])_[^_\s][^_\n]*?_(?![\w_]))|(\[[^\]\n]{1,200}\]\([^)\s]{1,2100}\))|(:[a-z0-9_+]+:)|(https?:\/\/[^\s<>[\]]+)/g
   let last = 0
   for (const m of text.matchAll(re)) {
     const at = m.index ?? 0
-    const token = m[0]
+    // A bare URL ends before the punctuation that closes its sentence; the rest stays text.
+    const token = m[7] !== undefined ? bareUrl(m[0]) : m[0]
     if (m[6] !== undefined && SHORTCODES[token.slice(1, -1)] === undefined) continue
     push(text.slice(last, at), base)
     if (m[1]) push(token.slice(1, -1), s.code)
@@ -194,7 +207,8 @@ function highlight(line: string, lang: string, s: MarkdownStyles): Span[] {
 // ── Tables ─────────────────────────────────────────────────────────────────
 
 const isRow = (raw: string) => /^\s*\|.*\|\s*$/.test(raw) || (raw.includes('|') && !/^\s*$/.test(raw))
-const isSeparator = (raw: string) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(raw) && raw.includes('-')
+// By cells, not by one pattern over the line: nested optional spaces backtrack quadratically on a long blank run.
+const isSeparator = (raw: string) => raw.includes('-') && cellsOf(raw).every((cell) => /^:?-+:?$/.test(cell))
 const cellsOf = (raw: string) => raw.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'))
 
 /**

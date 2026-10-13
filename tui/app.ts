@@ -135,10 +135,12 @@ export class App {
   readonly detail: Detail = { expanded: false }
   /** The reasoning streaming now, until the answer starts. */
   private thought: ThinkingBlock | null = null
+  /** The reasoning of the model call still under way, folded: a retry of that call drops it. */
+  private attemptThought: ThinkingBlock | null = null
   /** Tool calls waiting for their result, by call id. */
   private readonly calls = new Map<string, ToolCallBlock>()
   /** Candidates for what is being typed (/commands, @files), and the one picked. */
-  completion: (Completion & { index: number }) | null = null
+  completion: (Completion & { index: number; text: string }) | null = null
   /** The text Esc closed the list at: it stays closed until the text changes. */
   private dismissed: string | null = null
   /** A Ctrl+R search: what is typed, how many older matches to skip, and the text it replaced. */
@@ -225,9 +227,11 @@ export class App {
 
   /** The current attempt failed and is being retried: drop what it streamed, thinking included. */
   resetAttempt(): void {
-    if (this.answer === null && this.thought === null) return
+    if (this.answer === null && this.thought === null && this.attemptThought === null) return
     this.answer?.reset()
     this.thought?.reset()
+    this.attemptThought?.reset()
+    this.attemptThought = null
     this.transcript.touch()
     this.terminal.requestRender()
   }
@@ -247,6 +251,7 @@ export class App {
   private closeThinking(): void {
     if (this.thought === null) return
     this.thought.done()
+    this.attemptThought = this.thought
     this.thought = null
     this.transcript.touch()
   }
@@ -254,6 +259,8 @@ export class App {
   /** A tool call: its card, which its result (by call id) is added to later. */
   toolCall(step: ToolStep): void {
     this.closeThinking()
+    // A tool call means the model call that asked for it went through: its thinking stays.
+    this.attemptThought = null
     this.closeAnswer()
     const block = toolCallBlock(step, this.detail, this.mode)
     this.transcript.push(block)
@@ -274,13 +281,6 @@ export class App {
     this.terminal.requestRender()
   }
 
-  tool(name: string, detail = ''): void {
-    // A tool step closes the text streamed so far; the next delta starts a new answer block.
-    this.closeAnswer()
-    this.transcript.push(toolBlock(name, detail, this.mode))
-    this.terminal.requestRender()
-  }
-
   /** The turn's final text. Replaces the streamed text when there was any. */
   final(text: string): void {
     if (this.answer !== null) this.answer.finish(text)
@@ -292,6 +292,7 @@ export class App {
 
   turnEnded(): void {
     this.closeThinking()
+    this.attemptThought = null
     this.closeAnswer()
     this.choice = null   // whatever it asked belonged to the turn
     this.busy = Math.max(0, this.busy - 1)
@@ -363,6 +364,10 @@ export class App {
         this.transcript.push(plan)
       }
     }
+    // The keys now belong to the question: a history search gives back what was typed (its match
+    // must never be sent as the answer), and a completion list closes.
+    if (this.search !== null) { this.editor.set(this.search.original); this.search = null }
+    this.completion = null
     this.question = new QuestionFlow(id, items)
     this.transcript.toBottom()
     this.terminal.requestRender(true)
@@ -393,6 +398,7 @@ export class App {
   clear(): void {
     this.interview = null
     this.thought = null
+    this.attemptThought = null
     this.calls.clear()
     // Another conversation: whatever was running belongs to the old one.
     this.busy = 0
@@ -543,6 +549,9 @@ export class App {
     if (this.question !== null && this.onQuestionKey(key)) return
     if (this.focus === 'panel' && this.onPanelKey(key)) return
     if (this.search !== null && this.onSearchKey(key)) return
+    // A list is for the text it was made from: anything that changed the box since (Ctrl+C, a
+    // command that set it) leaves it stale, and Tab or Enter must not act on a stale one.
+    if (this.completion !== null && this.completion.text !== this.editor.text) this.refreshCompletion()
     if (key.ctrl && key.name === 'char' && key.ch === 'r' && this.view.kind === 'main' && this.question === null) { this.startSearch(); return }
     if (this.completion !== null && this.onCompletionKey(key)) return
     if (key.ctrl && key.name === 'char') {
@@ -613,7 +622,7 @@ export class App {
     const found = usable ? complete(this.editor.text, this.editor.cursor, this.o.commands ?? [], this.o.files) : null
     if (found === null) { this.completion = null; return }
     const same = this.completion !== null && this.completion.items.map((i) => i.label).join('\n') === found.items.map((i) => i.label).join('\n')
-    this.completion = { ...found, index: same ? this.completion!.index : 0 }
+    this.completion = { ...found, index: same ? this.completion!.index : 0, text: this.editor.text }
   }
 
   /** Keys while the list is open. Returns false for keys the input box should get instead. */
@@ -731,15 +740,17 @@ export class App {
     const text = this.editor.text
     if (text.trim() === '') return
     this.editor.submit()
-    this.o.remember?.(text)
-    if (this.o.intercept?.(text.trim()) === true) return
+    // Kept for the next run only where it went somewhere: a command run, a message sent.
+    if (this.o.intercept?.(text.trim()) === true) { this.o.remember?.(text); return }
     if (this.view.kind === 'agent') {
       if (this.view.mode !== 'continuable') { this.showToast('이 subagent는 one-shot이라 메시지를 받을 수 없음'); return }
+      this.o.remember?.(text)
       this.o.backend.agentSend?.(this.view.id, text)
       this.showToast(`→ ${this.view.label}에게 보냄`)
       return
     }
     if (this.view.kind === 'job') { this.showToast('셸에는 입력할 수 없음 — esc로 main으로'); return }
+    this.o.remember?.(text)
     this.transcript.push(userBlock(text, this.mode))
     this.transcript.push(spacerBlock())   // one blank line between a question and what answers it
     this.transcript.toBottom()
@@ -754,7 +765,7 @@ export class App {
   }
 
   private ctrlC(): void {
-    if (this.editor.text !== '') { this.editor.set(''); this.quitArmed = 0; this.terminal.requestRender(true); return }
+    if (this.editor.text !== '') { this.editor.set(''); this.quitArmed = 0; this.refreshCompletion(); this.terminal.requestRender(true); return }
     if (this.status.running) { this.o.backend.cancel(); return }
     const now = this.clock.now()
     if (this.quitArmed !== 0 && now - this.quitArmed < TOAST_MS) { this.stop(0); return }

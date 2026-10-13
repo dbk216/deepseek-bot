@@ -44,7 +44,7 @@ const app = new App({
       const later = (ms, fn) => timers.push(setTimeout(fn, ms))
       later(150, () => app.delta('잠깐, 다시 '))
       later(400, () => app.resetAttempt())
-      later(600, () => app.tool('recall', `"${text.slice(0, 20)}" · 2 passages`))
+      later(600, () => app.toolCall({ name: 'recall', title: `"${text.slice(0, 20)}" · 2 passages` }))
       const tick = () => {
         if (i >= words.length) { app.final(REPLY); app.turnEnded(); app.setStatus({ tokens: app.status.tokens + 1830, contextPct: Math.min(100, (app.status.contextPct ?? 0) + 7) }); return }
         app.delta(words[i++])

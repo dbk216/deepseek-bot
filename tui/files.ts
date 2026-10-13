@@ -2,8 +2,9 @@
  * The workspace's files, for @ completion. The terminal runs on the gateway's machine (the socket
  * is local), so it reads the workspace directory itself — names only, never contents.
  *
- * Bounded: a few levels deep and a few thousand entries, without dependency, build and VCS
- * folders, and not through links; the listing is kept for a few seconds so typing stays fast.
+ * Bounded: a few levels deep, a few thousand entries and a time budget, without dependency, build
+ * and VCS folders, and not through links; the listing is kept for a few seconds so typing stays
+ * fast. It is synchronous, which the budget is there to make tolerable.
  */
 import { readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -11,15 +12,22 @@ import { basename, join } from 'node:path'
 const SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.omc', '.cache', '__pycache__', '.venv', '.next', '.dsh'])
 const MAX_ENTRIES = 5000
 const MAX_DEPTH = 6
+/** A directory with more entries than this is listed in part: reading it all would be the whole budget. */
+const MAX_PER_DIRECTORY = 2000
 const TTL_MS = 10_000
+/** The scan runs on a keystroke: past this it returns what it has, breadth first, so the top levels are there. */
+const BUDGET_MS = 150
 
-function scan(root: string): string[] {
+function scan(root: string, now: () => number): string[] {
   const out: string[] = []
+  const started = now()
   const queue: Array<{ dir: string; rel: string; depth: number }> = [{ dir: root, rel: '', depth: 0 }]
   while (queue.length > 0 && out.length < MAX_ENTRIES) {
     const { dir, rel, depth } = queue.shift()!
+    if (depth > 0 && now() - started > BUDGET_MS) break
     let entries
     try { entries = readdirSync(dir, { withFileTypes: true }) } catch { continue }
+    if (entries.length > MAX_PER_DIRECTORY) entries.length = MAX_PER_DIRECTORY
     entries.sort((a, b) => a.name.localeCompare(b.name))
     for (const entry of entries) {
       if (out.length >= MAX_ENTRIES) break
@@ -40,7 +48,7 @@ export function fileFinder(now: () => number = () => Date.now()): (root: string,
   let cache: { root: string; at: number; paths: string[] } | null = null
   return (root, query, limit = 8) => {
     if (root === '') return []
-    if (cache === null || cache.root !== root || now() - cache.at > TTL_MS) cache = { root, at: now(), paths: scan(root) }
+    if (cache === null || cache.root !== root || now() - cache.at > TTL_MS) cache = { root, at: now(), paths: scan(root, now) }
     const q = query.toLowerCase()
     const rank = (path: string) => {
       const name = basename(path).toLowerCase()

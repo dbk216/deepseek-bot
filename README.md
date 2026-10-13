@@ -121,7 +121,7 @@ Each line is traceable to code and to something that checks it.
 | Publishes **health** so an external probe can restart a disconnected bot | `service/health-check.mjs` | `PLAN.md` M3: injected unhealthy state → restart → recovered |
 | Gives each conversation group its own **workspace** (tenants) | `index.ts` | tenant checks in `test/core.test.mjs`; `test/scenarios/tenant.json` |
 | Prunes its own bookkeeping so a long-running process does not grow forever | `index.ts` (`stateRetentionDays`) | `test/resources.test.mjs` 8/8 |
-| Serves a **terminal** (`deepbot-tui`) over a local socket, beside Slack or alone: streamed answers, approval buttons, a turn's questions, its subagents and shells | `transports/local.ts`, `transports/composite.ts`, `tui/` | `test/local.test.mjs` 116/116, `test/tui-*.test.mjs`; `test/tui-live.mjs` 11/11 against a model |
+| Serves a **terminal** (`deepbot-tui`) over a local socket, beside Slack or alone: streamed answers, approval buttons, a turn's questions, its subagents and shells | `transports/local.ts`, `transports/composite.ts`, `tui/` | `test/local.test.mjs` 119/119, `test/tui-*.test.mjs`; `test/tui-live.mjs` 11/11 against a model |
 
 ## Does it work? How to read the claims
 
@@ -656,8 +656,8 @@ only its own conversation's buttons.
 | `ctrl+o` | unfold or fold the thinking and the tool results |
 
 Commands: `/new`, `/sessions`, `/resume <n|id>`, `/tenant [name]`, `/interview <topic>`, `/usage`,
-`/clear`, `/help`, `/quit`. Anything else that starts with `/` is sent as text. What is sent is kept
-between runs in `$DSH_HOME/deepbot-tui/history.jsonl` (owner-only, the last 500).
+`/clear`, `/help`, `/quit`. Anything else that starts with `/` is sent as text. What is sent or run
+is kept between runs in `$DSH_HOME/deepbot-tui/history.jsonl` (owner-only, the last 500).
 
 What appears besides the conversation:
 

@@ -455,7 +455,8 @@ function boot({ state = {}, config = {} } = {}) {
     // Tools are registered in the agent's scope, as the harness does it: the global view has none.
     tools: { get: (name, scope) => (name === 'str_replace_editor' && scope !== undefined && scope === agents[0]
       ? { presentCall: (args) => ({ card: 'diff', title: `str_replace ${args.path}`, diffs: [{ path: args.path, oldText: args.old_str, newText: args.new_str }] }) }
-      : undefined) },
+      : name === 'later' ? { presentCall: () => Promise.reject(new Error('not yet')) }
+        : undefined) },
   }
   let unloadStream = () => {}
   apply({ get: (n) => stubs[n], effect: (fn) => { unloadStream = fn() }, on: (name, h) => { (listeners[name] ??= []).push(h); return () => {} }, logger: { info: () => {} } }, {
@@ -502,6 +503,19 @@ function boot({ state = {}, config = {} } = {}) {
   const results = tools.filter((f) => f.kind === 'tool.result')
   check('tools: each result names its call, with whether it failed', results.length === 2 && results[0].callId === 'c1' && results[0].ok === true && results[0].text === 'edited' && results[1].ok === false, JSON.stringify(results.map((r) => ({ ...r, text: r.text.slice(0, 20) }))))
   check('tools: a long result is cut before it reaches the terminal', results[1].text.length <= 4001)
+  // An edit too large to send whole is cut at a line and marked; a presenter that answers later or
+  // throws falls back to the first argument; another session's calls (a subagent's) are not shown here.
+  const big = Array.from({ length: 2000 }, (_, i) => `line ${i}`).join('\n')
+  emit('session/event', agent.session, { type: 'tool/call', data: { name: 'str_replace_editor', callId: 'c3',
+    arguments: JSON.stringify({ command: 'str_replace', path: '/w/big.ts', old_str: big, new_str: `top\n${big}` }) } })
+  emit('session/event', agent.session, { type: 'tool/call', data: { name: 'later', callId: 'c4', arguments: JSON.stringify({ path: '/w/x' }) } })
+  emit('session/event', { id: 'child-session', header: { id: 'child-session' } }, { type: 'tool/call', data: { name: 'bash', callId: 'c5', arguments: JSON.stringify({ command: 'child only' }) } })
+  await sleep(80)
+  const later = c.frames.filter((f) => f.type === 'stream' && f.kind === 'tool')
+  const cut = later.find((f) => f.callId === 'c3')?.diff?.[0]
+  check('tools: a large edit is cut at a line boundary and marked as cut', cut?.truncated === true && cut.old.length <= 8000 && /^line \d+$/.test(cut.old.split('\n').at(-1)) && /^line \d+$/.test(cut.new.split('\n').at(-1)), JSON.stringify({ truncated: cut?.truncated, oldEnd: cut?.old?.slice(-20), newEnd: cut?.new?.slice(-20) }))
+  check('tools: a presenter that answers with a promise is not waited for: the first argument is the title', later.find((f) => f.callId === 'c4')?.title === '/w/x')
+  check('tools: another session\'s tool call is not shown in this conversation', !later.some((f) => f.callId === 'c5'))
   check('stream: a terminal turn posts no progress message (the steps are already on screen)', !c.frames.some((f) => f.type === 'post' && /작업 중/.test(f.text)))
   release()
   const reply = await c.waitFor((f) => f.type === 'post', 2000)

@@ -108,13 +108,13 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   check('stream: a failed attempt\'s text is dropped', !streaming.includes('잘못된 시도'))
   check('stream: text appears with a caret while streaming', streaming.includes('어제 스레드 기준으로 ▍') || streaming.includes('어제 스레드 기준으로▍'))
   check('stream: the status line shows a spinner and elapsed time', /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d+\.\ds/.test(streaming))
-  t.app.tool('recall', '2 passages')
+  t.app.toolCall({ name: 'recall', title: '2 passages' })
   t.app.delta('staging 먼저.')
   t.app.final('staging 먼저, 그다음 production.')
   t.app.turnEnded()
   t.clock.advance(20)
   const done = t.term.screen.text()
-  check('stream: a tool step appears between the two parts', done.includes('⏺ recall · 2 passages'))
+  check('stream: a tool step appears between the two parts', done.includes('⏺ recall  2 passages'))
   check('stream: the final text replaces the streamed text', done.includes('staging 먼저, 그다음 production.') && !done.includes('staging 먼저.▍'))
   check('stream: no spinner after the turn', !/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d+\.\ds/.test(done))
 }
@@ -125,7 +125,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.key('지워줘\r')
   t.app.turnStarted()
   t.app.delta('build 폴더를 지울게.')
-  t.app.tool('bash')
+  t.app.toolCall({ name: 'bash' })
   // An approval request arrives mid-turn as a message with buttons. It must not replace the text.
   t.app.message('ts-ask', '권한이 필요합니다: rm -rf build', null, false)
   t.app.offer('ts-ask', [{ id: 'approval:allow:k', label: '허용', style: 'primary' }, { id: 'approval:deny:k', label: '거부', style: 'danger' }])
@@ -537,6 +537,77 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
 }
 
 {
+  // Found in review. A list left open after the box was emptied took the next Tab or Enter.
+  const intercepted = []
+  const t = setup({ extra: { commands: COMMAND_INFO, files: () => ['src/app.ts'], intercept: (text) => { intercepted.push(text); return text.startsWith('/') } } })
+  t.key('see @ap')
+  t.key('\x03')   // ctrl+c empties the box
+  let crashed = null
+  try { t.key('\t'); t.clock.advance(20) } catch (e) { crashed = String(e?.message ?? e) }
+  check('complete: ctrl+c closes the list with the text, and tab after it does nothing wrong', crashed === null && t.app.editor.text === '' && t.app.completion === null && !t.term.screen.text().includes('@src/app.ts'), String(crashed))
+  t.app.message('ts-ask', '권한이 필요해: rm -rf build', null, false)
+  t.app.offer('ts-ask', [{ id: 'approval:allow:k', label: '허용', style: 'primary' }, { id: 'approval:deny:k', label: '거부', style: 'danger' }])
+  t.key('/q')
+  t.key('\x03')
+  t.key('\r')
+  check('complete: enter after ctrl+c answers the approval, not a command left in the list', t.actions.length === 1 && intercepted.length === 0 && t.exited === null, JSON.stringify({ actions: t.actions, intercepted }))
+}
+
+{
+  // Found in review. A question that arrives during a history search is answered by its options,
+  // never by the entry the search was showing.
+  const t = setup()
+  t.app.editor.load(['rm -rf build 해줘'])
+  t.key('\x12')
+  check('search: the match is in the box', t.app.editor.text === 'rm -rf build 해줘')
+  t.app.ask('q1', [{ id: 'pick', question: '어느 쪽?', options: [{ label: 'A' }, { label: 'B' }] }])
+  t.clock.advance(20)
+  check('search: a question ends the search and gives back what was typed', t.app.editor.text === '' && !/기록 검색/.test(t.term.screen.text()))
+  t.key('\r')
+  check('search: enter then answers with an option, not with the history entry', t.answers.length === 1 && t.answers[0].answers?.[0]?.selected?.[0] === 'A' && t.answers[0].answers[0].custom === undefined, JSON.stringify(t.answers))
+}
+
+{
+  // Found in review. An edit too large to send whole is cut: the card says so, and does not show
+  // lines "removed" only because they fell past the cut.
+  const t = setup({ rows: 40 })
+  t.app.turnStarted()
+  t.app.toolCall({ name: 'edit', callId: 'e1', title: 'Edit big.ts', diff: [{ path: 'big.ts', old: 'keep 1\nkeep 2\ntail out', new: 'new top\nkeep 1\nkeep 2', truncated: true }] })
+  t.clock.advance(20)
+  let screen = t.term.screen.text()
+  check('tools: a cut diff shows the change, not the line that only fell past the cut', screen.includes('+ new top') && !screen.includes('- tail out'), screen.split('\n').slice(-14).join(' | '))
+  check('tools: and says it was cut', /잘림/.test(screen))
+  // A retried attempt drops its thinking even when its answer had begun.
+  t.app.thinking('버려질 계획')
+  t.app.delta('버려질 답')
+  t.app.resetAttempt()
+  t.clock.advance(20)
+  screen = t.term.screen.text()
+  check('thinking: a retry after the answer began drops the folded thinking too', !/생각함/.test(screen) && !screen.includes('버려질 답'), screen.split('\n').slice(-14).join(' | '))
+  // A thinking block from before a tool call belongs to a model call that succeeded: it stays.
+  t.app.thinking('남을 계획')
+  t.app.toolCall({ name: 'bash', callId: 'b1' })
+  t.app.delta('다음 답')
+  t.app.resetAttempt()
+  t.clock.advance(20)
+  check('thinking: the thinking of an earlier, finished step stays', /생각함/.test(t.term.screen.text()))
+}
+
+{
+  // Found in review. Only what was sent or run is remembered: not text typed where it goes nowhere.
+  const remembered = []
+  const t = setup({ extra: { remember: (text) => remembered.push(text), intercept: (text) => text.startsWith('/') } })
+  t.key('보낸 메시지\r')
+  t.key('/help\r')
+  t.app.setPanel([], [{ id: 'job-1', kind: 'bash', label: 'sleep', owner: 'o', status: 'running', startedAt: 1 }])
+  t.clock.advance(20)
+  t.key('\t'); t.key('\x1b[B'); t.key('\r')   // the panel, down past "main", open the shell
+  t.clock.advance(20)
+  t.key('셸에 친 글\r')
+  check('remember: a message and a command are kept, text typed in a shell view is not', t.app.view.kind === 'job' && JSON.stringify(remembered) === JSON.stringify(['보낸 메시지', '/help']), JSON.stringify({ view: t.app.view.kind, remembered }))
+}
+
+{
   // The history file: owner-only, read back, and kept to the last HISTORY_KEEP entries.
   const dir = mkdtempSync(join(tmpdir(), 'deepbot-history-'))
   const file = join(dir, 'deepbot-tui', 'history.jsonl')
@@ -548,6 +619,12 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const kept = loadHistory(file)
   check('history: only the last entries are kept, and the file does not grow forever', kept.length === HISTORY_KEEP && kept.at(-1) === `q${HISTORY_KEEP * 2 + 4}` && readFileSync(file, 'utf8').split('\n').filter(Boolean).length <= HISTORY_KEEP * 2)
   check('history: a missing or broken file is no history', loadHistory(join(dir, 'none.jsonl')).length === 0)
+  const loose = join(dir, 'loose', 'history.jsonl')
+  mkdirSync(join(dir, 'loose'))
+  writeFileSync(loose, '', { mode: 0o644 })
+  appendHistory(loose, 'x'.repeat(50_000))
+  check('history: a file that was readable by others is made the owner\'s', (statSync(loose).mode & 0o777) === 0o600)
+  check('history: one huge entry is cut, not kept whole', loadHistory(loose)[0].length <= 20_000)
   rmSync(dir, { recursive: true, force: true })
 }
 
@@ -562,6 +639,11 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('files: a name that starts with the query comes first', hits[0] === 'src/app.ts' || hits[0] === 'docs/app-notes.md', JSON.stringify(hits))
   check('files: folders end with /', find(root, 'sr').includes('src/'))
   check('files: no workspace, no files', find('', 'app').length === 0)
+  // A scan stops when it has taken too long: the keystroke that asked must not wait on a huge tree.
+  let ticks = 0
+  const slow = fileFinder(() => (ticks += 1000))
+  const partial = slow(root, '')
+  check('files: a scan over its time budget returns what it has', partial.length > 0 && !partial.includes('src/app.ts'), JSON.stringify(partial))
   rmSync(root, { recursive: true, force: true })
 }
 

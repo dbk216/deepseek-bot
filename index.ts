@@ -1164,11 +1164,26 @@ export function apply(ctx, config) {
       const tools = ctx.get('tools')
       const tool = tools?.get?.(name, ctx.get('agents')?.get?.(sessionId)) ?? tools?.get?.(name)
       card = tool?.presentCall?.(args)
+      // A presenter is synchronous in the harness. One that answers later is not waited for (the
+      // call is shown now, by its first argument), and its failure must not be an unhandled rejection.
+      if (typeof card?.then === 'function') { Promise.resolve(card).catch(() => {}); card = undefined }
     } catch { card = undefined }
     const first = typeof args === 'string' ? args : args !== null && typeof args === 'object' ? Object.values(args).find((v) => typeof v === 'string') : undefined
     const title = clip(typeof card?.title === 'string' ? card.title : typeof first === 'string' ? first : '', 300)
+    // The first three files of an edit, each side cut to whole lines within a budget. A cut side
+    // is marked, so the card can say so instead of showing the lines past the cut as removed.
+    const side = (text: string) => {
+      if (text.length <= 8000) return { text, cut: false }
+      const head = text.slice(0, 8000)
+      const end = head.lastIndexOf('\n')
+      return { text: end > 0 ? head.slice(0, end) : head, cut: true }
+    }
     const diff = card?.card === 'diff' && Array.isArray(card.diffs)
-      ? card.diffs.slice(0, 3).map((d: any) => ({ path: String(d?.path ?? ''), old: typeof d?.oldText === 'string' ? clip(d.oldText, 8000) : null, new: clip(String(d?.newText ?? ''), 8000) }))
+      ? card.diffs.slice(0, 3).map((d: any) => {
+          const before = typeof d?.oldText === 'string' ? side(d.oldText) : null
+          const after = side(String(d?.newText ?? ''))
+          return { path: clip(String(d?.path ?? ''), 300), old: before === null ? null : before.text, new: after.text, ...(before?.cut === true || after.cut ? { truncated: true } : {}) }
+        })
       : undefined
     return { kind: 'tool', name, ...(typeof data?.callId === 'string' ? { callId: data.callId } : {}), ...(title !== '' ? { title } : {}), ...(diff !== undefined ? { diff } : {}) }
   }

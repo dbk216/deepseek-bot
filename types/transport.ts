@@ -96,7 +96,7 @@ export type StreamFrame =
   /** The model's reasoning, apart from the answer. */
   | { kind: 'thinking'; text: string }
   /** A tool call: the tool's own title for it when it has one, and an edit's before and after. */
-  | { kind: 'tool'; name: string; callId?: string; title?: string; diff?: Array<{ path: string; old: string | null; new: string }> }
+  | { kind: 'tool'; name: string; callId?: string; title?: string; diff?: Array<{ path: string; old: string | null; new: string; truncated?: boolean }> }
   /** A call's result, by its call id: whether it failed, and its text (cut). */
   | { kind: 'tool.result'; callId: string; ok: boolean; text: string }
 
