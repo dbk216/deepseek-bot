@@ -30,7 +30,7 @@ import { readFileSync, mkdirSync, existsSync, readdirSync, statSync, lstatSync, 
 import { zstdDecompressSync } from 'node:zlib'
 import { writeInside } from '../safeWrite.js'
 import { recallIndexPath } from '../recallContext.js'
-import { join, dirname, basename, sep } from 'node:path'
+import { join, dirname, basename, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
@@ -58,6 +58,8 @@ function resolveAgentHome() {
 // harness records that path in each session. Taken as given, a home under a symlink got another index
 // than the adapter reads, and every session was skipped as another working directory.
 const AGENT_HOME = (() => { const home = resolveAgentHome(); try { return realpathSync(home) } catch { return home } })()
+/** The home as it was named, which an --out may still use. */
+const GIVEN_HOME = resolve(resolveAgentHome())
 
 const argv = process.argv.slice(2)
 const command = argv[0] ?? 'index'
@@ -274,7 +276,22 @@ function buildIndex(outFile, quiet) {
   // This runs unconfined and writes into the agent's home, which the agent can prepare: never through
   // a link it left there. An explicit --out elsewhere is the operator's choice and is held to its own
   // directory instead.
-  const root = (outFile + sep).startsWith(AGENT_HOME + sep) ? AGENT_HOME : dirname(outFile)
+  // An --out inside the home is held to it, so a link the agent planted there is not followed: named
+  // through the home's link it is renamed onto the resolved home, and one that only resolves into the
+  // home by some other name is refused.
+  outFile = resolve(outFile)
+  if (GIVEN_HOME !== AGENT_HOME && (outFile + sep).startsWith(GIVEN_HOME + sep)) outFile = AGENT_HOME + outFile.slice(GIVEN_HOME.length)
+  const inHome = (outFile + sep).startsWith(AGENT_HOME + sep)
+  if (!inHome) {
+    // Every ancestor, not only the parent: the parent's real path follows the very link to guard against.
+    for (let dir = dirname(outFile); ; dir = dirname(dir)) {
+      let real = null
+      try { real = realpathSync(dir) } catch { /* not there yet */ }
+      if (real !== null && (real + sep).startsWith(AGENT_HOME + sep)) throw new Error(`--out ${outFile} is in the agent home under another name; name it as ${AGENT_HOME}/…`)
+      if (dir === dirname(dir)) break
+    }
+  }
+  const root = inHome ? AGENT_HOME : dirname(outFile)
   mkdirSync(root, { recursive: true })
   writeInside(root, outFile, all.map((r) => JSON.stringify(r)).join('\n') + (all.length ? '\n' : ''))
   writeInside(

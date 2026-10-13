@@ -135,6 +135,21 @@ rmSync(dir, { recursive: true, force: true })
   const adapterReads = recallIndexPath(resolved, dshHome)
   check('the indexer writes the index the adapter reads', existsSync(adapterReads), adapterReads)
   check('with the session in it', existsSync(adapterReads) && readFileSync(adapterReads, 'utf8').includes('linked-home-canary'))
+  // An --out inside the home, named through the link, is still inside the home: held to it, so a link
+  // the agent planted there is not followed. Named by the resolved home only, it counted as outside and
+  // was written through the planted link. (Second verification pass.)
+  const outside = join(dir, 'outside-of-home')
+  mkdirSync(outside, { recursive: true })
+  symlinkSync(outside, join(realHome, 'memory'))
+  try {
+    execFileSync(process.execPath, [CLI, 'index', '--quiet', '--out', join(linkHome, 'memory', 'idx.jsonl')], { encoding: 'utf8', env: { ...process.env, DSH_HOME: dshHome, DEEPBOT_HOME: linkHome }, stdio: 'pipe' })
+  } catch { /* refused */ }
+  check('an --out through the linked home does not follow a planted link', !existsSync(join(outside, 'idx.jsonl')))
+  // Nor through another spelling of the home itself (the temp directory is under /var -> /private/var).
+  try {
+    execFileSync(process.execPath, [CLI, 'index', '--quiet', '--out', join(realHome, 'memory', 'idx2.jsonl')], { encoding: 'utf8', env: { ...process.env, DSH_HOME: dshHome, DEEPBOT_HOME: linkHome }, stdio: 'pipe' })
+  } catch { /* refused */ }
+  check('nor one through another spelling of the home', !existsSync(join(outside, 'idx2.jsonl')))
 }
 
 const failed = results.filter((x) => !x.ok)
