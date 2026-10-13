@@ -312,6 +312,56 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   check('markdown: no leading or trailing blank lines', md('\n\n본문\n\n').length === 1)
 }
 
+// 11. Links that can be clicked, tables, and highlighted code.
+{
+  const st = { text: 'T', bold: 'B', italic: 'I', code: 'C', heading: 'H', quote: 'Q', codeBlock: 'K', dim: 'D', link: 'L',
+    keyword: 'KW', string: 'ST', comment: 'CM', number: 'NU' }
+  const md = (text, width = 60) => markdown(text, width, st, { text: '  ', style: '' })
+  const styled = (line, style) => line.spans.filter((sp) => sp.style === style && !sp.decor).map((sp) => sp.text).join('|')
+  const drawn = (line) => line.spans.map((sp) => sp.text).join('')
+
+  // Links: OSC 8 on the label and on a bare URL; only http(s) and mailto; nothing with a control character.
+  const linked = md('[문서](https://ex.am/ple) 와 https://raw.example/path?q=1. 그리고 [위험](javascript:alert)', 200)
+  const links = linked[0].spans.filter((sp) => sp.link !== undefined).map((sp) => `${sp.text}→${sp.link}`)
+  check('markdown: a link and a bare URL carry their target, without the sentence\'s full stop', links.includes('문서→https://ex.am/ple') && links.includes('https://raw.example/path?q=1→https://raw.example/path?q=1'), JSON.stringify(links))
+  check('markdown: a link to anything but http(s) or mailto is text only', !linked[0].spans.some((sp) => /javascript/.test(sp.link ?? '')) && drawn(linked[0]).includes('위험'))
+  check('markdown: a URL with a control character is no link', !md('[x](https://a.b/\x1b[2Jc)')[0].spans.some((sp) => sp.link !== undefined))
+  const screen = new Screen(30, 2)
+  screen.put(0, 0, '문서', 'L', 30, 'https://ex.am/ple')
+  screen.put(5, 0, 'plain')
+  const bytes = diff(null, screen)
+  check('screen: a link is opened before its text and closed after it', bytes.includes('\x1b]8;;https://ex.am/ple\x07L문서\x1b]8;;\x07'), JSON.stringify(bytes))
+  const term = emulator(30, 2)
+  term.apply(bytes)
+  check('screen: the terminal sees the label linked and the rest not', term.grid[0].link === 'https://ex.am/ple' && term.grid[2].link === 'https://ex.am/ple' && term.grid[5].link === undefined)
+  const unlinked = new Screen(30, 2)
+  unlinked.put(0, 0, '문서', 'L')
+  check('screen: a link added to unchanged text is redrawn', diff(unlinked, screen).includes('\x1b]8;;https://ex.am/ple\x07'))
+
+  // Tables: borders, aligned columns by display width, header in bold; wider than the screen, left as written.
+  const table = md(['| 이름 | 수량 | 비고 |', '|:---|---:|:-:|', '| 사과 | 3 | **신선** |', '| 배 | 12 |'].join('\n'), 60)
+  const rows = table.map(drawn)
+  check('markdown: a table is drawn with borders and aligned columns', JSON.stringify(rows) === JSON.stringify([
+    '  ┌──────┬──────┬──────┐', '  │ 이름 │ 수량 │ 비고 │', '  ├──────┼──────┼──────┤', '  │ 사과 │    3 │ 신선 │', '  │ 배   │   12 │      │', '  └──────┴──────┴──────┘',
+  ]), JSON.stringify(rows))
+  check('markdown: the header and bold cells are bold', styled(table[1], 'B') === '이름|수량|비고' && styled(table[3], 'B') === '신선')
+  const wide = md(['| a | b |', '|---|---|', `| ${'긴'.repeat(40)} | x |`].join('\n'), 30)
+  check('markdown: a table wider than the screen is left as written', wide.some((l) => drawn(l).includes('| a | b |')) && !wide.some((l) => drawn(l).includes('┌')))
+  check('markdown: pipes without a separator row are not a table', !md('a | b\nc | d').some((l) => drawn(l).includes('┌')))
+
+  // Code: keywords, numbers, comments and strings by language; unknown languages plain; copy unchanged.
+  const ts = md(['```ts', 'const n = 42 // 답', "if (ok) return 'yes'", '```'].join('\n'))
+  check('markdown: TypeScript is highlighted: keyword, number, comment, string', styled(ts[1], 'KW') === 'const' && styled(ts[1], 'NU') === '42' && styled(ts[1], 'CM') === '// 답' && styled(ts[2], 'KW') === 'if|return' && styled(ts[2], 'ST') === "'yes'",
+    JSON.stringify(ts.slice(1).map((l) => l.spans.filter((sp) => !sp.decor))))
+  const py = md(['```python', 'def f(x):  # 주석', '    return "a#b"', '```'].join('\n'))
+  check('markdown: Python comments start at #, but not inside a string', styled(py[1], 'KW') === 'def' && styled(py[1], 'CM') === '# 주석' && styled(py[2], 'ST') === '"a#b"' && styled(py[2], 'CM') === '')
+  const sh = md(['```bash', 'echo $# a#b  # 끝', '```'].join('\n'))
+  check('markdown: in a shell, # starts a comment only after a space', styled(sh[1], 'CM') === '# 끝', JSON.stringify(sh[1].spans))
+  const unknown = md(['```', 'const x = 1', '```'].join('\n'))
+  check('markdown: code without a known language is not highlighted', unknown[0].spans.filter((sp) => !sp.decor).every((sp) => sp.style === 'K'))
+  check('markdown: highlighted code copies as written', extract(ts, { line: 1, col: 0 }, { line: 2, col: 99 }) === "const n = 42 // 답\nif (ok) return 'yes'", JSON.stringify(extract(ts, { line: 1, col: 0 }, { line: 2, col: 99 })))
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

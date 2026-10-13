@@ -1,12 +1,14 @@
 /**
- * Just enough Markdown for a chat answer: code blocks, headings, lists, quotes, rules, and inline
- * **bold**, *emphasis*, `code`, [links](url) — plus the Slack forms the core's own messages use
- * (*bold*, :warning:), because those are written for Slack and reach the terminal unchanged.
+ * Just enough Markdown for a chat answer: code blocks (highlighted for the common languages),
+ * headings, lists, quotes, rules, tables, and inline **bold**, *emphasis*, `code`, [links](url) —
+ * plus the Slack forms the core's own messages use (*bold*, :warning:), because those are written
+ * for Slack and reach the terminal unchanged.
  *
  * Markers are not drawn, so a copy gives the text as read. Lines wrap by display width across
- * styles; a code line wraps where it overflows, never at its spaces.
+ * styles; a code line wraps where it overflows, never at its spaces. A link's text carries its
+ * target, which the screen turns into a clickable OSC 8 hyperlink.
  */
-import { graphemes, graphemeWidth } from './width.js'
+import { graphemes, graphemeWidth, stringWidth } from './width.js'
 import type { Line, Span } from './text.js'
 
 export interface MarkdownStyles {
@@ -19,6 +21,10 @@ export interface MarkdownStyles {
   codeBlock: string
   dim: string
   link: string
+  keyword: string
+  string: string
+  comment: string
+  number: string
 }
 
 const SHORTCODES: Record<string, string> = {
@@ -26,12 +32,21 @@ const SHORTCODES: Record<string, string> = {
   bulb: '💡', memo: '📝', rocket: '🚀', tada: '🎉', eyes: '👀', thumbsup: '👍', '+1': '👍', fire: '🔥', link: '🔗',
 }
 
+/**
+ * A target the terminal may open: http(s) and mailto only, and nothing with a control character —
+ * the URL is written inside an escape sequence, where one would end it and write the rest raw.
+ */
+function safeUrl(url: string): string | undefined {
+  return /^(https?:\/\/|mailto:)[^\s\x00-\x1f\x7f]+$/i.test(url) ? url : undefined
+}
+
 /** Inline markup → styled pieces. Unknown or unbalanced markers stay as text. */
 export function inline(text: string, base: string, s: MarkdownStyles): Span[] {
   const out: Span[] = []
-  const push = (t: string, style: string) => { if (t !== '') out.push({ text: t, style }) }
-  // Emphasis only at word edges, as Markdown has it: snake_case_names and 2*3*4 stay as written.
-  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![\w*])\*[^*\s][^*\n]*?\*(?![\w*]))|((?<![\w_])_[^_\s][^_\n]*?_(?![\w_]))|(\[[^\]\n]+\]\([^)\s]+\))|(:[a-z0-9_+]+:)/g
+  const push = (t: string, style: string, link?: string) => { if (t !== '') out.push(link === undefined ? { text: t, style } : { text: t, style, link }) }
+  // Emphasis only at word edges, as Markdown has it: snake_case_names and 2*3*4 stay as written. A
+  // bare URL ends before the punctuation that closes its sentence.
+  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![\w*])\*[^*\s][^*\n]*?\*(?![\w*]))|((?<![\w_])_[^_\s][^_\n]*?_(?![\w_]))|(\[[^\]\n]+\]\([^)\s]+\))|(:[a-z0-9_+]+:)|(https?:\/\/[^\s<>()[\]]*[^\s<>()[\].,;:!?'"])/g
   let last = 0
   for (const m of text.matchAll(re)) {
     const at = m.index ?? 0
@@ -44,16 +59,18 @@ export function inline(text: string, base: string, s: MarkdownStyles): Span[] {
     else if (m[5]) {
       const label = token.slice(1, token.indexOf(']'))
       const url = token.slice(token.indexOf('(') + 1, -1)
-      push(label, s.link)
+      push(label, s.link, safeUrl(url))
+      // Shown as well, for a terminal without hyperlinks and for a copy.
       if (url !== label) push(` (${url})`, s.dim)
-    } else push(SHORTCODES[token.slice(1, -1)], base)
+    } else if (m[7]) push(token, s.link, safeUrl(token))
+    else push(SHORTCODES[token.slice(1, -1)], base)
     last = at + token.length
   }
   push(text.slice(last), base)
   return out
 }
 
-interface Cell { g: string; w: number; style: string }
+interface Cell { g: string; w: number; style: string; link?: string }
 
 /**
  * Wrap styled text into lines no wider than `width`, preferring spaces (or anywhere, for code).
@@ -62,7 +79,7 @@ interface Cell { g: string; w: number; style: string }
 function wrapSpans(spans: Span[], width: number, anywhere: boolean): Array<{ spans: Span[]; gap: string }> {
   const max = Math.max(1, width)
   const cells: Cell[] = []
-  for (const span of spans) for (const g of graphemes(span.text)) cells.push({ g, w: graphemeWidth(g), style: span.style })
+  for (const span of spans) for (const g of graphemes(span.text)) cells.push({ g, w: graphemeWidth(g), style: span.style, link: span.link })
   const lines: Array<{ cells: Cell[]; gap: string }> = []
   let line: Cell[] = []
   let used = 0
@@ -93,11 +110,118 @@ function wrapSpans(spans: Span[], width: number, anywhere: boolean): Array<{ spa
     const grouped: Span[] = []
     for (const c of cs) {
       const prev = grouped[grouped.length - 1]
-      if (prev !== undefined && prev.style === c.style) prev.text += c.g
-      else grouped.push({ text: c.g, style: c.style })
+      if (prev !== undefined && prev.style === c.style && prev.link === c.link) prev.text += c.g
+      else grouped.push(c.link === undefined ? { text: c.g, style: c.style } : { text: c.g, style: c.style, link: c.link })
     }
     return { spans: grouped, gap: g }
   })
+}
+
+// ── Code highlighting ──────────────────────────────────────────────────────
+// A line at a time and by token class only — keywords, strings, comments, numbers — which is what
+// makes code readable at a glance. No grammar, no state across lines (a /* … */ block that spans
+// lines is shown plain), and no dependency.
+
+interface Language { keywords: Set<string>; comment: string | null; hashAfterSpace?: boolean; quotes: string; caseless?: boolean }
+
+const words = (list: string) => new Set(list.split(/\s+/).filter(Boolean))
+const LANGUAGES: Record<string, Language> = {
+  js: { comment: '//', quotes: `'"\``, keywords: words(`const let var function return if else for while do switch case break continue new class extends
+    import from export default async await try catch finally throw typeof instanceof in of this null undefined true false void yield
+    interface type enum implements public private protected readonly static as`) },
+  py: { comment: '#', quotes: `'"`, keywords: words(`def class return if elif else for while in not and or is import from as with try except finally
+    raise pass break continue lambda yield None True False async await global nonlocal self`) },
+  sh: { comment: '#', hashAfterSpace: true, quotes: `'"`, keywords: words(`if then else elif fi for while until do done case esac function in return
+    export local readonly echo exit set unset source cd`) },
+  go: { comment: '//', quotes: '"`\'', keywords: words(`func package import return if else for range switch case default break continue var const
+    type struct interface map chan go defer select nil true false`) },
+  rust: { comment: '//', quotes: '"', keywords: words(`fn let mut pub use mod struct enum impl trait for while loop if else match return self Self
+    crate super as in where async await move ref true false None Some Ok Err const static`) },
+  c: { comment: '//', quotes: `'"`, keywords: words(`int long short float double char void bool boolean class public private protected static final
+    return if else for while do switch case break continue new this null true false try catch finally throw struct const unsigned
+    package import fun val var let func`) },
+  json: { comment: null, quotes: '"', keywords: words('true false null') },
+  yaml: { comment: '#', hashAfterSpace: true, quotes: `'"`, keywords: words('true false null yes no on off') },
+  sql: { comment: '--', quotes: `'`, caseless: true, keywords: words(`select from where insert into values update set delete create table drop alter
+    join left right inner outer on group by order limit offset as and or not null is in like between distinct count having union`) },
+}
+const ALIASES: Record<string, string> = {
+  js: 'js', javascript: 'js', jsx: 'js', ts: 'js', typescript: 'js', tsx: 'js', mjs: 'js', cjs: 'js',
+  py: 'py', python: 'py', sh: 'sh', bash: 'sh', zsh: 'sh', shell: 'sh', console: 'sh',
+  go: 'go', golang: 'go', rs: 'rust', rust: 'rust', json: 'json', jsonc: 'json', yaml: 'yaml', yml: 'yaml', sql: 'sql',
+  c: 'c', h: 'c', cpp: 'c', 'c++': 'c', hpp: 'c', java: 'c', cs: 'c', csharp: 'c', kotlin: 'c', kt: 'c', swift: 'c',
+}
+
+/** One code line as styled pieces, by the fence's language; unknown languages stay plain. */
+function highlight(line: string, lang: string, s: MarkdownStyles): Span[] {
+  const language = LANGUAGES[ALIASES[lang.toLowerCase()] ?? '']
+  if (language === undefined || line === '') return [{ text: line === '' ? ' ' : line, style: s.codeBlock }]
+  const out: Span[] = []
+  const push = (text: string, style: string) => {
+    const prev = out[out.length - 1]
+    if (prev !== undefined && prev.style === style) prev.text += text
+    else out.push({ text, style })
+  }
+  let i = 0
+  while (i < line.length) {
+    const rest = line.slice(i)
+    const c = line[i]
+    const commentHere = language.comment !== null && rest.startsWith(language.comment)
+      && (!language.hashAfterSpace || i === 0 || /\s/.test(line[i - 1]))
+    if (commentHere) { push(rest, s.comment); break }
+    if (language.quotes.includes(c)) {
+      let j = i + 1
+      while (j < line.length && line[j] !== c) j += line[j] === '\\' ? 2 : 1
+      push(line.slice(i, Math.min(j + 1, line.length)), s.string)
+      i = Math.min(j + 1, line.length)
+      continue
+    }
+    const number = /^(0x[0-9a-fA-F]+|\d[\d_]*(\.\d+)?([eE][+-]?\d+)?)/.exec(rest)
+    if (number !== null && (i === 0 || !/[\w$]/.test(line[i - 1]))) { push(number[0], s.number); i += number[0].length; continue }
+    const word = /^[A-Za-z_$][\w$]*/.exec(rest)
+    if (word !== null) {
+      const known = language.keywords.has(language.caseless === true ? word[0].toLowerCase() : word[0])
+      push(word[0], known ? s.keyword : s.codeBlock)
+      i += word[0].length
+      continue
+    }
+    push(c, s.codeBlock)
+    i++
+  }
+  return out
+}
+
+// ── Tables ─────────────────────────────────────────────────────────────────
+
+const isRow = (raw: string) => /^\s*\|.*\|\s*$/.test(raw) || (raw.includes('|') && !/^\s*$/.test(raw))
+const isSeparator = (raw: string) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(raw) && raw.includes('-')
+const cellsOf = (raw: string) => raw.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'))
+
+/**
+ * A GFM table, drawn with borders and its columns aligned by display width. Null when it does not
+ * fit in `room` columns: then it is left as written, which still reads, rather than squeezed.
+ */
+function table(header: string[], aligns: Array<'left' | 'right' | 'center'>, body: string[][], room: number, s: MarkdownStyles): Span[][] | null {
+  const columns = header.length
+  const cell = (row: string[], c: number, base: string) => inline(row[c] ?? '', base, s)
+  const rows = [header.map((_, c) => cell(header, c, s.bold)), ...body.map((row) => header.map((_, c) => cell(row, c, s.text)))]
+  const widthOf = (spans: Span[]) => stringWidth(spans.map((sp) => sp.text).join(''))
+  const widths = header.map((_, c) => Math.max(1, ...rows.map((row) => widthOf(row[c]))))
+  if (1 + widths.reduce((n, w) => n + w + 3, 0) > room) return null
+  const border = (left: string, mid: string, right: string): Span[] => [{ text: `${left}${widths.map((w) => '─'.repeat(w + 2)).join(mid)}${right}`, style: s.dim }]
+  const drawRow = (row: Span[][]): Span[] => {
+    const spans: Span[] = [{ text: '│ ', style: s.dim }]
+    for (let c = 0; c < columns; c++) {
+      const free = widths[c] - widthOf(row[c])
+      const before = aligns[c] === 'right' ? free : aligns[c] === 'center' ? Math.floor(free / 2) : 0
+      if (before > 0) spans.push({ text: ' '.repeat(before), style: s.text })
+      spans.push(...row[c])
+      if (free - before > 0) spans.push({ text: ' '.repeat(free - before), style: s.text })
+      spans.push({ text: c < columns - 1 ? ' │ ' : ' │', style: s.dim })
+    }
+    return spans
+  }
+  return [border('┌', '┬', '┐'), drawRow(rows[0]), border('├', '┼', '┤'), ...rows.slice(1).map(drawRow), border('└', '┴', '┘')]
 }
 
 /**
@@ -106,21 +230,41 @@ function wrapSpans(spans: Span[], width: number, anywhere: boolean): Array<{ spa
 export function markdown(text: string, width: number, s: MarkdownStyles, prefix: Span): Line[] {
   const lines: Line[] = []
   const lead = (extra: Span[] = []): Span[] => [{ ...prefix, decor: true }, ...extra.map((e) => ({ ...e, decor: true }))]
+  const widthOfDecor = (decor: Span[]) => [prefix, ...decor].reduce((n, d) => n + stringWidth(d.text), 0)
   const emit = (spans: Span[], decor: Span[], anywhere = false) => {
-    const room = Math.max(1, width - [prefix, ...decor].reduce((n, d) => n + [...graphemes(d.text)].reduce((a, g) => a + graphemeWidth(g), 0), 0))
+    const room = Math.max(1, width - widthOfDecor(decor))
     wrapSpans(spans, room, anywhere).forEach((piece, i) => {
       lines.push({ spans: [...lead(decor), ...piece.spans], soft: i > 0, ...(i > 0 ? { gap: piece.gap } : {}) })
     })
   }
+  const raws = text.split('\n')
   let fence: string | null = null
-  for (const raw of text.split('\n')) {
+  for (let i = 0; i < raws.length; i++) {
+    const raw = raws[i]
     const open = /^\s*```(\S*)\s*$/.exec(raw)
     if (open !== null) {
       if (fence === null) { fence = open[1]; if (fence !== '') lines.push({ spans: lead([{ text: `${fence}`, style: s.dim }]), soft: false }) }
       else fence = null
       continue
     }
-    if (fence !== null) { emit([{ text: raw === '' ? ' ' : raw, style: s.codeBlock }], [{ text: '│ ', style: s.dim }], true); continue }
+    if (fence !== null) { emit(highlight(raw, fence, s), [{ text: '│ ', style: s.dim }], true); continue }
+    // A table needs a separator row with as many cells as its header (so "a | b" over a rule is not one).
+    if (isRow(raw) && i + 1 < raws.length && isSeparator(raws[i + 1]) && cellsOf(raws[i + 1]).length === cellsOf(raw).length) {
+      const header = cellsOf(raw)
+      const aligns = cellsOf(raws[i + 1]).map((d) => (d.endsWith(':') ? (d.startsWith(':') ? 'center' : 'right') : 'left') as 'left' | 'right' | 'center')
+      let end = i + 2
+      while (end < raws.length && isRow(raws[end]) && raws[end].trim() !== '') end++
+      const drawn = table(header, aligns, raws.slice(i + 2, end).map(cellsOf), Math.max(1, width - widthOfDecor([])), s)
+      if (drawn !== null) {
+        for (const row of drawn) lines.push({ spans: [...lead(), ...row], soft: false })
+        i = end - 1
+        continue
+      }
+      // Too wide to draw: the rows as written, which still read.
+      for (let k = i; k < end; k++) emit([{ text: raws[k], style: s.text }], [])
+      i = end - 1
+      continue
+    }
     const heading = /^(#{1,6})\s+(.*)$/.exec(raw)
     if (heading !== null) { emit(inline(heading[2], s.heading, s), []); continue }
     if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(raw)) { lines.push({ spans: lead([{ text: '─'.repeat(Math.max(1, Math.min(width - 2, 40))), style: s.dim }]), soft: false }); continue }
@@ -133,8 +277,10 @@ export function markdown(text: string, width: number, s: MarkdownStyles, prefix:
     if (raw.trim() === '') { lines.push({ spans: lead(), soft: false }); continue }
     emit(inline(raw, s.text, s), [])
   }
-  // An answer never starts or ends with blank lines of its own.
-  while (lines.length > 0 && lines[lines.length - 1].spans.every((sp) => sp.decor)) lines.pop()
-  while (lines.length > 0 && lines[0].spans.every((sp) => sp.decor)) lines.shift()
+  // An answer never starts or ends with blank lines of its own (a line of just the prefix) — while
+  // a code block's language, also all decoration, stays even when the answer opens with the block.
+  const blank = (line: Line) => line.spans.length === 1 && line.spans[0].decor === true
+  while (lines.length > 0 && blank(lines[lines.length - 1])) lines.pop()
+  while (lines.length > 0 && blank(lines[0])) lines.shift()
   return lines
 }

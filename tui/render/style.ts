@@ -102,4 +102,8 @@ export const theme = {
   quote: { fg: palette.muted, italic: true } as Style,
   codeBlock: { fg: palette.text } as Style,
   link: { fg: palette.light, underline: true } as Style,
+  codeKeyword: { fg: palette.primary, bold: true } as Style,
+  codeString: { fg: palette.ok } as Style,
+  codeComment: { fg: palette.muted, italic: true } as Style,
+  codeNumber: { fg: palette.warn } as Style,
 }

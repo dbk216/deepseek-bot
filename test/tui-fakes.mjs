@@ -7,7 +7,7 @@ import { graphemes, graphemeWidth } from '../dist/tui/render/width.js'
 
 export function emulator(cols, rows) {
   const grid = Array.from({ length: cols * rows }, () => ({ ch: ' ', style: '' }))
-  let x = 0, y = 0, pen = ''
+  let x = 0, y = 0, pen = '', link = ''
   const state = { cursorVisible: true, cursor: { x: 0, y: 0 }, altScreen: false, mouse: false }
   function apply(data) {
     let i = 0
@@ -27,7 +27,14 @@ export function emulator(cols, rows) {
           i += seq.length
           continue
         }
-        if (data[i + 1] === ']') { const end = data.indexOf('\x07', i); i = end + 1; continue }
+        if (data[i + 1] === ']') {
+          const end = data.indexOf('\x07', i)
+          const payload = data.slice(i + 2, end)
+          // OSC 8: the hyperlink the following cells belong to ('' closes it).
+          if (payload.startsWith('8;')) link = payload.slice(payload.indexOf(';', 2) + 1)
+          i = end + 1
+          continue
+        }
         throw new Error(`unexpected ESC at ${i}`)
       }
       let end = data.indexOf('\x1b', i)
@@ -35,8 +42,8 @@ export function emulator(cols, rows) {
       for (const g of graphemes(data.slice(i, end))) {
         const w = graphemeWidth(g)
         if (x < cols && y < rows) {
-          grid[y * cols + x] = { ch: g, style: pen }
-          if (w === 2 && x + 1 < cols) grid[y * cols + x + 1] = { ch: '', style: pen }
+          grid[y * cols + x] = link === '' ? { ch: g, style: pen } : { ch: g, style: pen, link }
+          if (w === 2 && x + 1 < cols) grid[y * cols + x + 1] = link === '' ? { ch: '', style: pen } : { ch: '', style: pen, link }
         }
         x += w
       }

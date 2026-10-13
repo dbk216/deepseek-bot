@@ -14,6 +14,8 @@ export interface Cell {
   ch: string
   /** The style's SGR string; '' is the terminal default. */
   style: string
+  /** The hyperlink (OSC 8) the cell belongs to; absent for plain text. */
+  link?: string
 }
 
 export const BLANK: Cell = Object.freeze({ ch: ' ', style: '' })
@@ -42,7 +44,7 @@ export class Screen {
    * Draw text from (x, y), clipped at `maxX` (exclusive, default the right edge).
    * Returns the column after the last cell written.
    */
-  put(x: number, y: number, text: string, style = '', maxX = this.cols): number {
+  put(x: number, y: number, text: string, style = '', maxX = this.cols, link?: string): number {
     if (y < 0 || y >= this.rows) return x
     const limit = Math.min(maxX, this.cols)
     let col = x
@@ -53,8 +55,8 @@ export class Screen {
       if (col >= 0) {
         this.release(y, col)
         if (w === 2) this.release(y, col + 1)
-        this.cells[y * this.cols + col] = { ch: g, style }
-        if (w === 2) this.cells[y * this.cols + col + 1] = { ch: '', style }
+        this.cells[y * this.cols + col] = link === undefined ? { ch: g, style } : { ch: g, style, link }
+        if (w === 2) this.cells[y * this.cols + col + 1] = link === undefined ? { ch: '', style } : { ch: '', style, link }
       }
       col += w
     }
@@ -84,7 +86,7 @@ export class Screen {
 }
 
 function same(a: Cell, b: Cell): boolean {
-  return a === b || (a.ch === b.ch && a.style === b.style)
+  return a === b || (a.ch === b.ch && a.style === b.style && a.link === b.link)
 }
 
 /** Unchanged cells shorter than this between two changes are rewritten rather than skipped. */
@@ -120,12 +122,16 @@ export function diff(prev: Screen | null, next: Screen): string {
       // A run that ends on a wide character's lead must include its continuation.
       if (end < next.cols && next.cells[row + end].ch === '') end++
       out += `\x1b[${y + 1};${start + 1}H`
+      let link = ''
       for (let k = start; k < end; k++) {
         const cell = next.cells[row + k]
         if (cell.ch === '') continue
+        // A hyperlink is opened where its cells start and closed where they end, within the run.
+        if ((cell.link ?? '') !== link) { link = cell.link ?? ''; out += `\x1b]8;;${link}\x07` }
         if (pen !== cell.style) { out += cell.style === '' ? '\x1b[0m' : cell.style; pen = cell.style }
         out += cell.ch
       }
+      if (link !== '') out += '\x1b]8;;\x07'
       x = end
     }
   }

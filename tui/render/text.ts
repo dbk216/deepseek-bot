@@ -14,6 +14,8 @@ export interface Span {
   style: string
   /** Prefixes and indents: drawn, never copied. */
   decor?: boolean
+  /** A hyperlink target (OSC 8): the terminal makes the text clickable. */
+  link?: string
 }
 
 export interface Line {

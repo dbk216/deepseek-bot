@@ -737,14 +737,14 @@ export class App {
     visible.forEach((line, r) => {
       const y = transcriptTop + r
       let x = 0
-      for (const span of line.spans) x = screen.put(x, y, span.text, span.style)
+      for (const span of line.spans) x = screen.put(x, y, span.text, span.style, cols, span.link)
       if (pane.selection !== null) {
         const index = pane.top + r
         for (let c = 0; c < cols; c++) {
           if (!pane.isSelected(index, c)) continue
           const i = y * cols + c
           const cell = screen.cells[i]
-          screen.cells[i] = { ch: cell.ch, style: cell.style === '' ? '\x1b[0;7m' : `${cell.style}\x1b[7m` }
+          screen.cells[i] = { ...cell, style: cell.style === '' ? '\x1b[0;7m' : `${cell.style}\x1b[7m` }
         }
       }
     })

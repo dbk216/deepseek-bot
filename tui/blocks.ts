@@ -15,6 +15,7 @@ function markdownStyles(mode: ColorMode): MarkdownStyles {
   return {
     text: sgr(theme.assistant, mode), bold: sgr(theme.bold, mode), italic: sgr(theme.italic, mode), code: sgr(theme.code, mode),
     heading: sgr(theme.heading, mode), quote: sgr(theme.quote, mode), codeBlock: sgr(theme.codeBlock, mode), dim: sgr(theme.muted, mode), link: sgr(theme.link, mode),
+    keyword: sgr(theme.codeKeyword, mode), string: sgr(theme.codeString, mode), comment: sgr(theme.codeComment, mode), number: sgr(theme.codeNumber, mode),
   }
 }
 import type { Block } from './render/transcript.js'
