@@ -879,6 +879,9 @@ for (const remove of [false, true]) {
   const sent = t.transport.uploads.map((u) => u.filePath.slice(home.length + 1))
   check('the document the answer names is uploaded', sent.includes('out/report.docx'), JSON.stringify(sent))
   check('into the conversation it was made in', t.transport.uploads[0]?.target?.channel === 'C_ALLOWED' && t.transport.uploads[0]?.target?.threadTs === 't1')
+  // The bytes are read by the core from the file it checked — one descriptor, no follow — and handed
+  // over: a transport reading the path again could be handed a link swapped in after the check.
+  check('the bytes handed over are the checked file\'s', t.transport.uploads[0]?.bytes === 'docx bytes', JSON.stringify(t.transport.uploads[0]?.bytes))
   check('a file from before the turn is not, even when named', !sent.includes('old.pdf'))
   check('nor one the answer does not name', !sent.includes('unnamed.xlsx'))
   check('nor anything in the agent\'s own directories', !sent.includes('memory/notes.pdf'))

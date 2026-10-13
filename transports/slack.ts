@@ -511,9 +511,9 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
    * nothing to link to on the reader's machine — so the file has to travel. The API is three calls:
    * ask for an upload URL, send the bytes to it, then complete the upload against the channel.
    */
-  async function uploadFile(target: Target, filePath: string, title?: string): Promise<boolean> {
+  async function uploadFile(target: Target, filePath: string, title?: string, given?: Uint8Array): Promise<boolean> {
     try {
-      const bytes = readFileSync(filePath)
+      const bytes = given !== undefined ? Buffer.from(given) : readFileSync(filePath)
       const name = basename(filePath)
       const started = await api.slackPost<{ ok: boolean; upload_url?: string; file_id?: string; error?: string }>(
         requireToken(), 'files.getUploadURLExternal', { filename: name, length: bytes.length })

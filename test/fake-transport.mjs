@@ -73,7 +73,7 @@ export function createFakeTransport(options = {}) {
     } : {}),
     // Uploading a file into the conversation, only when asked for, like Slack's files API.
     ...(options.upload === true ? {
-      async uploadFile(target, filePath, title) { uploads.push({ target, filePath, title }); return true },
+      async uploadFile(target, filePath, title, bytes) { uploads.push({ target, filePath, title, bytes: bytes === undefined ? null : Buffer.from(bytes).toString('utf8') }); return true },
     } : {}),
     // Deleting a message, only when asked for, like Slack's chat.delete.
     ...(options.remove === true ? {

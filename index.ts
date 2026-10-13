@@ -46,7 +46,7 @@
 
 import { execFile, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -1996,16 +1996,24 @@ export function apply(ctx, config) {
       return
     }
     for (const path of found) {
-      // Checked again just before the bytes leave: still a plain file with one name, still in the home.
-      // A hard link from elsewhere passes every check above, and the file may have been swapped since.
+      // Checked again just before the bytes leave — still in the home, a plain file with one name — and
+      // read from the same descriptor that was checked, opened without following a link. A hard link from
+      // elsewhere passes every check above, and a transport reading the path again could be handed a link
+      // swapped in after the check.
+      let bytes: Buffer
       try {
-        const stat = lstatSync(path)
-        if (!stat.isFile() || stat.nlink !== 1 || !realpathSync(path).startsWith(realHome + sep)) {
-          log(`documents: ${basename(path)} not uploaded — not a plain file of this home`)
-          continue
-        }
-      } catch { continue }
-      const ok = await transport.uploadFile(target, path).catch(() => false)
+        if (!realpathSync(path).startsWith(realHome + sep)) throw new Error('outside the home')
+        const fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
+        try {
+          const stat = fstatSync(fd)
+          if (!stat.isFile() || stat.nlink !== 1 || stat.size > MAX_UPLOAD_BYTES) throw new Error('not a plain file with one name')
+          bytes = readFileSync(fd)
+        } finally { closeSync(fd) }
+      } catch (e) {
+        log(`documents: ${basename(path)} not uploaded — ${String((e as Error)?.message ?? e)}`)
+        continue
+      }
+      const ok = await transport.uploadFile(target, path, undefined, bytes).catch(() => false)
       log(`documents: ${ok ? 'uploaded' : 'upload failed for'} ${basename(path)} to ${key}`)
     }
   }

@@ -225,6 +225,24 @@ function transportFor(api) {
   api4.restore()
 }
 
+// 6d. Upload bytes the caller already read are sent as they are; the path is only the file's name.
+{
+  const api = stubSlack()
+  const t = transportFor(api)
+  await t.authenticate()
+  const realFetch = globalThis.fetch
+  let sent = null
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).startsWith('https://upload.example/')) { sent = Buffer.from(init.body).toString('utf8'); return { ok: true, status: 200 } }
+    return realFetch(url, init)
+  }
+  const ok = await t.uploadFile({ channel: 'C1', threadTs: 't1' }, '/nonexistent/dir/report.docx', undefined, Buffer.from('handed over'))
+  globalThis.fetch = realFetch
+  api.restore()
+  check('given bytes are uploaded without reading the path', ok === true && sent === 'handed over', JSON.stringify(sent))
+  check('under the file\'s own name', api.calls.find((c) => c.method === 'files.getUploadURLExternal')?.body?.filename === 'report.docx')
+}
+
 // 7. A transport built without a chunk size still sends the text.
 // Found live: the QA harness passed a partial config, chunkChars was undefined, the slice
 // went to NaN, and every reply was an empty body — which Slack answers with `no_text`. The

@@ -105,8 +105,11 @@ export interface Transport {
   /** A link to a conversation, when the platform can build one. */
   permalinkFor?(target: Target, label?: string): string | null
 
-  /** Upload a local file into the conversation, when the platform supports it. */
-  uploadFile?(target: Target, filePath: string, title?: string): Promise<boolean>
+  /**
+   * Upload a file into the conversation, when the platform supports it. `bytes`, when given, are what
+   * is sent — the caller read them from the file it checked — and `filePath` only names the file.
+   */
+  uploadFile?(target: Target, filePath: string, title?: string, bytes?: Uint8Array): Promise<boolean>
 
   /**
    * The platform's own working indicator, shown while a turn runs: Discord's and Telegram's "typing…",
