@@ -803,8 +803,11 @@ export function apply(ctx, config) {
    * message's place. Cleared when the conversation has nothing running and nothing waiting. Written at
    * once, not on the debounced save: a process that dies within half a second would lose it.
    */
+  /** Turns lost in the last restart whose notice is not out yet: a new turn there replaces the record. */
+  const lostInRestart = new Set<string>()
   function recordInflight(key: string, target: Origin): void {
-    if (state.inflight?.[key] !== undefined) return
+    if (state.inflight?.[key] !== undefined && !lostInRestart.has(key)) return
+    lostInRestart.delete(key)
     state.inflight = { ...(state.inflight ?? {}), [key]: { channel: target.channel, threadTs: target.threadTs, since: Date.now() } }
     saveStateNow()
   }
@@ -814,20 +817,24 @@ export function apply(ctx, config) {
     saveStateNow()
   }
   async function recoverInflight(): Promise<void> {
-    // Taken and cleared at once, before the first await: a message arriving while the notices go out is
-    // a new turn, and must find no old record that stops it writing its own.
+    // Taken before the first await, and each record kept until its own notice is out, so a restart during
+    // the notices loses none. A message arriving meanwhile is a new turn: its record replaces the lost one
+    // (recordInflight), and is left alone here.
     const lost = Object.entries(state.inflight ?? {}) as Array<[string, { channel: string; threadTs: string | null; placeholder?: string; since?: number }]>
-    if (lost.length === 0) return
-    state.inflight = {}
-    saveStateNow()
+    for (const [key] of lost) lostInRestart.add(key)
+    const forget = (key: string, record: { since?: number }) => {
+      lostInRestart.delete(key)
+      if (state.inflight?.[key] !== undefined && state.inflight[key].since === record.since) { delete state.inflight[key]; saveStateNow() }
+    }
     for (const [key, record] of lost) {
-      if (Date.now() - Number(record.since ?? 0) > 24 * 3600_000) { log(`inflight ${key}: older than a day, dropped without a notice`); continue }
+      if (Date.now() - Number(record.since ?? 0) > 24 * 3600_000) { log(`inflight ${key}: older than a day, dropped without a notice`); forget(key, record); continue }
       const target = { channel: record.channel, threadTs: record.threadTs }
       // The platform's status may still say "작업 중" from the process that died: raise and lower it.
       try { transport.startTyping?.(target, () => {})?.() } catch { /* best effort */ }
       await replyInPlaceOf(target, '재시작하느라 하던 작업이 끊겼어. 다시 말해줄래?', record.placeholder ?? null)
         .catch((e) => log(`inflight ${key}: notice failed: ${String((e as Error)?.message ?? e)}`))
       log(`inflight ${key}: told the conversation its turn was lost in a restart`)
+      forget(key, record)
     }
   }
 

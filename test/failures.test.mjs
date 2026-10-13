@@ -297,6 +297,20 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   check('and both lost turns were still reported', t.transport.posted.filter((p) => /끊겼어/.test(p.text)).length === 2)
   t.done()
 }
+// A record stays until its own notice is out: cleared all at once before the first notice, a restart
+// during the notices lost every one not yet sent. (Found by the verification pass.)
+{
+  const since = Date.now() - 5000
+  const t = boot({ config: { fake: { postDelayMs: 400 } }, state: { inflight: {
+    'C_ALLOWED:t0': { channel: 'C_ALLOWED', threadTs: 't0', placeholder: 'ts-a', since },
+    'C_ALLOWED:t1': { channel: 'C_ALLOWED', threadTs: 't1', placeholder: 'ts-b', since },
+  } } })
+  await sleep(200)
+  check('a record not yet notified is still on disk', t.read().inflight?.['C_ALLOWED:t1'] !== undefined, JSON.stringify(t.read().inflight))
+  await sleep(1200)
+  check('and gone once its notice is out', Object.keys(t.read().inflight ?? {}).length === 0, JSON.stringify(t.read().inflight))
+  t.done()
+}
 
 // 4. Stopping a turn that is open actually stops it, and says so.
 {
