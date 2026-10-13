@@ -281,6 +281,26 @@ function message(overrides = {}) {
   check('a refused typing call is logged once and not repeated', lines.length === 1, `${lines.length} line(s)`)
 }
 
+// 10. Uploads: a document the turn made reaches the channel as an attachment, as on Slack.
+{
+  const api = fakeDiscord()
+  const requests = []
+  const fetchImpl = async (url, init = {}) => {
+    if (init.body instanceof FormData) {
+      const file = init.body.get('files[0]')
+      requests.push({ path: String(url).replace('https://discord.com/api/v10', ''), name: file?.name, bytes: file ? Buffer.from(await file.arrayBuffer()).toString('utf8') : null, auth: init.headers?.Authorization })
+      return { ok: true, status: 200, json: async () => ({ id: 'm-up', channel_id: 'C1' }), text: async () => '' }
+    }
+    return api.fetchImpl(url, init)
+  }
+  const t = transportFor({ ...api, fetchImpl }, mkdtempSync(join(tmpdir(), 'dc-')))
+  await t.identity()
+  const ok = await t.uploadFile({ channel: 'C1', threadTs: null }, '/somewhere/report.docx', undefined, Buffer.from('docx bytes'))
+  check('a document is uploaded to the channel', ok === true && requests[0]?.path === '/channels/C1/messages', JSON.stringify(requests[0]))
+  check('as a file with its own name and the bytes given', requests[0]?.name === 'report.docx' && requests[0]?.bytes === 'docx bytes')
+  check('authenticated as the bot', requests[0]?.auth === 'Bot discord-token')
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

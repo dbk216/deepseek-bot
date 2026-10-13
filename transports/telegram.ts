@@ -15,6 +15,8 @@
  *   seen and serves the delta from that. Anything said before the process started
  *   is genuinely unavailable, and saying so is better than pretending.
  */
+import { readFileSync } from 'node:fs'
+import { basename } from 'node:path'
 import { writeAttachments, type AttachmentSource } from './attachments.js'
 import type { AttachmentManifest, AttachmentRef, InboundMessage, PostedMessage, Target, Transport } from '../types/transport.js'
 
@@ -123,6 +125,30 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
     send()
     timer = setInterval(send, intervalMs)
     return stop
+  }
+
+  /**
+   * Send a file with sendDocument, as a reply in the conversation when there is one. `bytes`, when
+   * given, are what the caller read from the file it checked; the path then only names it.
+   */
+  async function uploadFile(target: Target, filePath: string, title?: string, bytes?: Uint8Array): Promise<boolean> {
+    try {
+      const name = basename(filePath)
+      const data = bytes !== undefined ? Buffer.from(bytes) : readFileSync(filePath)
+      const form = new FormData()
+      form.append('chat_id', target.channel)
+      if (target.threadTs !== null) form.append('reply_to_message_id', target.threadTs)
+      if (title) form.append('caption', title.slice(0, 1024))
+      form.append('document', new Blob([data]), name)
+      const res = await doFetch(`${API_BASE}/bot${requireToken()}/sendDocument`, { method: 'POST', body: form })
+      const payload = await res.json() as { ok: boolean; description?: string }
+      if (payload.ok !== true) { log(`telegram upload failed: ${payload.description ?? res.status}`); return false }
+      log(`uploaded ${name} (${data.length} bytes) to ${target.channel}`)
+      return true
+    } catch (e) {
+      log(`telegram upload failed: ${String((e as Error)?.message ?? e)}`)
+      return false
+    }
   }
 
   async function identity() {
@@ -259,6 +285,7 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
     supportsButtons: false,
     hasSocket,
     startTyping,
+    uploadFile,
 
     async connect(handlers: { onMessage: (message: InboundMessage) => void }) {
       onMessage = handlers.onMessage

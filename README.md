@@ -72,7 +72,7 @@ Optional environment for the installer: `DEEPBOT_DIR`, `DEEPBOT_HOME`, `DEEPBOT_
 | `허용` / `거부`, or the buttons (Slack, Discord) | answers its request to run something destructive |
 | "지난번에 … 어떻게 하기로 했지?" | recalls past threads **in this channel** and says what they imply |
 | "…가 바뀌면 알려줘" | sets up a watch: a command it runs on a schedule, in a read-only sandbox |
-| "보고서 docx로 만들어줘" | writes the document and uploads it to the thread (Slack) |
+| "보고서 docx로 만들어줘" | writes the document and uploads it to the conversation |
 
 While it works, the platform's own indicator shows — Slack's "앱이 작업 중" under the thread,
 Discord's and Telegram's "typing…" — so the answer is the only notification.
@@ -110,7 +110,7 @@ Each line is traceable to code and to something that checks it.
 | Asks the user to **approve** a destructive command, in the conversation — with buttons on Slack and Discord | `index.ts`, `transports/slack.ts`, `transports/discord.ts` | approval checks in `test/core.test.mjs`; `approval-gate.json` records one open gap |
 | Confines **reads**, for commands and for the file tools — other agents' homes, credentials, the session store, the gateway's logs, the ssh-agent | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.mjs` 27/27; `test/edges.test.mjs` 19/19 |
 | Flags **instruction-like text** in fetched material | `injection.ts` | `test/injection.test.mjs` 31/31 |
-| **Uploads the documents a turn made** (pdf, docx, xlsx, pptx, csv changed during the turn, whose path the answer names, with one link and inside the home; Slack only, needs `files:write`) | `index.ts`, `transports/slack.ts` | `test/core.test.mjs` 141/141; `test/slack.test.mjs` |
+| **Uploads the documents a turn made** (pdf, docx, xlsx, pptx, csv changed during the turn, whose path the answer names, with one link and inside the home; on Slack it needs `files:write`) | `index.ts`, `transports/*.ts` | `test/core.test.mjs` 141/141; `test/slack.test.mjs` |
 | Runs **one turn at a time per conversation**; a later message waits, and a stop withdraws what is waiting | `index.ts` | `test/failures.test.mjs` 25/25 |
 | Shows it is **working at once** with the platform's own indicator (Slack's thread status, typing elsewhere), or a progress message where that is refused | `progress.ts`, `index.ts` | `test/progress.test.mjs` 22/22; `test/core.test.mjs` |
 | **Stops** a running turn on request, and on its own timeout | `index.ts` | `test/scenarios/interrupt.json` |

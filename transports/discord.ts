@@ -15,6 +15,8 @@
  *   Slack, because a bot that stops receiving silently is the failure this
  *   repository has already had once.
  */
+import { readFileSync } from 'node:fs'
+import { basename } from 'node:path'
 import { writeAttachments, type AttachmentSource } from './attachments.js'
 import type { ActionButton, ActionEvent, AttachmentRef, InboundMessage, PostedMessage, Target, Transport } from '../types/transport.js'
 
@@ -140,6 +142,29 @@ export function createDiscordTransport(host: DiscordHost): DiscordTransport {
     send()
     timer = setInterval(send, intervalMs)
     return stop
+  }
+
+  /**
+   * Attach a file to the channel: a message with one attachment, sent as multipart. `bytes`, when
+   * given, are what the caller read from the file it checked; the path then only names it.
+   */
+  async function uploadFile(target: Target, filePath: string, title?: string, bytes?: Uint8Array): Promise<boolean> {
+    try {
+      const name = basename(filePath)
+      const data = bytes !== undefined ? Buffer.from(bytes) : readFileSync(filePath)
+      const form = new FormData()
+      form.append('payload_json', JSON.stringify({ attachments: [{ id: 0, filename: name, ...(title ? { description: title.slice(0, 1024) } : {}) }] }))
+      form.append('files[0]', new Blob([data]), name)
+      const res = await doFetch(`${API_BASE}/channels/${target.channel}/messages`, {
+        method: 'POST', headers: { Authorization: `Bot ${requireToken()}` }, body: form,
+      })
+      if (!res.ok) { log(`discord upload failed: HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`); return false }
+      log(`uploaded ${name} (${data.length} bytes) to ${target.channel}`)
+      return true
+    } catch (e) {
+      log(`discord upload failed: ${String((e as Error)?.message ?? e)}`)
+      return false
+    }
   }
 
   async function identity() {
@@ -328,6 +353,7 @@ export function createDiscordTransport(host: DiscordHost): DiscordTransport {
     ready,
     hasSocket,
     startTyping,
+    uploadFile,
     supportsButtons: true,
 
     async connect({ onMessage: handler, onAction: actionHandler }: {

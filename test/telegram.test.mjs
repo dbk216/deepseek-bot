@@ -245,6 +245,27 @@ function groupMessage(overrides = {}) {
   check('it stops when the turn is over', actions().length === sent, `${sent} → ${actions().length}`)
 }
 
+// 13. Uploads: a document the turn made reaches the chat with sendDocument, as a reply where the
+// conversation is one.
+{
+  const api = fakeApi()
+  const requests = []
+  const fetchImpl = async (url, init = {}) => {
+    if (init?.body instanceof FormData) {
+      const file = init.body.get('document')
+      requests.push({ method: String(url).split('/').pop(), chat: init.body.get('chat_id'), reply: init.body.get('reply_to_message_id'), name: file?.name, bytes: file ? Buffer.from(await file.arrayBuffer()).toString('utf8') : null })
+      return { ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: 500 } }) }
+    }
+    return api.fetchImpl(url, init)
+  }
+  const t = transportFor({ ...api, fetchImpl }, mkdtempSync(join(tmpdir(), 'tg-')))
+  await t.identity()
+  const ok = await t.uploadFile({ channel: '7', threadTs: '10' }, '/somewhere/report.pdf', undefined, Buffer.from('pdf bytes'))
+  check('a document is sent with sendDocument', ok === true && requests[0]?.method === 'sendDocument' && requests[0]?.chat === '7', JSON.stringify(requests[0]))
+  check('as a reply in the conversation', requests[0]?.reply === '10')
+  check('with its own name and the bytes given', requests[0]?.name === 'report.pdf' && requests[0]?.bytes === 'pdf bytes')
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)
