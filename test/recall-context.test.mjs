@@ -120,6 +120,11 @@ check('an untriggered block is empty', ctx.block('이거 요약해줘') === '')
   const path = recallIndexPath('/Users/someone/dsh-agent', '/Users/someone/.dsh')
   check('the index path is under the harness home, not the agent home', path.startsWith('/Users/someone/.dsh/recall/') && !path.startsWith('/Users/someone/dsh-agent'), path)
   check('and two homes get two indexes', recallIndexPath('/a/home-1', '/d') !== recallIndexPath('/a/home-2', '/d'))
+  // Even homes whose names read alike once flattened: /a/b-c and /a/b/c both became "a-b-c", and so did
+  // "dsh agent" and "dsh-agent" — one index for two homes, each recalling the other's conversations.
+  check('homes that flatten alike still get two indexes', recallIndexPath('/a/b-c', '/d') !== recallIndexPath('/a/b/c', '/d')
+    && recallIndexPath('/h/dsh agent', '/d') !== recallIndexPath('/h/dsh-agent', '/d'), recallIndexPath('/a/b-c', '/d'))
+  check('and the same home always gets the same one', recallIndexPath('/a/b-c', '/d') === recallIndexPath('/a/b-c/', '/d'))
 }
 
 rmSync(dir, { recursive: true, force: true })

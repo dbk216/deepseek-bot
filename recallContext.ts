@@ -14,6 +14,7 @@
  * *dynamic* part of the prompt and never into the standing block, whose digest gates it for prompt
  * cache safety — a per-turn block there would invalidate the cache on every turn.
  */
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -25,7 +26,10 @@ import { join, resolve } from 'node:path'
  * The sandbox runner and the tools' read scope both deny this directory.
  */
 export function recallIndexPath(home: string, dshHome: string = process.env.DSH_HOME ?? join(homedir(), '.dsh')): string {
-  const id = resolve(home).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+  const full = resolve(home)
+  // The flattened path is for a person reading the directory; the hash keeps apart homes that flatten
+  // alike (/a/b-c and /a/b/c, "dsh agent" and "dsh-agent"), which shared one index.
+  const id = `${full.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')}-${createHash('sha256').update(full).digest('hex').slice(0, 8)}`
   return join(dshHome, 'recall', id, 'recall-index.jsonl')
 }
 
