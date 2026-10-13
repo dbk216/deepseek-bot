@@ -40,6 +40,8 @@ export interface RecallOptions {
    * or absent means no restriction: a turn with no conversation, such as a scenario.
    */
   channel?: string | null
+  /** The channel of a session the adapter still maps, for a row the indexer could not place. */
+  sessionChannel?: (sessionId: string) => string | null
   now?: () => number
 }
 
@@ -100,7 +102,8 @@ export function createRecallContext(options: RecallOptions) {
         if (query.length === 0) return ''
         const channel = options.channel ?? null
         const ranked = load()
-          .filter((row) => channel === null || row.channel === channel)
+          .filter((row) => channel === null
+            || (row.channel ?? (row.sessionId !== undefined ? options.sessionChannel?.(row.sessionId) : null) ?? null) === channel)
           .map((row) => {
             const text = String(row.text).toLowerCase()
             return { row, score: query.reduce((n, w) => n + (text.includes(w) ? 1 : 0), 0) }

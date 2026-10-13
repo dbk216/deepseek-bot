@@ -76,6 +76,11 @@ check('an untriggered block is empty', ctx.block('이거 요약해줘') === '')
   check('nor one whose channel is unknown', !inPublic.includes('unknown-5c2'))
   const inDm = createRecallContext({ indexPath: scoped, channel: 'D_PRIVATE' }).block('지난번 배포 롤백 어떻게 했지')
   check('the DM sees its own and not the channel\'s', inDm.includes('private-3f9') && !inDm.includes('public-7a1'))
+  // A row the indexer could not place, from a session the adapter still maps to a conversation:
+  // the mapping supplies the channel.
+  const mapped = createRecallContext({ indexPath: scoped, channel: 'C_PUBLIC', sessionChannel: (id) => (id === 'u' ? 'C_PUBLIC' : null) })
+    .block('지난번 배포 롤백 어떻게 했지')
+  check('a mapped session supplies a missing channel', mapped.includes('unknown-5c2') && !mapped.includes('private-3f9'))
   const anywhere = createRecallContext({ indexPath: scoped }).block('지난번 배포 롤백 어떻게 했지')
   check('without a channel nothing is filtered', ['public-7a1', 'private-3f9', 'unknown-5c2'].every((m) => anywhere.includes(m)))
 }

@@ -736,14 +736,19 @@ for (const remove of [false, true]) {
   writeFileSync(join(home, 'memory', 'recall-index.jsonl'), [
     { ts: 1, role: 'user', sessionId: 'a', channel: 'C_ALLOWED', text: '지난번 배포 롤백 same-channel-4e1' },
     { ts: 2, role: 'user', sessionId: 'b', channel: 'D_SECRET', text: '지난번 배포 롤백 dm-secret-8b6' },
+    // No channel in the row: one session the adapter maps to this channel, one it does not know.
+    { ts: 3, role: 'user', sessionId: 's-mapped', text: '지난번 배포 롤백 mapped-9d3' },
+    { ts: 4, role: 'user', sessionId: 's-unknown', text: '지난번 배포 롤백 unknown-1f7' },
   ].map((r) => JSON.stringify(r)).join('\n'))
-  const t = boot({ agent: 'ready', home })
+  const t = boot({ agent: 'ready', home, state: { sessions: { 'C_ALLOWED:t9': 's-mapped', 'D_SECRET:t2': 's-other' } } })
   await sleep(80)
   t.transport.deliver(t.transport.message({ text: '지난번 배포 롤백 어떻게 했지' }))
   await sleep(400)
   const sent = t.followups.map(textOf).join('\n')
   check('recall shows a passage from this channel', sent.includes('same-channel-4e1'), sent.slice(0, 80) || '(no followup)')
   check('and not one from a DM', !sent.includes('dm-secret-8b6'))
+  check('a row from a session mapped to this channel counts as this channel', sent.includes('mapped-9d3'))
+  check('a row nobody can place is left out', !sent.includes('unknown-1f7'))
   rmSync(home, { recursive: true, force: true })
   t.done()
 }

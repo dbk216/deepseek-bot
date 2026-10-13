@@ -652,6 +652,12 @@ export function apply(ctx, config) {
         topN: cfg.recallTopN, maxChars: cfg.recallMaxChars, triggerWords: cfg.recallTriggerWords,
         // This conversation's channel only: a DM's words must not surface in a channel's answer.
         channel: origin?.channel ?? null,
+        // A row the indexer could not place keeps a channel if this adapter still maps its session:
+        // the key is "<channel>" or "<channel>:<thread>".
+        sessionChannel: (id) => {
+          const key = Object.keys(state.sessions ?? {}).find((k) => state.sessions[k] === id)
+          return key === undefined ? null : key.split(':')[0]
+        },
       })
       const past = recallContext.block(prompt)
       if (past !== '') {
