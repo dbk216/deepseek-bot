@@ -46,7 +46,7 @@
 
 import { execFile, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFileSync, closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -1256,13 +1256,32 @@ export function apply(ctx, config) {
    * deployment's own credentials, and the gateway runs in the agent's home: a .env the agent wrote
    * there would replace the tokens at the next start. Commands are held off by the sandbox runner.
    */
+  /** Where a write to `path` lands: links followed, dangling ones too, and the directory's real path. */
+  function landsOn(path: string): string {
+    let current = path
+    for (let hop = 0; hop < 16; hop++) {
+      try {
+        if (!lstatSync(current).isSymbolicLink()) break
+        current = resolve(dirname(current), readlinkSync(current))
+      } catch { break }
+    }
+    try { return join(realpathSync(dirname(current)), basename(current)) } catch { return current }
+  }
+
   function envFileDecision(exec): { kind: string; reason: string } | null {
     const name = exec?.name ?? exec?.toolName
     if (name !== 'write' && name !== 'edit') return null
     const target = exec?.arguments?.file_path
     if (typeof target !== 'string' || target === '' || resolvedCwd.value === null) return null
-    const path = resolve(resolvedCwd.value, target)
-    if (dirname(path) !== resolve(resolvedCwd.value) || !/^\.env(\..*)?$/.test(basename(path))) return null
+    const home = resolve(resolvedCwd.value)
+    const path = resolve(home, target)
+    // By name in any case — the volume is usually case-insensitive, so .ENV is .env — and by the file the
+    // write would land on: a link, or a linked directory, named something else lands on .env all the
+    // same, even when .env does not exist yet and the write would create it.
+    const isEnv = (file: string, dir: string) => dirname(file) === dir && /^\.env(\..*)?$/i.test(basename(file))
+    let realHome = home
+    try { realHome = realpathSync(home) } catch { /* a home that does not resolve is compared as written */ }
+    if (!isEnv(path, home) && !isEnv(landsOn(path), realHome)) return null
     log(`write to the home's .env denied: ${name} ${path}`)
     return { kind: 'deny', reason: 'the .env in this directory is read as credentials, so it cannot be written. Ask the user to change credentials themselves.' }
   }

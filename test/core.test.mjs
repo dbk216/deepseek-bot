@@ -386,6 +386,17 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   check('so is edit of a .env variant', t.gate(exec('edit', { file_path: join(home, '.env.local'), old_string: 'a', new_string: 'b' }))?.kind === 'deny')
   check('a relative path is resolved against the home', t.gate(exec('write', { file_path: '.env', content: 'X=1' }))?.kind === 'deny')
   check('an ordinary file is not', t.gate(exec('write', { file_path: join(home, 'notes.md'), content: 'hi' })) === 'delegated')
+  // The name, in any case, and the file a write would land on. The volume is usually case-insensitive,
+  // so .ENV is .env; a link, or a linked directory, named something else lands on it all the same — even
+  // a link whose .env does not exist yet, which the write would create.
+  check('.ENV is the same file', t.gate(exec('write', { file_path: join(home, '.ENV'), content: 'X=1' }))?.kind === 'deny')
+  symlinkSync('.env', join(home, 'notes.txt'))
+  check('a link to .env is refused, though .env does not exist yet', t.gate(exec('write', { file_path: join(home, 'notes.txt'), content: 'X=1' }))?.kind === 'deny')
+  symlinkSync(home, join(home, 'sub'))
+  check('so is .env through a linked directory', t.gate(exec('edit', { file_path: join(home, 'sub', '.env'), old_string: 'a', new_string: 'b' }))?.kind === 'deny')
+  writeFileSync(join(home, 'plain.md'), 'x')
+  symlinkSync('plain.md', join(home, 'alias.md'))
+  check('a link to an ordinary file is not', t.gate(exec('write', { file_path: join(home, 'alias.md'), content: 'hi' })) === 'delegated')
   rmSync(home, { recursive: true, force: true })
   t.done()
 }
