@@ -75,6 +75,9 @@ for (const resolved of [false, true]) {
   // The gateway's own log: its first lines carry the web UI's auth token, which opens the harness's
   // HTTP API — outside this sandbox — to whoever reads it.
   mkdirSync(join(fakeHome, '.dsh', 'service', 'logs'), { recursive: true })
+  // Every profile's session logs, the agent's own and everybody else's.
+  mkdirSync(join(fakeHome, '.dsh', 'sessions', 'bucket', 's1'), { recursive: true })
+  writeFileSync(join(fakeHome, '.dsh', 'sessions', 'bucket', 's1', 'session.v4.jsonl.zstd'), 'canary-session-a41\n')
   writeFileSync(join(fakeHome, '.dsh', 'service', 'logs', 'gateway.out.log'), 'token=canary-ui-6d2\n')
   const env = { ...process.env, HOME: fakeHome }
   const text = execFileSync(RUNNER, ['--print-profile', ...READ_ONLY, '--', 'true'], { encoding: 'utf8', env })
@@ -89,6 +92,7 @@ for (const resolved of [false, true]) {
   check('nor .credentials.yaml' + as, !read('.credentials.yaml').includes('canary-cred-9b7'))
   check('nor a backup of it' + as, !read('.credentials.yaml.bak-20261008').includes('canary-bak-3c4'))
   check('nor the gateway\'s log, which carries the web UI token' + as, !read(join('service', 'logs', 'gateway.out.log')).includes('canary-ui-6d2'))
+  check('nor the session store' + as, !read(join('sessions', 'bucket', 's1', 'session.v4.jsonl.zstd')).includes('canary-session-a41'))
   check('the rest of ~/.dsh stays readable' + as, read('other.txt').includes('readable-2e8'), read('other.txt').slice(0, 40))
   rmSync(made, { recursive: true, force: true })
 }
@@ -102,6 +106,21 @@ for (const resolved of [false, true]) {
   const listed = execFileSync(RUNNER, [...READ_ONLY, '--', '/bin/ls', '-a', tmp], { encoding: 'utf8', env: { ...process.env, TMPDIR: tmp } })
   check('no profile file exists while a command runs', !/deepbot-confine/.test(listed), listed.replace(/\n/g, ' ').trim())
   rmSync(tmp, { recursive: true, force: true })
+}
+
+// The user's ssh-agent. launchd hands its socket to the gateway, and a confined command could use
+// every key in it — measured on this machine: `ssh-add -l` inside the runner listed the keys. Only
+// checked where an agent with keys is reachable from outside the runner.
+{
+  const profileText = profile([...READ_ONLY, '--', 'true'])
+  check('the profile refuses launchd\'s agent sockets', /deny network-outbound \(remote unix-socket \(path-regex/.test(profileText))
+  let outside = false
+  try { execFileSync('/usr/bin/ssh-add', ['-l'], { stdio: 'pipe' }); outside = true } catch { /* no agent, or no keys */ }
+  if (outside) {
+    let inside = true
+    try { execFileSync(RUNNER, [...READ_ONLY, '--', '/usr/bin/ssh-add', '-l'], { stdio: 'pipe' }) } catch { inside = false }
+    check('a command inside the runner cannot reach the ssh-agent', !inside)
+  }
 }
 
 const failed = results.filter((r) => !r.ok)

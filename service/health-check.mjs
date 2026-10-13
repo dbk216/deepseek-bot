@@ -33,9 +33,14 @@ const args = process.argv.slice(2)
 // else empties them. Only on a scheduled run — a manual --status read should not rewrite logs.
 if (!args.includes('--status') && !args.includes('--no-rotate')) {
   const script = new URL('./rotate-logs.sh', import.meta.url).pathname
-  const out = spawnSync(script, [], { encoding: 'utf8' })
-  for (const line of `${out.stdout ?? ''}`.split('\n')) if (line.trim() !== '') console.log(line)
-  if (out.status !== 0) console.error(`rotate-logs exited ${out.status}: ${out.stderr ?? ''}`.trim())
+  // The plugin's log, and the service logs that moved out of the agent's home — the gateway's own
+  // stdout grows with every start and nothing else empties it.
+  for (const dir of [null, join(homedir(), '.dsh', 'service', 'logs')]) {
+    if (dir !== null && !existsSync(dir)) continue
+    const out = spawnSync(script, dir === null ? [] : ['--dir', dir], { encoding: 'utf8' })
+    for (const line of `${out.stdout ?? ''}`.split('\n')) if (line.trim() !== '') console.log(line)
+    if (out.status !== 0) console.error(`rotate-logs exited ${out.status}: ${out.stderr ?? ''}`.trim())
+  }
 }
 const statusOnly = args.includes('--status')
 const dryRun = args.includes('--dry-run')

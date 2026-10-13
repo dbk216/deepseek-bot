@@ -97,14 +97,20 @@ profile() {
   # The gateway's logs: their first lines carry the web UI's auth token, and that opens the
   # harness's HTTP API — outside this sandbox — to whoever reads it. install-service.sh writes them
   # here, outside the agent's home, where they used to be readable and writable by the agent.
-  logs="$HOME/.dsh/service/logs"
-  if [ -d "$logs" ]; then
-    printf '(deny file-read* (subpath %s))\n' "$(sbpl "$logs")"
-    resolved="$(cd "$logs" && pwd -P)"
-    if [ "$resolved" != "$logs" ]; then
+  # The session store: every profile's conversations, this agent's and everybody else's. The agent
+  # reads its own past through the recall index in its home, never through these files.
+  for denied in "$HOME/.dsh/service/logs" "$HOME/.dsh/sessions"; do
+    [ -d "$denied" ] || continue
+    printf '(deny file-read* (subpath %s))\n' "$(sbpl "$denied")"
+    resolved="$(cd "$denied" && pwd -P)"
+    if [ "$resolved" != "$denied" ]; then
       printf '(deny file-read* (subpath %s))\n' "$(sbpl "$resolved")"
     fi
-  fi
+  done
+  # The user's ssh-agent: launchd's per-user socket. With it a command could use every key the user
+  # has loaded — measured: `ssh-add -l` inside this runner listed them. Unsetting SSH_AUTH_SOCK alone
+  # would not do, since the socket's path can be found.
+  echo '(deny network-outbound (remote unix-socket (path-regex #"^(/private)?/(var/run|tmp)/com\.apple\.launchd\.[^/]+/Listeners$")))'
 }
 
 sbpl() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }

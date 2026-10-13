@@ -49,6 +49,10 @@ mkdir -p "$RUNTIME_DIR" "$HOME/.dsh/slack-state"
 cp "$DIR/health-check.mjs" "$RUNTIME_DIR/health-check.mjs"
 chmod +x "$RUNTIME_DIR/health-check.mjs"
 echo "✅ runtime copy: $RUNTIME_DIR/health-check.mjs"
+# The probe rotates logs with this, from its own directory; without the copy it never did.
+cp "$DIR/rotate-logs.sh" "$RUNTIME_DIR/rotate-logs.sh"
+chmod +x "$RUNTIME_DIR/rotate-logs.sh"
+echo "✅ runtime copy: $RUNTIME_DIR/rotate-logs.sh"
 
 cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>

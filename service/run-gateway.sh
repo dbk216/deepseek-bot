@@ -22,6 +22,9 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 export DIR
 
 unset DSH_PROFILE DSH_PROFILE_DIR DSH_SESSION_ID DSH_WEB_URL DSH_SHELL
+# The user's ssh-agent is not the agent's. The runner also refuses the socket itself, since its path
+# can be found without this variable.
+unset SSH_AUTH_SOCK
 
 DSH_BIN="${DSH_BIN:-/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh}"
 PROFILE="${DEEPBOT_PROFILE:-agent}"
@@ -54,11 +57,15 @@ if [ -n "$REPO" ] && [ -f "$REPO/tsconfig.json" ]; then
       [ -f "$ENTRY" ] || { echo "[gateway] nothing to load; refusing to start. Run: pnpm install && pnpm run build" >&2; exit 1; }
     else
       echo "[gateway] building TypeScript (dist missing or older than the sources)"
-      if "$NODE_BIN" "$TSC" -p "$REPO/tsconfig.json" > "$AGENT_HOME/state/build.log" 2>&1; then
+      # Not in the agent's home: this runs unconfined, and a link the agent left at that name would be
+      # followed by the redirect.
+      BUILD_LOG="$HOME/.dsh/service/logs/build.log"
+      mkdir -p "$(dirname "$BUILD_LOG")"
+      if "$NODE_BIN" "$TSC" -p "$REPO/tsconfig.json" > "$BUILD_LOG" 2>&1; then
         echo "[gateway] build ok"
       else
-        echo "[gateway] BUILD FAILED — see $AGENT_HOME/state/build.log" >&2
-        tail -5 "$AGENT_HOME/state/build.log" >&2 || true
+        echo "[gateway] BUILD FAILED — see $BUILD_LOG" >&2
+        tail -5 "$BUILD_LOG" >&2 || true
         [ -f "$ENTRY" ] || { echo "[gateway] no dist to fall back to; refusing to start" >&2; exit 1; }
         echo "[gateway] starting with the existing dist anyway" >&2
       fi

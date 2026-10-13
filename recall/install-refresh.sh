@@ -79,15 +79,15 @@ cat > "$PLIST" <<PLIST_EOF
   </dict>
   <key>StartInterval</key><integer>$((REFRESH_MIN * 60))</integer>
   <key>RunAtLoad</key><false/>
-  <key>StandardOutPath</key><string>$AGENT_HOME/state/recall-index.out.log</string>
-  <key>StandardErrorPath</key><string>$AGENT_HOME/state/recall-index.err.log</string>
+  <key>StandardOutPath</key><string>$HOME/.dsh/service/logs/recall-index.out.log</string>
+  <key>StandardErrorPath</key><string>$HOME/.dsh/service/logs/recall-index.err.log</string>
 </dict>
 </plist>
 PLIST_EOF
 chmod 644 "$PLIST"
 plutil -lint "$PLIST" >/dev/null 2>&1 || { echo "❌ plist failed plutil -lint"; plutil -lint "$PLIST"; exit 1; }
 echo "✅ plist: $PLIST"
-mkdir -p "$AGENT_HOME/state"
+mkdir -p "$HOME/.dsh/service/logs"
 
 if launchctl print "gui/$UID_N/$LABEL" >/dev/null 2>&1; then
   launchctl bootout "gui/$UID_N/$LABEL" 2>/dev/null; sleep 1
