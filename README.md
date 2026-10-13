@@ -1,10 +1,18 @@
-# deepbot
+<p align="center">
+  <img src="docs/logo.svg" width="112" height="112" alt="deepbot">
+</p>
 
-**Your memory, on DeepSeek Harness** — a self-hosted AI teammate that remembers
-your threads, reads the links you send it, drafts your documents, and asks before it
-deletes anything.
+<h1 align="center">deepbot</h1>
 
-**Version 0.2.0** · [changelog](CHANGELOG.md) · runs on DeepSeek Harness `0.2.0-rc.2`
+<p align="center">
+  <strong>Your memory, on DeepSeek Harness</strong><br>
+  a self-hosted AI teammate that remembers your threads, reads the links you send it,<br>
+  drafts your documents, and asks before it deletes anything.
+</p>
+
+<p align="center">
+  <strong>Version 0.2.0</strong> · <a href="CHANGELOG.md">changelog</a> · runs on DeepSeek Harness <code>0.2.0-rc.2</code>
+</p>
 
 Every claim below is pinned by a test that runs on each change (`pnpm test`), by a scenario
 run against a real model, or by the live gateway — and where something is *not* verified it
@@ -162,6 +170,20 @@ service/install-service.sh --status
 ```
 
 ## Persona and memory
+### Changing the voice
+
+The tone is a file, not a setting. `agent/SOUL.md` holds the identity and the default register —
+the copy in this repository is 반말 by default, which is what its owner asked for — and
+`agent/AGENTS.md` holds the rules that apply on top of it. Copy both into the agent home, edit the
+register, and restart; nothing in the code needs to change.
+
+Two things are worth knowing before editing them. First, the bot's **own** messages — approvals,
+stops, progress notes — sit in the conversation and the model copies the voice around it, so a single
+polite string pulls replies toward that register no matter what the persona file says. Those strings
+live in `index.ts`, and the core suite fails if an honorific comes back. Second, the persona files are
+read on every turn, so a rule added there takes effect immediately, but a *contradictory* rule does
+not win by being newer — it wins by being specific.
+
 
 Four files in the agent home decide who the agent is and what it remembers. All
 four are read at the start of **every** turn, in this order:

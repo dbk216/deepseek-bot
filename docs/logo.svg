@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-label="deepbot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2E7BFF"/>
+      <stop offset="1" stop-color="#0B3FA8"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="0.6" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="240" height="240" rx="54" fill="url(#bg)"/>
+  <rect x="0" y="0" width="240" height="240" rx="54" fill="url(#sheen)"/>
+  <!-- a speech bubble that also reads as a memory card -->
+  <path d="M62 78c0-9.4 7.6-17 17-17h82c9.4 0 17 7.6 17 17v56c0 9.4-7.6 17-17 17h-42l-28 26v-26h-12c-9.4 0-17-7.6-17-17z"
+        fill="#ffffff" fill-opacity="0.96"/>
+  <!-- three remembered things -->
+  <circle cx="96" cy="106" r="8" fill="#1E6FFF"/>
+  <circle cx="122" cy="106" r="8" fill="#1E6FFF" fill-opacity="0.7"/>
+  <circle cx="148" cy="106" r="8" fill="#1E6FFF" fill-opacity="0.4"/>
+  <rect x="88" y="126" width="68" height="7" rx="3.5" fill="#0B3FA8" fill-opacity="0.35"/>
+</svg>
