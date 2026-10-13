@@ -44,6 +44,7 @@ jobs:
       - run: node test/persona-check.test.mjs
       - run: node test/watch.test.mjs
       - run: node test/safe-write.test.mjs
+      - run: node test/health.test.mjs
       - run: node test/secrets.test.mjs .
       # The scenario harness (test/run-scenario.mjs) boots a real profile and is
       # deliberately NOT run here: it needs a harness installation and a model

@@ -130,6 +130,27 @@ async function waitForRecovery(ms) {
   return false
 }
 
+// The daily scenario run (service/run-scenarios.sh) writes a report and nothing else, so a failure stayed
+// in the file until somebody opened it. Alert once per report that has failures; a report whose alert
+// was suppressed or failed is tried again on the next probe.
+const SCENARIO_REPORT = process.env.DEEPBOT_SCENARIO_REPORT ?? join(homedir(), '.dsh', 'slack-state', 'scenario-report.txt')
+async function checkScenarios() {
+  if (!existsSync(SCENARIO_REPORT)) return
+  const text = readFileSync(SCENARIO_REPORT, 'utf8')
+  const ran = (text.match(/^scenarios run (\S+)/m) ?? [])[1]
+  const failed = Number((text.match(/^\s*(\d+) scenario\(s\) failed/m) ?? [])[1] ?? NaN)
+  if (ran === undefined || !Number.isFinite(failed) || failed === 0) return
+  if (loadProbeState().scenarioReportAlerted === ran) return
+  const names = [...text.matchAll(/^\s*FAIL\s+(\S+)/gm)].map((m) => m[1])
+  const message = `:warning: deepbot's scenario run at ${ran}: ${failed} failed (${names.join(', ') || 'see the report'}). The report is scenario-report.txt in the plugin's state directory.`
+  const note = await alert(message)
+  console.log(`  scenarios: ${note}${dryRun ? ` — ${message}` : ''}`)
+  if (note === 'alert sent' || note.startsWith('dry-run')) {
+    const state = loadProbeState(); state.scenarioReportAlerted = ran; saveProbeState(state)
+  }
+}
+if (!statusOnly) await checkScenarios()
+
 const health = readHealth()
 const problem = diagnose(health)
 
