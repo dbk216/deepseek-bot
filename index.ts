@@ -1260,16 +1260,26 @@ export function apply(ctx, config) {
    * deployment's own credentials, and the gateway runs in the agent's home: a .env the agent wrote
    * there would replace the tokens at the next start. Commands are held off by the sandbox runner.
    */
-  /** Where a write to `path` lands: links followed, dangling ones too, and the directory's real path. */
-  function landsOn(path: string): string {
+  /**
+   * Where a write to `path` lands: links followed, dangling ones too. Each hop resolves the link's own
+   * directory first, since a relative target is read from where the link really is; and a chain longer
+   * than this follows is null — refused — rather than let through (the kernel follows 32).
+   */
+  function landsOn(path: string): string | null {
     let current = path
-    for (let hop = 0; hop < 16; hop++) {
+    for (let hop = 0; hop < 40; hop++) {
+      let dir: string
+      // A directory that does not exist is not the home, whose .env is the only one that matters.
+      try { dir = realpathSync(dirname(current)) } catch { return current }
+      current = join(dir, basename(current))
+      let link: string
       try {
-        if (!lstatSync(current).isSymbolicLink()) break
-        current = resolve(dirname(current), readlinkSync(current))
-      } catch { break }
+        if (!lstatSync(current).isSymbolicLink()) return current
+        link = readlinkSync(current)
+      } catch { return current }                    // nothing there yet: the write creates this name
+      current = resolve(dir, link)
     }
-    try { return join(realpathSync(dirname(current)), basename(current)) } catch { return current }
+    return null
   }
 
   function envFileDecision(exec): { kind: string; reason: string } | null {
@@ -1285,7 +1295,8 @@ export function apply(ctx, config) {
     const isEnv = (file: string, dir: string) => dirname(file) === dir && /^\.env(\..*)?$/i.test(basename(file))
     let realHome = home
     try { realHome = realpathSync(home) } catch { /* a home that does not resolve is compared as written */ }
-    if (!isEnv(path, home) && !isEnv(landsOn(path), realHome)) return null
+    const landed = landsOn(path)
+    if (!isEnv(path, home) && landed !== null && !isEnv(landed, realHome)) return null
     log(`write to the home's .env denied: ${name} ${path}`)
     return { kind: 'deny', reason: 'the .env in this directory is read as credentials, so it cannot be written. Ask the user to change credentials themselves.' }
   }

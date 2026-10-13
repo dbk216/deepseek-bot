@@ -397,6 +397,16 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   writeFileSync(join(home, 'plain.md'), 'x')
   symlinkSync('plain.md', join(home, 'alias.md'))
   check('a link to an ordinary file is not', t.gate(exec('write', { file_path: join(home, 'alias.md'), content: 'hi' })) === 'delegated')
+  // A link's target is relative to where the link really is, not where its name was reached from: with
+  // dl -> a/b and a/b/x -> ../../.env, dl/x lands on .env. And a chain longer than the gate follows —
+  // the kernel follows 32 — is refused rather than let through. (Found by the verification pass.)
+  mkdirSync(join(home, 'a', 'b'), { recursive: true })
+  symlinkSync(join(home, 'a', 'b'), join(home, 'dl'))
+  symlinkSync('../../.env', join(home, 'a', 'b', 'x'))
+  check('a relative link reached through a linked directory', t.gate(exec('write', { file_path: join(home, 'dl', 'x'), content: 'X=1' }))?.kind === 'deny')
+  symlinkSync('.env', join(home, 'l20'))
+  for (let i = 19; i >= 0; i--) symlinkSync(`l${i + 1}`, join(home, `l${i}`))
+  check('a chain of twenty links', t.gate(exec('write', { file_path: join(home, 'l0'), content: 'X=1' }))?.kind === 'deny')
   rmSync(home, { recursive: true, force: true })
   t.done()
 }
