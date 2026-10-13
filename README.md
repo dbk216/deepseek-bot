@@ -459,7 +459,12 @@ asserts the interrupted turn ends as `cancelled`.
   is how the agent authors its own. The first observation is a **baseline** and never alerts; a
   change alerts once; a change inside the rate-limit window is suppressed and the next alert says
   how many were suppressed. A broken watch config exits 2 rather than failing quietly.
-  `test/watch.test.mjs` 16/16.
+  A watch the **agent** wrote runs inside `service/confined-runner.sh`, **read-only** — the same
+  read confinement as the agent's own commands, with no writes at all. It used to run as
+  `/bin/sh -c` on the host, outside the sandbox and the approval gate. An agent file that reuses a
+  host watch's id is confined too, and without the runner such a watch does not run. Not closed:
+  read-only still lets a command read what the user can (outside other agent homes), and its output
+  is posted to Slack. `test/watch.test.mjs` 19/19.
 - **Health.** A process that is running but disconnected looks perfectly healthy from outside —
   that is how a 57-minute outage went unnoticed. The plugin publishes what it knows to
   `<stateDir>/health.json`, and `service/health-check.mjs` diagnoses it (no file, not connected, or

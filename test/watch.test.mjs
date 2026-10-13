@@ -16,7 +16,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -131,7 +131,39 @@ let agentOut2 = ''
 try {
   agentOut2 = execFileSync(process.execPath, [WATCH, '--config', emptyConfig, '--state', join(dir, 'agent-state.json'), '--dry-run', '--force'], { encoding: 'utf8' })
 } catch (e) { agentOut2 = String(e?.stdout ?? '') }
-check('and its change alerts to its own channel', /DRY-RUN alert to C_AGENT/.test(agentOut2), agentOut2.split('\n').find((l) => l.includes('DRY-RUN'))?.slice(0, 80) ?? '')
+// Reading works inside the sandbox, so on macOS the agent's watch still observes and alerts. Elsewhere
+// there is no Seatbelt, the runner refuses, and an agent watch does not run at all (see 9).
+if (process.platform === 'darwin') {
+  check('and its change alerts to its own channel', /DRY-RUN alert to C_AGENT/.test(agentOut2), agentOut2.split('\n').find((l) => l.includes('DRY-RUN'))?.slice(0, 80) ?? '')
+}
+
+// 9) An agent-written watch runs confined and read-only. It used to be `/bin/sh -c` on the host every
+// minute, outside the sandbox and the approval gate: a file the model wrote was a command with the
+// user's full rights. The operator's own watches are trusted and unchanged.
+function runWith(config, statePath) {
+  try { return execFileSync(process.execPath, [WATCH, '--config', config, '--state', statePath, '--dry-run', '--force'], { encoding: 'utf8' }) }
+  catch (e) { return String(e?.stdout ?? '') }
+}
+{
+  const agentMark = join(dir, 'written-by-agent-watch')
+  const hostMark = join(dir, 'written-by-host-watch')
+  writeFileSync(join(agentHome, 'watches', 'agent.json'), JSON.stringify({
+    id: 'agent-writes', command: `touch ${agentMark}; echo tried`, intervalSeconds: 60, channel: 'C_AGENT',
+  }))
+  const hostConfig = join(dir, 'host-writes.json')
+  writeFileSync(hostConfig, JSON.stringify({ watches: [{ id: 'host-writes', command: `touch ${hostMark}; echo done`, intervalSeconds: 60, channel: 'C_HOST' }] }))
+  process.env.DEEPBOT_HOME = agentHome
+  const out = runWith(hostConfig, join(dir, 'confine-state.json'))
+  check('an agent-written watch cannot write', !existsSync(agentMark), out.split('\n').find((l) => /agent-writes/.test(l))?.slice(0, 100) ?? '')
+  check('the operator\'s own watch still can', existsSync(hostMark))
+
+  // Reusing a host watch's id must not let an agent file run its own command with the host's trust.
+  const sharedMark = join(dir, 'written-through-shared-id')
+  writeFileSync(join(agentHome, 'watches', 'agent.json'), JSON.stringify({ id: 'host-writes', command: `touch ${sharedMark}; echo tried` }))
+  runWith(hostConfig, join(dir, 'shared-state.json'))
+  check('an agent file that takes a host watch\'s id is confined too', !existsSync(sharedMark))
+  delete process.env.DEEPBOT_HOME
+}
 delete process.env.DEEPBOT_HOME
 
 const state = JSON.parse(readFileSync(stateFile, 'utf8'))

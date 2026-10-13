@@ -42,6 +42,9 @@ echo "=== installing the deepbot watch runner ==="
 mkdir -p "$RUNTIME_DIR" "$AGENT_HOME/watches" "$HOME/.dsh"
 cp "$DIR/watch.mjs" "$RUNTIME_DIR/watch.mjs"; chmod +x "$RUNTIME_DIR/watch.mjs"
 echo "✅ runtime copy: $RUNTIME_DIR/watch.mjs"
+# Watches the agent wrote run inside this runner, read-only; without it they do not run at all.
+cp "$DIR/../service/confined-runner.sh" "$RUNTIME_DIR/confined-runner.sh"; chmod +x "$RUNTIME_DIR/confined-runner.sh"
+echo "✅ runtime copy: $RUNTIME_DIR/confined-runner.sh"
 
 cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>

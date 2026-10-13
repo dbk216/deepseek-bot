@@ -30,6 +30,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 const args = process.argv.slice(2)
 const dryRun = args.includes('--dry-run')
@@ -45,6 +46,12 @@ const STATE = flag('state', process.env.DEEPBOT_WATCH_STATE ?? join(HOME, '.dsh'
 const CREDENTIALS = join(process.env.DSH_HOME ?? join(HOME, '.dsh'), '.env')
 const COMMAND_TIMEOUT_MS = Number(process.env.DEEPBOT_WATCH_TIMEOUT_MS ?? 60000)
 const MAX_OUTPUT_CHARS = Number(process.env.DEEPBOT_WATCH_MAX_CHARS ?? 1500)
+// The sandbox runner for watches the agent wrote: next to this script (the runtime copy that
+// install-watch.sh makes), or the repository's own.
+const HERE = dirname(fileURLToPath(import.meta.url))
+const RUNNER = process.env.DEEPBOT_CONFINED_RUNNER
+  ?? [join(HERE, 'confined-runner.sh'), join(HERE, '..', 'service', 'confined-runner.sh')].find((path) => existsSync(path))
+  ?? null
 
 function log(message) {
   console.log(`${new Date().toISOString()} ${message}`)
@@ -57,9 +64,21 @@ function saveJson(path, value) {
   try { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, JSON.stringify(value, null, 1)) } catch { /* best effort */ }
 }
 
-function runCommand(command) {
+/**
+ * Run a watch's command. One the agent wrote runs inside the read-confining sandbox the agent's own
+ * commands get, read-only, because a watch only observes. It used to run as `/bin/sh -c` here, every
+ * minute, outside the sandbox and the approval gate: a file the model wrote was a command with the
+ * user's full rights. With no runner there is no sandbox, and such a watch does not run at all.
+ */
+function runCommand(command, confined) {
+  if (confined && RUNNER === null) {
+    return { ok: false, output: '', error: 'refused: no confined runner, and a watch the agent wrote does not run unconfined' }
+  }
+  const [file, argv] = confined
+    ? [RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--', '/bin/sh', '-c', command]]
+    : ['/bin/sh', ['-c', command]]
   try {
-    const out = execFileSync('/bin/sh', ['-c', command], { timeout: COMMAND_TIMEOUT_MS, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    const out = execFileSync(file, argv, { timeout: COMMAND_TIMEOUT_MS, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
     return { ok: true, output: out.trim() }
   } catch (e) {
     const out = String(e?.stdout ?? '').trim()
@@ -120,12 +139,16 @@ if (existsSync(CONFIG)) {
 }
 
 const merged = new Map()
+// Which watches an agent file touched. Kept outside the entries, so no field in a file can claim
+// the host's trust — and an agent file that reuses a host watch's id is confined like any other.
+const agentWritten = new Set()
 for (const watch of Array.isArray(hostConfig?.watches) ? hostConfig.watches : []) {
   if (typeof watch?.id === 'string') merged.set(watch.id, watch)
 }
 for (const watch of loadAgentWatches()) {
   if (typeof watch?.id !== 'string') continue
   merged.set(watch.id, { ...(merged.get(watch.id) ?? {}), ...watch })
+  agentWritten.add(watch.id)
 }
 const config = { watches: [...merged.values()] }
 if (config.watches.length === 0) {
@@ -149,7 +172,8 @@ for (const watch of config.watches) {
   if (!force && now - record.lastRunAt < intervalMs) continue
   summary.due++
 
-  const result = runCommand(watch.command)
+  const result = runCommand(watch.command, agentWritten.has(watch.id))
+  if (!result.ok && agentWritten.has(watch.id)) log(`watch ${watch.id}: confined run failed — ${String(result.error).split('\n')[0].slice(0, 160)}`)
   record.lastRunAt = now
   const print = fingerprint(result)
   const previous = record.fingerprint
