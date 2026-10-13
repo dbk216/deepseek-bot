@@ -103,14 +103,42 @@ for (const resolved of [false, true]) {
   check('nor the gateway\'s log, which carries the web UI token' + as, !read(join('service', 'logs', 'gateway.out.log')).includes('canary-ui-6d2'))
   check('nor the recall index' + as, !read(join('recall', 'home', 'recall-index.jsonl')).includes('canary-recall-77b'))
   check('nor the session store' + as, !read(join('sessions', 'bucket', 's1', 'session.v4.jsonl.zstd')).includes('canary-session-a41'))
-  // A hard link is another path to the same file, which a path rule would not cover — but Seatbelt
-  // refuses to link a file the process may not read. Checked, not assumed.
+  // A hard link is another path to the same file, which a path rule would not cover. It cannot be made
+  // from the workspace — not because the credentials are denied, but because Seatbelt refuses a link
+  // whose source is outside the writable paths at all: a readable file outside is refused the same way
+  // (the control below). So the protection does not rest on the read deny, and this says so.
   const ws = join(fakeHome, 'ws')
   mkdirSync(ws, { recursive: true })
-  try {
-    execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--tmpfs', '/tmp', '--bind', ws, ws, '--', '/bin/ln', join(fakeHome, '.dsh', '.env'), join(ws, 'copy')], { env, stdio: 'pipe' })
-  } catch { /* refused */ }
-  check('a hard link to the credentials cannot be made' + as, !existsSync(join(ws, 'copy')))
+  const link = (from, to) => {
+    try { execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--tmpfs', '/tmp', '--bind', ws, ws, '--', '/bin/ln', from, to], { env, stdio: 'pipe' }) }
+    catch { /* refused */ }
+    return existsSync(to)
+  }
+  check('a hard link to the credentials cannot be made' + as, !link(join(fakeHome, '.dsh', '.env'), join(ws, 'copy')))
+  check('nor to any file outside the writable paths — the reason it holds' + as, !link(join(fakeHome, '.dsh', 'other.txt'), join(ws, 'other')))
+  writeFileSync(join(ws, 'mine.txt'), 'x')
+  check('while one inside them can be, so ln itself works' + as, link(join(ws, 'mine.txt'), join(ws, 'mine-link')))
+  // The workspace is written by its resolved name: under a symlinked directory every write used to be
+  // refused, and the .env rule matched nothing. Both rules hold for both names now.
+  const write = (name) => {
+    try { execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--tmpfs', '/tmp', '--bind', ws, ws, '--', '/bin/sh', '-c', `echo x > '${join(ws, name)}'`], { env, stdio: 'pipe' }) }
+    catch { /* refused */ }
+    return existsSync(join(ws, name))
+  }
+  check('the workspace is writable' + as, write('notes.md'))
+  check('except its .env' + as, !write('.env') && !write('.env.local'))
+  // A harness home somewhere else (DSH_HOME): its session store and recall index are as private.
+  const alt = join(fakeHome, 'alt-dsh')
+  mkdirSync(join(alt, 'recall', 'home'), { recursive: true })
+  mkdirSync(join(alt, 'sessions', 'b'), { recursive: true })
+  writeFileSync(join(alt, 'recall', 'home', 'recall-index.jsonl'), 'canary-alt-recall-5e0\n')
+  writeFileSync(join(alt, 'sessions', 'b', 's.zstd'), 'canary-alt-session-6f1\n')
+  const readAlt = (file) => {
+    try { return execFileSync(RUNNER, [...READ_ONLY, '--', '/bin/cat', join(alt, file)], { encoding: 'utf8', env: { ...env, DSH_HOME: alt }, stdio: 'pipe' }) }
+    catch (e) { return `exit ${e.status}` }
+  }
+  check('nor a DSH_HOME\'s recall index' + as, !readAlt(join('recall', 'home', 'recall-index.jsonl')).includes('canary-alt-recall-5e0'))
+  check('nor its session store' + as, !readAlt(join('sessions', 'b', 's.zstd')).includes('canary-alt-session-6f1'))
   check('the rest of ~/.dsh stays readable' + as, read('other.txt').includes('readable-2e8'), read('other.txt').slice(0, 40))
   rmSync(made, { recursive: true, force: true })
 }

@@ -55,6 +55,16 @@ if [ "$seen_separator" -eq 0 ] && [ "$print_only" -eq 0 ]; then
   exit 64
 fi
 
+# Seatbelt matches resolved paths: a workspace under a symlinked directory (/var -> /private/var) is
+# written to by its resolved name, and a rule naming it only as given matched nothing — every write
+# there was refused, and the .env rule below guarded nothing. Both names get every workspace rule.
+workspace_names=()
+if [ -n "$workspace_root" ]; then
+  workspace_names=("$workspace_root")
+  workspace_real="$(cd "$workspace_root" 2>/dev/null && pwd -P || true)"
+  if [ -n "$workspace_real" ] && [ "$workspace_real" != "$workspace_root" ]; then workspace_names+=("$workspace_real"); fi
+fi
+
 # The writable set mirrors the harness's own intent: the workspace, temp, and the
 # null sink. Reads are allowed everywhere except other instances' data.
 profile() {
@@ -62,15 +72,17 @@ profile() {
   echo '(allow default)'
   if [ "$mode" = "workspace-write" ]; then
     echo '(deny file-write*)'
-    [ -n "$workspace_root" ] && printf '(allow file-write* (subpath %s))\n' "$(sbpl "$workspace_root")"
+    for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
+      printf '(allow file-write* (subpath %s))\n' "$(sbpl "$name")"
+    done
     printf '(allow file-write* (subpath "/tmp") (subpath "/private/tmp") (subpath "/var/folders"))\n'
     printf '(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper"))\n'
     # Except the workspace's .env: the harness's credential chain reads <cwd>/.env before the
     # deployment's own, and the gateway runs in this workspace — a .env here would replace the tokens.
-    if [ -n "$workspace_root" ]; then
-      escaped="$(printf '%s' "$workspace_root" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
+    for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
+      escaped="$(printf '%s' "$name" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
       printf '(deny file-write* (regex #"^%s/\\.env(\\..*)?$"))\n' "$escaped"
-    fi
+    done
   else
     echo '(deny file-write*)'
     printf '(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper"))\n'
@@ -109,7 +121,8 @@ profile() {
   # The session store: every profile's conversations, this agent's and everybody else's. The agent
   # reads its own past through the recall index in its home, never through these files.
   # The recall index too: every channel's history, which the adapter hands out one channel at a time.
-  for denied in "$HOME/.dsh/service/logs" "$HOME/.dsh/sessions" "$HOME/.dsh/recall"; do
+  # Under DSH_HOME as well, when the harness's home is elsewhere, as the credentials above are.
+  for denied in "$HOME/.dsh/service/logs" "$HOME/.dsh/sessions" "$HOME/.dsh/recall" ${DSH_HOME:+"$DSH_HOME/sessions" "$DSH_HOME/recall"}; do
     [ -d "$denied" ] || continue
     printf '(deny file-read* (subpath %s))\n' "$(sbpl "$denied")"
     resolved="$(cd "$denied" && pwd -P)"
@@ -122,9 +135,9 @@ profile() {
   # without which nothing resolves a host, and a workspace may run a local server it talks to.
   echo '(deny network-outbound (remote unix-socket))'
   echo '(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))'
-  if [ -n "$workspace_root" ]; then
-    printf '(allow network-outbound (remote unix-socket (subpath %s)))\n' "$(sbpl "$workspace_root")"
-  fi
+  for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
+    printf '(allow network-outbound (remote unix-socket (subpath %s)))\n' "$(sbpl "$name")"
+  done
 }
 
 sbpl() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
