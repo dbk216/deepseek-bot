@@ -103,6 +103,14 @@ for (const resolved of [false, true]) {
   check('nor the gateway\'s log, which carries the web UI token' + as, !read(join('service', 'logs', 'gateway.out.log')).includes('canary-ui-6d2'))
   check('nor the recall index' + as, !read(join('recall', 'home', 'recall-index.jsonl')).includes('canary-recall-77b'))
   check('nor the session store' + as, !read(join('sessions', 'bucket', 's1', 'session.v4.jsonl.zstd')).includes('canary-session-a41'))
+  // A hard link is another path to the same file, which a path rule would not cover — but Seatbelt
+  // refuses to link a file the process may not read. Checked, not assumed.
+  const ws = join(fakeHome, 'ws')
+  mkdirSync(ws, { recursive: true })
+  try {
+    execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--tmpfs', '/tmp', '--bind', ws, ws, '--', '/bin/ln', join(fakeHome, '.dsh', '.env'), join(ws, 'copy')], { env, stdio: 'pipe' })
+  } catch { /* refused */ }
+  check('a hard link to the credentials cannot be made' + as, !existsSync(join(ws, 'copy')))
   check('the rest of ~/.dsh stays readable' + as, read('other.txt').includes('readable-2e8'), read('other.txt').slice(0, 40))
   rmSync(made, { recursive: true, force: true })
 }
@@ -123,7 +131,10 @@ for (const resolved of [false, true]) {
 // checked where an agent with keys is reachable from outside the runner.
 {
   const profileText = profile([...READ_ONLY, '--', 'true'])
-  check('the profile refuses launchd\'s agent sockets', /deny network-outbound \(remote unix-socket \(path-regex/.test(profileText))
+  // Every agent socket, not only launchd's: 1Password's, gpg-agent's, docker's. DNS resolution goes
+  // through mDNSResponder's socket, so that one stays open — without it nothing resolves a host.
+  check('the profile refuses unix-socket connections', /\(deny network-outbound \(remote unix-socket\)\)/.test(profileText), profileText.split('\n').filter((l) => /unix-socket/.test(l)).join(' | '))
+  check('except the resolver\'s, so names still resolve', /allow network-outbound \(remote unix-socket \(path-literal "\/private\/var\/run\/mDNSResponder"\)\)/.test(profileText))
   let outside = false
   try { execFileSync('/usr/bin/ssh-add', ['-l'], { stdio: 'pipe' }); outside = true } catch { /* no agent, or no keys */ }
   if (outside) {

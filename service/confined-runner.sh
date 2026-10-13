@@ -117,10 +117,14 @@ profile() {
       printf '(deny file-read* (subpath %s))\n' "$(sbpl "$resolved")"
     fi
   done
-  # The user's ssh-agent: launchd's per-user socket. With it a command could use every key the user
-  # has loaded — measured: `ssh-add -l` inside this runner listed them. Unsetting SSH_AUTH_SOCK alone
-  # would not do, since the socket's path can be found.
-  echo '(deny network-outbound (remote unix-socket (path-regex #"^(/private)?/(var/run|tmp)/com\.apple\.launchd\.[^/]+/Listeners$")))'
+  # Unix sockets: no agent of the user's — ssh-agent (measured: `ssh-add -l` inside this runner listed
+  # the keys), 1Password's, gpg-agent's, docker's. Name resolution goes through mDNSResponder's socket,
+  # without which nothing resolves a host, and a workspace may run a local server it talks to.
+  echo '(deny network-outbound (remote unix-socket))'
+  echo '(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))'
+  if [ -n "$workspace_root" ]; then
+    printf '(allow network-outbound (remote unix-socket (subpath %s)))\n' "$(sbpl "$workspace_root")"
+  fi
 }
 
 sbpl() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
