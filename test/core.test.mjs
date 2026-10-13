@@ -16,7 +16,7 @@
 import './dist-fresh.mjs'   // fails loudly on a stale dist
 import './scratch-dsh-home.mjs'   // the recall index must not land in the real ~/.dsh
 
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, basename } from 'node:path'
 import { apply } from '../dist/index.js'
@@ -418,6 +418,20 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
     check('the home named in other letters', t.gate(exec('write', { file_path: join(shouting, '.env'), content: 'X=1' }))?.kind === 'deny')
   }
   check('a new file in a new directory is not refused', t.gate(exec('write', { file_path: join(home, 'new', 'deep', 'notes.md'), content: 'hi' })) === 'delegated')
+  // The same directory under another name is the same directory: macOS reaches every user path through
+  // the /System/Volumes/Data firmlink too, which no realpath turns back. Compared by device and inode.
+  // (Third verification pass.)
+  const firm = `/System/Volumes/Data${realpathSync(home)}`
+  if (existsSync(firm)) {
+    check('the home through the firmlink', t.gate(exec('write', { file_path: `${firm}/.env`, content: 'X=1' }))?.kind === 'deny')
+    symlinkSync(firm, join(home, 'fl'))
+    check('a link to the home through the firmlink', t.gate(exec('write', { file_path: join(home, 'fl', '.env'), content: 'X=1' }))?.kind === 'deny')
+  }
+  // A relative path is the session's: in a tenant's directory, ../../.env is the home's.
+  mkdirSync(join(home, 'tenants', 'acme'), { recursive: true })
+  const inTenant = (args) => ({ name: 'write', arguments: args, agent: { session: { header: { id: 'slack-abc', cwd: join(home, 'tenants', 'acme') } } } })
+  check('a relative path from a tenant\'s directory', t.gate(inTenant({ file_path: '../../.env', content: 'X=1' }))?.kind === 'deny')
+  check('while the tenant\'s own notes are not refused', t.gate(inTenant({ file_path: 'notes.md', content: 'hi' })) === 'delegated')
   rmSync(home, { recursive: true, force: true })
   t.done()
 }

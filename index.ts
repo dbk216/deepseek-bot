@@ -1305,15 +1305,21 @@ export function apply(ctx, config) {
     const target = exec?.arguments?.file_path
     if (typeof target !== 'string' || target === '' || resolvedCwd.value === null) return null
     const home = resolve(resolvedCwd.value)
-    const path = resolve(home, target)
+    // A relative path is the session's, as the harness resolves it: a tenant's directory, not the home.
+    const sessionCwd = exec?.agent?.session?.header?.cwd
+    const base = typeof sessionCwd === 'string' && sessionCwd !== '' ? resolve(sessionCwd) : home
+    const path = resolve(base, target)
     // By name in any case — the volume is usually case-insensitive, so .ENV is .env — and by where the
-    // write would land, walked as the kernel walks it, compared by the directory's true name: a link, a
-    // linked directory, a ".." through one, or the home's own name in other letters all reach .env, even
-    // when .env does not exist yet and the write would create it.
+    // write would land, walked as the kernel walks it: a link, a linked directory, a ".." through one all
+    // reach .env, even when .env does not exist yet and the write would create it. The directory is the
+    // home when it is the same directory — device and inode — whatever it is called: other letters, or
+    // the /System/Volumes/Data firmlink, which no realpath turns back.
     const envName = (file: string) => /^\.env(\..*)?$/i.test(basename(file))
-    const realHome = trueName(home)
-    const landed = landsOn(target, realHome)
-    const onHome = (file: string) => envName(file) && trueName(dirname(file)) === realHome
+    const identity = (dir: string) => { try { const s = statSync(dir); return `${s.dev}:${s.ino}` } catch { return null } }
+    const homeId = identity(home)
+    const isHome = (dir: string) => homeId !== null ? identity(dir) === homeId : trueName(dir) === trueName(home)
+    const landed = landsOn(target, trueName(base))
+    const onHome = (file: string) => envName(file) && isHome(dirname(file))
     if (!onHome(path) && landed !== null && !onHome(landed)) return null
     log(`write to the home's .env denied: ${name} ${path}`)
     return { kind: 'deny', reason: 'the .env in this directory is read as credentials, so it cannot be written. Ask the user to change credentials themselves.' }
