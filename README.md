@@ -121,7 +121,7 @@ Each line is traceable to code and to something that checks it.
 | Publishes **health** so an external probe can restart a disconnected bot | `service/health-check.mjs` | `PLAN.md` M3: injected unhealthy state → restart → recovered |
 | Gives each conversation group its own **workspace** (tenants) | `index.ts` | tenant checks in `test/core.test.mjs`; `test/scenarios/tenant.json` |
 | Prunes its own bookkeeping so a long-running process does not grow forever | `index.ts` (`stateRetentionDays`) | `test/resources.test.mjs` 8/8 |
-| Serves a **terminal** (`deepbot-tui`) over a local socket, beside Slack or alone: streamed answers, approval buttons, a turn's questions, its subagents and shells | `transports/local.ts`, `transports/composite.ts`, `tui/` | `test/local.test.mjs` 111/111, `test/tui-*.test.mjs`; `test/tui-live.mjs` 8/8 against a model |
+| Serves a **terminal** (`deepbot-tui`) over a local socket, beside Slack or alone: streamed answers, approval buttons, a turn's questions, its subagents and shells | `transports/local.ts`, `transports/composite.ts`, `tui/` | `test/local.test.mjs` 116/116, `test/tui-*.test.mjs`; `test/tui-live.mjs` 11/11 against a model |
 
 ## Does it work? How to read the claims
 
@@ -651,14 +651,23 @@ only its own conversation's buttons.
 | wheel, `PgUp`/`PgDn` | scroll; drag selects and copies (pbcopy locally, OSC 52 over SSH) |
 | `tab`, `↑↓`, `↵`, or a click | the agent panel: open a subagent or a shell |
 | `ctrl+x` | in a subagent view, stop it; in a shell view, stop the job |
+| `/` or `@`, then `↑↓` and `tab` | complete a command, or a file of the workspace (`↵` runs a command that takes nothing) |
+| `ctrl+r` | search what was typed before (`ctrl+r` again: older; `↵` keeps it to edit; `esc` cancels) |
+| `ctrl+o` | unfold or fold the thinking and the tool results |
 
 Commands: `/new`, `/sessions`, `/resume <n|id>`, `/tenant [name]`, `/interview <topic>`, `/usage`,
-`/clear`, `/help`, `/quit`. Anything else that starts with `/` is sent as text.
+`/clear`, `/help`, `/quit`. Anything else that starts with `/` is sent as text. What is sent is kept
+between runs in `$DSH_HOME/deepbot-tui/history.jsonl` (owner-only, the last 500).
 
 What appears besides the conversation:
 
-- **Answers stream** as the model writes them (from `agent/assistant-stream`), with a minimal
-  Markdown rendering; the posted reply then takes the streamed text's place.
+- **Answers stream** as the model writes them (from `agent/assistant-stream`), with Markdown drawn
+  for a terminal: tables, code highlighted by token class for the common languages, and links you
+  can click (OSC 8; only http(s) and mailto). The posted reply then takes the streamed text's place.
+- **Tool calls** show as the turn makes them: the tool's own title for the call (from the harness's
+  tool registry), an edit's changed lines, and the result under it — a few lines, all on `ctrl+o`.
+- **Thinking** is shown apart from the answer and folded once the answer starts, when the model
+  streams its reasoning (`reasoning-delta`); the route this deployment uses sends none.
 - **Approvals** are buttons above the input box; **a turn's questions** (`ask_user_question`, a plan
   review) open there too — arrows and Enter, Space on multi-select, or type your own answer.
 - **The agent panel** lists the turn's subagents (running ones first, with their time and tokens)
