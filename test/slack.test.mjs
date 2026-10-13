@@ -316,6 +316,26 @@ function transportFor(api) {
   check('a thread\'s status calls never overlap', overlapping.length === 0, JSON.stringify(all8.map((c) => [c.body.status, c.start - all8[0].start, c.end - all8[0].start])))
   check('and the last one clears it', all8.at(-1)?.body?.status === 'active', JSON.stringify(all8.map((c) => c.body.status)))
   api8.restore()
+
+  // Nothing is kept for a thread once its messages are done — also where both kinds were refused for
+  // the moment and the stop had nothing to clear: its call chain stayed, one per such thread, for the
+  // life of the process. (Third verification pass.)
+  const opts9 = { errors: { 'agents.sessions.setStatus': 'ratelimited', 'assistant.threads.setStatus': 'ratelimited' } }
+  const api9 = stubSlack(opts9)
+  const t9 = transportFor(api9)
+  await t9.authenticate()
+  for (const thread of ['t1', 't2', 't3']) {
+    const stop = t9.startTyping({ channel: 'C1', threadTs: thread }, () => {})
+    await settle()
+    stop()
+  }
+  opts9.errors = {}
+  const okStop = t9.startTyping({ channel: 'C1', threadTs: 't4' }, () => {})
+  await settle()
+  okStop()
+  await settle()
+  check('no thread\'s status bookkeeping outlives its messages', t9.statusThreads === 0, String(t9.statusThreads))
+  api9.restore()
 }
 
 // 6d. Upload bytes the caller already read are sent as they are; the path is only the file's name.

@@ -245,6 +245,8 @@ export interface SlackTransport extends Transport {
   hasSocket(): boolean
   /** Diagnostic only: raw channel history, used by the attachment probe. */
   historyRaw(channel: string, limit?: number): Promise<SlackHistoryResponse>
+  /** Diagnostic only: threads whose working-status bookkeeping is still held. */
+  readonly statusThreads: number
 }
 
 export function createSlackTransport(host: SlackTransportHost): SlackTransport {
@@ -687,6 +689,10 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
       }
       working.delete(where)
       clear()
+      // Forget the thread's call chain once it is idle, also when clear() had nothing to send and so
+      // queued nothing that would forget it.
+      const tail = threadCalls.get(where)
+      void tail?.then(() => { if (threadCalls.get(where) === tail && !working.has(where)) threadCalls.delete(where) })
     }
   }
 
@@ -730,6 +736,7 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
     remove,
     startTyping,
     get typingUnavailable() { return sessionsStatus === false && assistantStatus === false },
+    get statusThreads() { return new Set([...working.keys(), ...threadShows.keys(), ...threadCalls.keys()]).size },
     // Block actions over Socket Mode; the app needs Interactivity turned on. Without it a press does
     // nothing, and the request's text says the person can type the answer instead.
     supportsButtons: true,
