@@ -47,6 +47,18 @@ the caveat about version numbers is at the bottom.
 - **One turn at a time per conversation**; a stop withdraws what is waiting, and is reported once.
 - **Failures are reported in the bot's voice** (Korean, 반말) without host paths; the last
   honorific messages were found by a widened check.
+- **Slack's working status stays** while another message in the same thread is still working.
+- **The scenario alert and the outage alert have their own rate limits**; one no longer silences the
+  other.
+- **A turn begun while restart notices go out is tracked.**
+- **A refused upload is told to the conversation** (Discord's 10 MiB limit, a Slack app without
+  `files:write`).
+- **Two homes never share a recall index.** The index directory gains a hash of the home's path; the
+  next refresh rebuilds it there, and the old directory can be removed by hand.
+- **The installer** reads the platform back on a rerun, validates channel ids before writing the
+  profile, runs nothing when the download is cut short, and refuses a `DSH_HOME` other than `~/.dsh`;
+  reinstalling a service keeps its settings (alert target, deny list).
+- **Telegram's renderer** is not fooled by a NUL in the text or a list marker.
 - A debounced state write could be lost when the plugin unloaded. Found by checking a
   five-step scenario for its usage totals and finding one turn instead of two: the pending
   timer never fired. The state is flushed on unload now.
@@ -63,6 +75,14 @@ the caveat about version numbers is at the bottom.
   launcher moves one aside before the gateway starts.
 - **An upload sends the bytes of the file that was checked**, read from one descriptor without
   following a link.
+- **A conversation block forged in a standing file** (persona, notes), history, an attachment or a
+  recalled passage no longer moves a session into another channel's recall: the adapter's markers are
+  marked as quoted there, and its session mapping outranks a channel read from text.
+- **An approval button answers only the request it was posted with**; an older button cannot approve
+  a newer request.
+- **The home's `.env` is refused to the file tools** in any case (`.ENV`) and through any link.
+- **The sandbox names the workspace by its resolved path too**, and a `DSH_HOME`'s session store and
+  recall index are unreadable like `~/.dsh`'s.
 - **Nothing machine-specific in the repository**: paths, ids and names moved to the deployment's
   profile and environment (`DEEPBOT_DENY_READ`, scenario `{HOME}` placeholders).
 

@@ -31,7 +31,7 @@ is built before the thing it stands on. The detailed history of each milestone i
 | M6 Transports | one core, Slack / Telegram / Discord, a fake transport for the core's tests, approvals over chat |
 | M7 Agent gaps | attachments and vision, read confinement, per-tenant policy, fetch policy, usage totals |
 | Round 66 | persona restored to the prompt; the platform's own working indicator; one turn at a time per conversation; recall scoped to its channel; documents uploaded; watches and commands confined (credentials, session store, ssh-agent, the launcher and its logs out of the agent's home; no writes through links) |
-| Round 67 | one-line install; the home's `.env` refused; recall read only by the adapter, ranked by rare words and offered without a trigger word; failures in the bot's voice without host paths, a stop reported once; a restart tells the conversation its turn was lost; the probe alerts on failed scenarios; no agent socket of the user's reachable from the sandbox, hard links pinned by a test; uploads send the checked bytes; approval buttons and uploads on every platform; Markdown rendered on Telegram |
+| Round 67 | one-line install; the home's `.env` refused; recall read only by the adapter, ranked by rare words and offered without a trigger word; failures in the bot's voice without host paths, a stop reported once; a restart tells the conversation its turn was lost; the probe alerts on failed scenarios; no agent socket of the user's reachable from the sandbox, hard links pinned by a test; uploads send the checked bytes; approval buttons and uploads on every platform; Markdown rendered on Telegram; review fixes — forged conversation blocks defused, approval buttons tied to their request, the .env gate by case and link, per-thread Slack status, separate alert limits, restart recovery race, one index per home, installer validation and kept service settings |
 
 ## Open
 
@@ -55,5 +55,6 @@ Decided against:
   APIs only, no live server or bot.
 - Slack approval buttons in a real workspace: they need Interactivity turned on in the app's
   settings; without it a press does nothing and the person types the answer, which the request offers.
-- Which Slack status method a given workspace accepts; the plugin logs each refusal.
-- Whether a Slack app has `files:write` for uploads; a refusal is logged, the answer is unaffected.
+- Slack's working status in a live workspace: no turn has run on this code there yet. Which method a
+  workspace accepts is logged on each refusal ("working status: … refused").
+- Whether a Slack app has `files:write` for uploads; a refusal is logged and told to the conversation.

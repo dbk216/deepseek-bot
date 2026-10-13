@@ -633,7 +633,9 @@ reads.
 
 The working status ("앱이 작업 중") uses `agents.sessions.setStatus`, or
 `assistant.threads.setStatus` where the workspace has not turned agent sessions on; both need only
-`chat:write`. If both are refused, a `⏳ … 작업 중…` message stands in and the reply replaces it.
+`chat:write` (Slack's method reference, checked 2026-10-13; the second also accepts `assistant:write`
+for now). If both are refused, a `⏳ … 작업 중…` message stands in and the reply replaces it. Not yet
+observed in a live workspace: no turn has run on this code there.
 
 > One Socket Mode connection per app. A second one makes Slack split events across them and both
 > start dropping messages: stop any other process using the same app first.

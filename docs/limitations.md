@@ -10,6 +10,7 @@ decision with a cost.
 |---|---|---|
 | Queue position | A message waiting behind `maxConcurrency` shows the working indicator at once, but not its place in line | Report the position after N seconds of waiting |
 | Fact extraction for `memory/` | Notes are kept by the agent following `AGENTS.md`, and the adapter asks for a tidy-up when `MEMORY.md` grows or repeats; nothing extracts facts after a conversation on its own | A curator pass on a schedule over recent sessions |
+| A custom `DSH_HOME` | The services, the sandbox runner and the health probe read `~/.dsh`; the installer refuses another harness home rather than half-support it | Pass `DSH_HOME` through every plist and read it everywhere |
 | Semantic recall | Recall is lexical: words in common, weighted by how rare they are, Korean particles stripped. A paraphrase with no shared rare word may miss | Embed and index externally; a new runtime dependency is a decision, not a detail |
 
 ## Verified partially, or not at all
