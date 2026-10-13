@@ -2048,6 +2048,11 @@ export function apply(ctx, config) {
         try {
           const stat = fstatSync(fd)
           if (!stat.isFile() || stat.nlink !== 1 || stat.size > MAX_UPLOAD_BYTES) throw new Error('not a plain file with one name')
+          // O_NOFOLLOW guards the last name only. The opened file must be the one at a real path inside
+          // the home: a parent directory swapped for a link between the checks gives another file.
+          const real = realpathSync(path)
+          const there = statSync(real)
+          if (!real.startsWith(realHome + sep) || there.dev !== stat.dev || there.ino !== stat.ino) throw new Error('changed while it was checked')
           bytes = readFileSync(fd)
         } finally { closeSync(fd) }
       } catch (e) {
@@ -2056,6 +2061,9 @@ export function apply(ctx, config) {
       }
       const ok = await transport.uploadFile(target, path, undefined, bytes).catch(() => false)
       log(`documents: ${ok ? 'uploaded' : 'upload failed for'} ${basename(path)} to ${key}`)
+      // The answer names a file nobody here received: Discord refuses one over its size limit, a Slack app
+      // without files:write refuses them all.
+      if (!ok) await transport.post(target, `${basename(path)} 파일을 올리지 못했어.`).catch(() => {})
     }
   }
 

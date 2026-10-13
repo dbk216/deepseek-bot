@@ -985,6 +985,20 @@ for (const remove of [false, true]) {
   t.done()
 }
 
+// 35c. An upload the platform refused is told to the conversation: the answer names a file nobody there
+// received — Discord refuses one over 10 MiB, a Slack app without files:write refuses them all.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  const t = boot({ agent: 'answer', home, config: { fake: { upload: 'fail' } }, answer: { text: 'report.pdf 만들었어', files: { 'report.pdf': 'pdf' } } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '만들어줘' }))
+  await sleep(500)
+  check('a refused upload is told to the conversation', t.transport.posted.some((p) => /report\.pdf 파일을 올리지 못했어/.test(p.text)),
+    JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 40))))
+  rmSync(home, { recursive: true, force: true })
+  t.done()
+}
+
 // 36. A platform without uploads says so in the log and answers as usual.
 {
   const home = mkdtempSync(join(tmpdir(), 'home-'))
