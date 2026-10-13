@@ -241,26 +241,62 @@ function readSession(file, sessionId, includeInjected) {
   return { header, records, skippedInjected }
 }
 
-function buildIndex(outFile, quiet) {
-  const logs = findSessionLogs(join(DSH_HOME, 'sessions'))
-  // Privacy default: only the agent's own sessions. The store is shared by every
-  // profile and working directory, so indexing everything would let the bot
-  // recall unrelated contexts (other profiles' sessions, build/planning runs).
-  // Pass --all-cwds to index the entire store deliberately.
-  const includeAllCwds = argv.includes('--all-cwds')
+/**
+ * The session logs of the workspaces being indexed, parsed once: one run indexes several from it.
+ * The store is shared by every profile and directory, so a session from anywhere else is dropped as
+ * soon as it is read — keeping it would hold the whole store in memory. `cwds` null keeps every one
+ * (--all-cwds).
+ */
+function parseLogs(quiet, cwds) {
   // --include-injected indexes harness protocol traffic too (debugging only).
   const includeInjected = argv.includes('--include-injected')
-  const wantedCwd = flag('cwd', AGENT_HOME)
-  const all = []
-  const perSession = []
-  let skippedOtherCwd = 0
-  let injected = 0
-  for (const { file, sessionId } of logs) {
+  const out = []
+  let elsewhere = 0
+  // By real path, as buildIndex compares: one directory spelled two ways (a link, /var and /private/var)
+  // is one workspace. Cached, since many sessions share a directory.
+  const realOf = new Map()
+  const real = (p) => {
+    if (typeof p !== 'string') return p
+    if (!realOf.has(p)) { try { realOf.set(p, realpathSync(p)) } catch { realOf.set(p, p) } }
+    return realOf.get(p)
+  }
+  const wanted = cwds === null ? null : new Set([...cwds].map(real))
+  for (const { file, sessionId } of findSessionLogs(join(DSH_HOME, 'sessions'))) {
     let parsed
     try { parsed = readSession(file, sessionId, includeInjected) } catch (e) {
       if (!quiet) console.error(`  skip ${sessionId}: ${String(e.message ?? e)}`)
       continue
     }
+    if (wanted === null || wanted.has(real(parsed.header.cwd))) out.push({ sessionId, parsed })
+    else elsewhere++
+  }
+  // Dropped sessions still count as "skipped, different working directory" in each index's report.
+  return { logs: out, elsewhere }
+}
+
+/**
+ * Tenant workspaces under the home (`<home>/tenants/<name>`, the adapter's default tenantRoot).
+ * Each keeps its own recall, as it keeps its own notes. A deployment with a custom tenantRoot
+ * indexes those with explicit --cwd/--out runs.
+ */
+function tenantWorkspaces(home) {
+  const root = join(home, 'tenants')
+  if (!existsSync(root)) return []
+  // lstat: a link the agent left among the tenants is not a tenant, and is never written through.
+  return readdirSync(root).map((name) => join(root, name)).filter((dir) => { try { return lstatSync(dir).isDirectory() } catch { return false } })
+}
+
+function buildIndex(outFile, quiet, wantedCwd, { logs, elsewhere }) {
+  // Privacy default: only the agent's own sessions. The store is shared by every
+  // profile and working directory, so indexing everything would let the bot
+  // recall unrelated contexts (other profiles' sessions, build/planning runs).
+  // Pass --all-cwds to index the entire store deliberately.
+  const includeAllCwds = argv.includes('--all-cwds')
+  const all = []
+  const perSession = []
+  let skippedOtherCwd = elsewhere
+  let injected = 0
+  for (const { sessionId, parsed } of logs) {
     if (!includeAllCwds && !sameDirectory(parsed.header.cwd, wantedCwd)) { skippedOtherCwd++; continue }
     injected += parsed.skippedInjected ?? 0
     if (parsed.records.length === 0) continue
@@ -368,9 +404,25 @@ function snippet(text, query, width = 160) {
 const INDEX_DEFAULT = recallIndexPath(AGENT_HOME, DSH_HOME)
 
 switch (command) {
-  case 'index':
-    buildIndex(flag('out', INDEX_DEFAULT), argv.includes('--quiet'))
+  case 'index': {
+    const quiet = argv.includes('--quiet')
+    // A plain run indexes every workspace, so a tenant's conversations are recalled inside it and
+    // nowhere else. An explicit --out/--cwd (or --all-cwds) means exactly that one index.
+    const everyWorkspace = flag('out') === undefined && flag('cwd') === undefined && !argv.includes('--all-cwds')
+    const tenants = everyWorkspace ? tenantWorkspaces(AGENT_HOME) : []
+    const cwds = argv.includes('--all-cwds') ? null : new Set([flag('cwd', AGENT_HOME), ...tenants])
+    const logs = parseLogs(quiet, cwds)
+    buildIndex(flag('out', INDEX_DEFAULT), quiet, flag('cwd', AGENT_HOME), logs)
+    if (everyWorkspace) {
+      for (const workspace of tenants) {
+        // One tenant that cannot be written does not stop the others.
+        // Outside the workspace, like the home's: the agent must not read the history with its tools.
+        try { buildIndex(recallIndexPath(workspace, DSH_HOME), quiet, workspace, logs) }
+        catch (e) { console.error(`  skip ${workspace}: ${String((e as Error)?.message ?? e)}`) }
+      }
+    }
     break
+  }
 
   case 'search': {
     const query = argv[1]

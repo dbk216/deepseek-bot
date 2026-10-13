@@ -277,7 +277,9 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   const notice = t.transport.posted.find((p) => /끊겼어/.test(p.text))
   check('after a restart the conversation is told its turn was lost', notice !== undefined, JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 30))))
   check('in place of the working message that was left behind', notice?.replace === 'ts-old', JSON.stringify(notice))
-  check('and the record is cleared', Object.keys(t.read().inflight ?? {}).length === 0, JSON.stringify(t.read().inflight))
+  // Both places a record can be: this process's turns, and the previous process's set aside at load.
+  check('and the record is cleared', Object.keys(t.read().inflight ?? {}).length === 0 && Object.keys(t.read().restartLost ?? {}).length === 0,
+    JSON.stringify({ inflight: t.read().inflight, restartLost: t.read().restartLost }))
   t.done()
 }
 // A message that arrives while the notices are still going out is a new turn, and is tracked as one.
@@ -306,9 +308,13 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
     'C_ALLOWED:t1': { channel: 'C_ALLOWED', threadTs: 't1', placeholder: 'ts-b', since },
   } } })
   await sleep(200)
-  check('a record not yet notified is still on disk', t.read().inflight?.['C_ALLOWED:t1'] !== undefined, JSON.stringify(t.read().inflight))
+  // On disk for the next process to report: the next load reads it from either map (the previous
+  // process's records are set aside as restartLost, and the file keeps the old form until a save).
+  const onDisk = () => t.read().restartLost?.['C_ALLOWED:t1'] ?? t.read().inflight?.['C_ALLOWED:t1']
+  check('a record not yet notified is still on disk', onDisk() !== undefined, JSON.stringify(t.read()))
   await sleep(1200)
-  check('and gone once its notice is out', Object.keys(t.read().inflight ?? {}).length === 0, JSON.stringify(t.read().inflight))
+  check('and gone once its notice is out', Object.keys(t.read().inflight ?? {}).length === 0 && Object.keys(t.read().restartLost ?? {}).length === 0,
+    JSON.stringify({ inflight: t.read().inflight, restartLost: t.read().restartLost }))
   t.done()
 }
 

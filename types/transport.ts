@@ -85,6 +85,35 @@ export interface AttachmentManifest {
   images?: Array<{ name?: string; mediaType: string; bytes: Buffer }>
 }
 
+/**
+ * Live progress of a turn, for a platform that can show it as it happens: text as the model
+ * writes it, `reset` when the current model call failed and is being retried (drop what it
+ * streamed), and `tool` for a tool call between two stretches of text.
+ */
+export type StreamFrame =
+  | { kind: 'text'; text: string }
+  | { kind: 'reset' }
+  | { kind: 'tool'; name: string }
+
+/** A question a turn asks the person (the ask_user_question tool, a plan review). */
+export interface QuestionItem {
+  id: string
+  question: string
+  header?: string
+  options: Array<{ label: string; description?: string }>
+  multiSelect: boolean
+  /** The plan under review, for a `plan-review` question. */
+  detail?: string
+  intent?: { kind: string; approve?: string }
+}
+
+/** One answer per question: the labels picked, and/or the person's own words. */
+export interface QuestionAnswer {
+  id: string
+  selected: string[]
+  custom?: string
+}
+
 export interface TransportStatus {
   connected: boolean
   detail?: string
@@ -128,6 +157,22 @@ export interface Transport {
    */
   remove?(target: Target, ts: string): Promise<boolean>
 
+  /**
+   * Show a turn's progress live. The finished answer still arrives through `post`, marked
+   * `answer: true`, and takes the place of what was streamed.
+   */
+  stream?(target: Target, frame: StreamFrame): void
+
+  /**
+   * Ask the person the turn's questions and wait. Resolves to their answers, null when they
+   * dismissed them, or undefined when nobody is there to ask (the core then lets another
+   * answerer have the question).
+   */
+  ask?(target: Target, questions: QuestionItem[], signal?: AbortSignal): Promise<QuestionAnswer[] | null | undefined>
+
+  /** The conversation's turn is over: drop anything that was waiting on it (an unanswered question). */
+  turnEnded?(target: Target): void
+
   /** Whether this transport can render buttons. */
   readonly supportsButtons: boolean
 
@@ -136,7 +181,7 @@ export interface Transport {
    * `buttons` is honoured by transports that can render them and ignored by those that
    * cannot — the caller asks, the transport decides.
    */
-  post(target: Target, text: string, options?: { replace?: string | null; buttons?: ActionButton[] }): Promise<PostedMessage | null>
+  post(target: Target, text: string, options?: { replace?: string | null; buttons?: ActionButton[]; answer?: boolean }): Promise<PostedMessage | null>
 
   /**
    * Messages newer than `sinceTs`, so the adapter can send a delta instead of the

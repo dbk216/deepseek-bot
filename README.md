@@ -121,6 +121,7 @@ Each line is traceable to code and to something that checks it.
 | Publishes **health** so an external probe can restart a disconnected bot | `service/health-check.mjs` | `PLAN.md` M3: injected unhealthy state → restart → recovered |
 | Gives each conversation group its own **workspace** (tenants) | `index.ts` | tenant checks in `test/core.test.mjs`; `test/scenarios/tenant.json` |
 | Prunes its own bookkeeping so a long-running process does not grow forever | `index.ts` (`stateRetentionDays`) | `test/resources.test.mjs` 8/8 |
+| Serves a **terminal** (`deepbot-tui`) over a local socket, beside Slack or alone: streamed answers, approval buttons, a turn's questions, its subagents and shells | `transports/local.ts`, `transports/composite.ts`, `tui/` | `test/local.test.mjs` 111/111, `test/tui-*.test.mjs`; `test/tui-live.mjs` 8/8 against a model |
 
 ## Does it work? How to read the claims
 
@@ -614,6 +615,77 @@ operator in the log, instead of silent. `test/injection.test.mjs` (31/31) weight
 as heavily as the attacks, because a guard that flags ordinary conversation is a guard nobody
 reads.
 
+## The terminal (deepbot-tui)
+
+A fullscreen terminal client for the same agent. It is a platform like Slack: a conversation in the
+terminal gets the persona, the workspace's notes, recall, approvals and the turn queue, because it
+goes through the same core. The conversation lives in the gateway; the terminal is only the screen,
+so quitting loses nothing.
+
+**Serve it.** Put `local` in the deepbot row's `platform` — alone, or in a list — and allow its
+channel. `config` replaces the whole row, so restate what you keep:
+
+```yaml
+- id: deepbot
+  config:
+    platform: ['slack', 'local']   # or 'local' for a terminal-only deployment (no Slack token needed)
+    targetChannels: ['*']          # or your channel ids plus 'tui'
+    # tuiName: work                # when several gateways serve terminals on one machine
+```
+
+The gateway listens on `<stateDir>/tui.sock` (owner-only, 0600; a path over 103 bytes falls back to a
+short one beside the discovery files) and records it in `$DSH_HOME/run/deepbot-tui/<tuiName>.json`.
+A terminal may open, message or stop only the subagents and jobs its own panel offered, and press
+only its own conversation's buttons.
+
+**Use it.** `deepbot-tui` (the package's `bin`, or `node dist/tui/main.js`) finds the running gateway;
+`--name` picks one by `tuiName`, `--socket` names the path, `--tenant` talks in a tenant's workspace
+(needs `tenantIsolation`; without it a new conversation goes where the configuration sends any other,
+`tenantDefault` or the home), `--resume <id>` continues a conversation (the id is printed on exit).
+
+| Keys | |
+|---|---|
+| `↵` / `alt+↵` | send / new line |
+| `esc` | stop the running turn; in a view, back to the conversation |
+| `ctrl+c` twice, `ctrl+d` | quit (the terminal is always restored) |
+| wheel, `PgUp`/`PgDn` | scroll; drag selects and copies (pbcopy locally, OSC 52 over SSH) |
+| `tab`, `↑↓`, `↵`, or a click | the agent panel: open a subagent or a shell |
+| `ctrl+x` | in a subagent view, stop it; in a shell view, stop the job |
+
+Commands: `/new`, `/sessions`, `/resume <n|id>`, `/tenant [name]`, `/interview <topic>`, `/usage`,
+`/clear`, `/help`, `/quit`. Anything else that starts with `/` is sent as text.
+
+What appears besides the conversation:
+
+- **Answers stream** as the model writes them (from `agent/assistant-stream`), with a minimal
+  Markdown rendering; the posted reply then takes the streamed text's place.
+- **Approvals** are buttons above the input box; **a turn's questions** (`ask_user_question`, a plan
+  review) open there too — arrows and Enter, Space on multi-select, or type your own answer.
+- **The agent panel** lists the turn's subagents (running ones first, with their time and tokens)
+  and background shells; a subagent's view shows its task, tools and answers.
+- **`/interview <topic>`** runs a deep interview: one question per round, and a strip with the
+  model's own estimate of how clear each dimension is. Below 20% ambiguity it writes `specs/<slug>.md`.
+  The estimate is the model's judgement, not a measurement.
+
+**Memory.** Notes (`SOUL.md`, `USER.md`, `MEMORY.md`) belong to the workspace, so the terminal and
+Slack share them in the same home. Recall reads the index of the conversation's own workspace — the
+home and each tenant under `<home>/tenants` get one, kept outside the workspace (a custom
+`tenantRoot` is indexed only by an explicit `--cwd` run) — and within it stays in the channel the
+conversation came from: terminal conversations are recorded as channel `tui`, so the terminal
+recalls terminal conversations and each Slack channel its own. A conversation stays in the workspace
+it started in: the tenant is recorded with it, survives a restart, and a terminal asking to move it
+is refused.
+
+**Limits, measured.** A background job ends with its turn, because the adapter releases the agent
+after every turn and the harness disposes an agent's jobs with it — the shell view says so when it
+happens. A subagent can be messaged only while its parent's turn runs, for the same reason. The
+questions have no countdown: the deployment's ask tool runs without timed waits. Whether a given
+terminal supports synchronized output, SGR mouse and OSC 52 is not checked; without them it still
+works, with flicker or without mouse.
+
+`pnpm test:tui-live` runs the terminal's path against a real gateway and model in an isolated
+instance (it boots `agent-test` with a `--patch` overlay that serves only the socket).
+
 ## Platform setup
 
 ### Slack
@@ -684,6 +756,8 @@ answers @-mentions in channels (DMs always); `'all'` answers every human message
 pnpm test                     # 21 suites, no harness, no network, no account
 pnpm test:profile             # the composed posture of the installed profiles
 node test/run-scenario.mjs    # default: test/scenarios/recall.json (needs a model credential)
+pnpm test:tui-live            # the terminal against a real gateway and model (needs a credential)
+pnpm tui:demo                 # the terminal against a scripted backend, to look at it
 ```
 
 `pnpm test:profile` reads what the harness actually composes for the profiles you name (default
@@ -769,7 +843,10 @@ install.sh                     the one-line installer and updater
 init.sh                        scaffolds the agent home and the gateway profile (install.sh runs it)
 index.ts                       the adapter: orchestration, policy gates, prompt assembly
 safeWrite.ts                   unconfined writes into the agent's home that never follow a link
-transports/                    the platform seam: slack.ts, telegram.ts, discord.ts, attachments.ts
+transports/                    the platform seam: slack.ts, telegram.ts, discord.ts, local.ts (the
+                               terminal's socket), composite.ts (several at once), attachments.ts
+tui/                           deepbot-tui: render/ (cells, diff, input, Markdown), the app, the panel,
+                               questions, the interview, and bridge.ts (what the gateway reads for it)
 recall/                        the host-side indexer (deepbot-recall.ts) + its refresh job
 recallContext.ts               the block injected when a message points at the past
 notes.ts                       when to ask the model to tidy up the notes

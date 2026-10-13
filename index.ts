@@ -46,13 +46,16 @@
 
 import { execFile, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFileSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, closeSync, constants as fsConstants, createReadStream, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { createInterface } from 'node:readline'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { createSlackTransport } from './transports/slack.js'
 import { createTelegramTransport } from './transports/telegram.js'
 import { createDiscordTransport } from './transports/discord.js'
+import { createLocalTransport } from './transports/local.js'
+import { createCompositeTransport } from './transports/composite.js'
 import { createProgressTracker } from './progress.js'
 import { writeInside } from './safeWrite.js'
 import { createUsageTracker, emptyUsageStore } from './usage.js'
@@ -96,7 +99,7 @@ const DEFAULTS = {
   transportFactory: undefined,
   // Which platform to serve. Slack is the transport that ships and the default;
   // Telegram needs only a token, which is why it is next.
-  platform: 'slack',   // 'slack' | 'telegram' | 'discord'
+  platform: 'slack',   // 'slack' | 'telegram' | 'discord' | 'local', or a list to serve several (e.g. ['slack', 'local'])
   botTokenRef: 'SLACK_BOT_TOKEN',
   appTokenRef: 'SLACK_APP_TOKEN',
   telegramTokenRef: 'TELEGRAM_BOT_TOKEN',
@@ -340,7 +343,7 @@ export function apply(ctx, config) {
   }
   let saveTimer = null
   function loadState() {
-    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, usage: emptyUsageStore() }
+    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, usage: emptyUsageStore() }
     try {
       const raw = JSON.parse(readFileSync(STATE, 'utf8'))
       return {
@@ -352,11 +355,20 @@ export function apply(ctx, config) {
         standing: raw.standing ?? {},
         history: raw.history ?? {},
         touched: raw.touched ?? {},
+        // The workspace a conversation was started in, when its platform chose one (a terminal's
+        // --tenant): null for the home. Recorded once and authoritative, because a session resumes
+        // in the directory it was created in, and it must not be handed another tenant's notes.
+        tenantOf: raw.tenantOf ?? {},
         usage: raw.usage ?? emptyUsageStore(),
         // Conversations with a turn accepted and not yet answered, so a restart can say what it lost.
-        inflight: raw.inflight ?? {},
+        // This process's own start empty: what the previous one left is set aside below.
+        inflight: {},
+        // The previous process's turns in flight (with any it had not reported yet), set aside at load.
+        // Only these are reported as lost: a retried start runs the recovery again, and must not take
+        // this process's running turns for lost ones; and a new turn never finds an old record in its way.
+        restartLost: { ...(raw.restartLost ?? {}), ...(raw.inflight ?? {}) },
       }
-    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, usage: emptyUsageStore() } }
+    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, usage: emptyUsageStore() } }
   }
   /**
    * Drop what has gone quiet.
@@ -384,6 +396,7 @@ export function apply(ctx, config) {
       delete state.sessions[key]
       delete state.standing[key]
       delete state.history[key]
+      if (state.tenantOf) delete state.tenantOf[key]
       if (state.touched) delete state.touched[key]
       delete conversations[key]
       dropped++
@@ -465,6 +478,29 @@ export function apply(ctx, config) {
    */
   function tenantOf(key: string | null): string | null {
     if (cfg.tenantIsolation !== true || key === null || key === '') return null
+    // Recorded when the conversation started: nothing moves it afterwards, a restart included.
+    const bound = state.tenantOf?.[key]
+    if (bound !== undefined) return bound
+    // A terminal can ask for a tenant when it connects; until its first message records it, the ask stands.
+    const chosen = tenantChosenByTransport(key)
+    if (chosen !== undefined) return chosen
+    return configuredTenant(key)
+  }
+
+  /**
+   * Whether a name can be a tenant: one directory directly under the tenant root. '', '.', '..' or a
+   * path ('x/../acme') would make the workspace the root, the home, another tenant under a second
+   * name, or somewhere else entirely. Any other name a deployment configured — a Korean one, one with
+   * spaces — is valid, and a terminal that was told it may send it back.
+   */
+  function isTenantName(name: string): boolean {
+    // Bytes, not characters, are what a directory name is limited to (Korean is three per character);
+    // and no control character, which no person types and every listing would show garbled.
+    return name !== '' && name !== '.' && name !== '..' && Buffer.byteLength(name) <= 255 && !/[/\\\x00-\x1f\x7f]/.test(name)
+  }
+
+  /** The tenant the deployment's configuration gives a conversation: the map, else the default. */
+  function configuredTenant(key: string): string | null {
     const map = (cfg.tenantChannels ?? {}) as Record<string, string>
     if (typeof map[key] === 'string') return map[key]
     const channel = key.split(':')[0]
@@ -484,6 +520,77 @@ export function apply(ctx, config) {
     return policy !== undefined && policy !== null ? policy as Record<string, never> : {}
   }
 
+  /**
+   * A platform's conversations, newest first: what a terminal lists to resume. Titled with each
+   * conversation's first message as the recall index recorded it — the index is built from the
+   * session logs, so this adds no store of its own. The index is read line by line and left as
+   * soon as every title is found.
+   */
+  async function listConversations(channel: string, limit = 30) {
+    const prefix = `${channel}:`
+    const conversations = (state.usage?.conversations ?? {}) as Record<string, { turns?: number; lastAt?: number }>
+    const items = Object.entries(state.sessions as Record<string, string>)
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, sessionId]) => ({
+        key, sessionId,
+        conversation: key.slice(prefix.length),
+        lastAt: Number(state.touched?.[key] ?? conversations[key]?.lastAt ?? 0),
+        turns: conversations[key]?.turns ?? 0,
+        tenant: tenantOf(key),
+      }))
+      .sort((a, b) => b.lastAt - a.lastAt)
+      .slice(0, limit)
+    const titles = new Map<string, string>()
+    const workspaces = new Set(await Promise.all(items.map((i) => cwdFor(i.key))))
+    for (const workspace of workspaces) {
+      const file = recallIndexPath(workspace)
+      if (!existsSync(file)) continue
+      await eachIndexRow(file, (row) => {
+        if (row?.role !== 'user' || titles.has(row.sessionId) || !items.some((i) => i.sessionId === row.sessionId)) return
+        titles.set(row.sessionId, String(row.text).replace(/\s+/g, ' ').trim().slice(0, 80))
+        return titles.size < items.length
+      })
+    }
+    return items.map(({ key, ...item }) => ({ ...item, title: titles.get(item.sessionId) ?? '' }))
+  }
+
+  /**
+   * Each row of a recall index, read line by line; `visit` returns false to stop early. The file is
+   * closed however the loop ends: closing the reader alone leaves the stream paused with its
+   * descriptor open, one per /sessions in a gateway that runs for weeks.
+   */
+  async function eachIndexRow(file: string, visit: (row: any) => boolean | void): Promise<void> {
+    const input = createReadStream(file, 'utf8')
+    const lines = createInterface({ input, crlfDelay: Infinity })
+    try {
+      for await (const line of lines) {
+        let row
+        try { row = JSON.parse(line) } catch { continue }
+        if (visit(row) === false) break
+      }
+    } finally { lines.close(); input.destroy() }
+  }
+
+  /**
+   * The last messages of a conversation, for a terminal that resumes it: read from the recall
+   * index (built from the session log), keeping only the last `limit` as it goes.
+   */
+  async function conversationHistory(channel: string, conversation: string, limit = 20) {
+    const key = `${channel}:${conversation}`
+    const sessionId = state.sessions[key]
+    if (typeof sessionId !== 'string') return []
+    const file = recallIndexPath(await cwdFor(key))
+    if (!existsSync(file)) return []
+    const rows: Array<{ role: 'user' | 'assistant'; text: string }> = []
+    await eachIndexRow(file, (row) => {
+      if (row?.sessionId !== sessionId || (row.role !== 'user' && row.role !== 'assistant')) return
+      const text = String(row.text)
+      rows.push({ role: row.role, text: text.length > 8000 ? `${text.slice(0, 8000)}… (${text.length - 8000}자 생략)` : text })
+      if (rows.length > limit) rows.shift()
+    })
+    return rows
+  }
+
   /** The directory a conversation works in: its tenant's, or the shared home. */
   async function cwdFor(key: string | null): Promise<string> {
     const tenant = tenantOf(key)
@@ -492,6 +599,7 @@ export function apply(ctx, config) {
       ? cfg.tenantRoot
       : join(await sessionCwd(), 'tenants')
     const dir = join(root, tenant)
+    if (!isTenantName(tenant) || dirname(resolve(dir)) !== resolve(root)) throw new Error(`deepbot: invalid tenant name ${JSON.stringify(tenant)}`)
     // The default root is in the agent's home, which the agent can replace with a link: these writes
     // run unconfined, so they are held to the home (or to the configured root) and never follow one.
     const guard = typeof cfg.tenantRoot === 'string' && cfg.tenantRoot !== '' ? cfg.tenantRoot : await sessionCwd()
@@ -623,7 +731,8 @@ export function apply(ctx, config) {
 
       // The conversation's own link, so a reference to it can be clickable. Slack links its own
       // <#C…> mention, but a description of a thread stays text without this.
-      const threadLink = typeof transport.permalinkFor === 'function' ? transport.permalinkFor({ channel: origin.channel, threadTs: origin.threadTs }, 'this thread') : null
+      const linker = via(origin)
+      const threadLink = typeof linker.permalinkFor === 'function' ? linker.permalinkFor({ channel: origin.channel, threadTs: origin.threadTs }, 'this thread') : null
       if (typeof threadLink === 'string' && threadLink !== '') {
         standing.push(`[this thread's link] ${threadLink}`)
         log('link: thread permalink provided to the model')
@@ -666,9 +775,11 @@ export function apply(ctx, config) {
     // Dynamic, never standing: the standing block is digest-gated for prompt-cache safety, so
     // a per-turn block there would invalidate the cache on every turn.
     if (typeof prompt === 'string' && prompt !== '') {
-      // Built here because the index lives in the conversation's home, known only now.
+      // The conversation's own workspace's index: a tenant's conversations recall the tenant's past,
+      // not the home's (every terminal conversation shares the channel 'tui', so the channel filter
+      // alone would let the home's through).
       const recallContext = createRecallContext({
-        indexPath: recallIndexPath(cwd),
+        indexPath: recallIndexPath(home),
         sessionId: sessionId === '' ? null : sessionId,
         topN: cfg.recallTopN, maxChars: cfg.recallMaxChars, triggerWords: cfg.recallTriggerWords,
         // This conversation's channel only: a DM's words must not surface in a channel's answer.
@@ -774,6 +885,12 @@ export function apply(ctx, config) {
    * outside that set came from the agent itself.
    */
   const activeTurns = new Set()
+  /**
+   * Where each running turn's conversation is, by session id. state.sessions cannot say during a
+   * conversation's first turn — it is written when the turn ends — and the live stream needs to
+   * know from the first token.
+   */
+  const liveOrigins = new Map<string, Origin>()
 
   // Who is working, for the working message. Set at startup from the persona's first heading.
   let workingName = ''
@@ -803,11 +920,8 @@ export function apply(ctx, config) {
    * message's place. Cleared when the conversation has nothing running and nothing waiting. Written at
    * once, not on the debounced save: a process that dies within half a second would lose it.
    */
-  /** Turns lost in the last restart whose notice is not out yet: a new turn there replaces the record. */
-  const lostInRestart = new Set<string>()
   function recordInflight(key: string, target: Origin): void {
-    if (state.inflight?.[key] !== undefined && !lostInRestart.has(key)) return
-    lostInRestart.delete(key)
+    if (state.inflight?.[key] !== undefined) return
     state.inflight = { ...(state.inflight ?? {}), [key]: { channel: target.channel, threadTs: target.threadTs, since: Date.now() } }
     saveStateNow()
   }
@@ -817,26 +931,31 @@ export function apply(ctx, config) {
     saveStateNow()
   }
   async function recoverInflight(): Promise<void> {
-    // Taken before the first await, and each record kept until its own notice is out, so a restart during
-    // the notices loses none. A message arriving meanwhile is a new turn: its record replaces the lost one
-    // (recordInflight), and is left alone here.
-    const lost = Object.entries(state.inflight ?? {}) as Array<[string, { channel: string; threadTs: string | null; placeholder?: string; since?: number }]>
-    for (const [key] of lost) lostInRestart.add(key)
-    const forget = (key: string, record: { since?: number }) => {
-      lostInRestart.delete(key)
-      if (state.inflight?.[key] !== undefined && state.inflight[key].since === record.since) { delete state.inflight[key]; saveStateNow() }
+    // The previous process's records only (set aside at load; this process's turns live in inflight, so
+    // a new turn never meets one). Each stays in the state until its own notice is out, so a restart
+    // during the notices loses none; one being reported is skipped by a second run (a retried start);
+    // and a platform still down keeps its records for the retry that connects it.
+    type Lost = { channel: string; threadTs: string | null; placeholder?: string; since?: number }
+    const up = (record: Lost) => typeof transport.connectedFor !== 'function' || transport.connectedFor({ channel: record.channel, threadTs: record.threadTs }) === true
+    const lost = (Object.entries(state.restartLost ?? {}) as Array<[string, Lost]>).filter(([key, record]) => up(record) && !reporting.has(key))
+    for (const [key] of lost) reporting.add(key)
+    const forget = (key: string) => {
+      reporting.delete(key)
+      if (state.restartLost?.[key] !== undefined) { delete state.restartLost[key]; saveStateNow() }
     }
     for (const [key, record] of lost) {
-      if (Date.now() - Number(record.since ?? 0) > 24 * 3600_000) { log(`inflight ${key}: older than a day, dropped without a notice`); forget(key, record); continue }
+      if (Date.now() - Number(record.since ?? 0) > 24 * 3600_000) { log(`inflight ${key}: older than a day, dropped without a notice`); forget(key); continue }
       const target = { channel: record.channel, threadTs: record.threadTs }
       // The platform's status may still say "작업 중" from the process that died: raise and lower it.
-      try { transport.startTyping?.(target, () => {})?.() } catch { /* best effort */ }
+      try { via(target).startTyping?.(target, () => {})?.() } catch { /* best effort */ }
       await replyInPlaceOf(target, '재시작하느라 하던 작업이 끊겼어. 다시 말해줄래?', record.placeholder ?? null)
         .catch((e) => log(`inflight ${key}: notice failed: ${String((e as Error)?.message ?? e)}`))
       log(`inflight ${key}: told the conversation its turn was lost in a restart`)
-      forget(key, record)
+      forget(key)
     }
   }
+  /** Lost turns whose notice is going out now, so a second run of the recovery does not send it again. */
+  const reporting = new Set<string>()
 
   /**
    * The first sign that a message was taken: the platform's own typing where it has one, otherwise
@@ -845,11 +964,11 @@ export function apply(ctx, config) {
    */
   function startWorking(key: string, target: Origin): () => void {
     if (cfg.workingIndicator !== true) return () => {}
-    if (nativeIndicator()) {
+    if (nativeIndicator(target)) {
       // A refusal can arrive after the turn is over; a working message then would sit under the reply.
       let over = false
       try {
-        const stop = transport.startTyping(target, () => {
+        const stop = via(target).startTyping(target, () => {
           if (over) return
           log(`working indicator refused in ${key} — showing a working message instead`)
           showWorking(key, target, true)
@@ -861,9 +980,13 @@ export function apply(ctx, config) {
     return () => {}
   }
 
-  /** Whether the platform shows its own indicator — not once it has said it will refuse. */
-  function nativeIndicator(): boolean {
-    return typeof transport.startTyping === 'function' && transport.typingUnavailable !== true
+  /**
+   * Whether the conversation's platform shows its own indicator — not once it has said it will
+   * refuse. Asked of the conversation's own transport: with several platforms, they differ.
+   */
+  function nativeIndicator(target: Origin): boolean {
+    const part = via(target)
+    return typeof part.startTyping === 'function' && part.typingUnavailable !== true
   }
 
   /**
@@ -873,7 +996,7 @@ export function apply(ctx, config) {
    * is a caller standing in for a refused indicator.
    */
   function showWorking(key: string, target: Origin, instead = false): void {
-    if (cfg.workingIndicator !== true || (!instead && nativeIndicator()) || progress.tracks(key)) return
+    if (cfg.workingIndicator !== true || (!instead && nativeIndicator(target)) || progress.tracks(key)) return
     void progress.force(key, target)
       .catch((e) => log(`working message failed: ${String((e as Error)?.message ?? e)}`))
   }
@@ -883,16 +1006,19 @@ export function apply(ctx, config) {
    * new message and the working message is removed: an edit raises no notification, so replacing in
    * place had every answer reach a phone as "⏳ 아리 작업 중…". Elsewhere the reply edits it.
    */
-  async function replyInPlaceOf(target: Origin, text: string, placeholderTs: string | null): Promise<void> {
-    if (placeholderTs === null || typeof transport.remove !== 'function') {
-      await transport.post(target, text, { replace: placeholderTs })
+  async function replyInPlaceOf(target: Origin, text: string, placeholderTs: string | null, answer = false): Promise<void> {
+    const part = via(target)
+    // `answer` marks the turn's own reply, so a platform that streamed it can put this in its place.
+    const marked = answer ? { answer: true } : {}
+    if (placeholderTs === null || typeof part.remove !== 'function') {
+      await transport.post(target, text, { replace: placeholderTs, ...marked })
       return
     }
-    const sent = await transport.post(target, text)
+    const sent = await transport.post(target, text, marked)
     // A reply that did not go out must not take the working message with it: edit instead.
-    if (sent === null) { await transport.post(target, text, { replace: placeholderTs }); return }
+    if (sent === null) { await transport.post(target, text, { replace: placeholderTs, ...marked }); return }
     // The answer is out by now, so a throw here must not reach the caller's "Execution failed".
-    const removed = await transport.remove(target, placeholderTs).catch(() => false)
+    const removed = await part.remove(target, placeholderTs).catch(() => false)
     if (removed !== true) log(`working message ${placeholderTs} left in ${target.channel}: delete refused`)
   }
 
@@ -1039,7 +1165,14 @@ export function apply(ctx, config) {
         // created once the turn has been slow for progressAfterMs, then edited as
         // tools run, so a quick turn never shows anything.
         if (event?.type === 'tool/call' && activeTurns.has(liveSessionId)) {
-          const liveKey = Object.keys(state.sessions).find((k) => state.sessions[k] === liveSessionId)
+          // A platform that streams shows the step in place; the progress message is for the rest.
+          const live = liveOrigins.get(liveSessionId)
+          const streams = live !== undefined && typeof via(live).stream === 'function'
+          if (streams) {
+            const name = event.data?.name ?? event.data?.toolName ?? event.data?.call?.name
+            via(live).stream(live, { kind: 'tool', name: typeof name === 'string' ? name : 'tool' })
+          }
+          const liveKey = streams ? undefined : Object.keys(state.sessions).find((k) => state.sessions[k] === liveSessionId)
           if (liveKey !== undefined) {
             const startedAt = turnStartedAt.get(liveKey)
             if (startedAt !== undefined && (progress.has(liveKey) || Date.now() - startedAt >= cfg.progressAfterMs)) {
@@ -1063,7 +1196,7 @@ export function apply(ctx, config) {
         const threadTs = separator === -1 ? null : key.slice(separator + 1)
         health.delivered = (health.delivered ?? 0) + 1
         writeHealth()
-        if (!transport.ready()) { log(`agent-initiated message in ${sessionId} — no Slack client (scenario mode), not delivered`); return }
+        if (!via({ channel, threadTs }).ready()) { log(`agent-initiated message in ${sessionId} — no Slack client (scenario mode), not delivered`); return }
         log(`agent-initiated message in ${sessionId} — delivering to ${channel}`)
         transport.post({ channel, threadTs }, text)
           .then(() => refreshIndex('agent-initiated'))
@@ -1101,7 +1234,7 @@ export function apply(ctx, config) {
       // A transport that can render buttons gets them: the decision is made in place.
       // One that cannot gets the instruction to answer in the thread, which is the same
       // decision by a slower route.
-      const withButtons = transport.supportsButtons === true
+      const withButtons = via(target).supportsButtons === true
       const nonce = randomUUID().replace(/-/g, '').slice(0, 8)
       const asked = await transport.post(target, [
         `⚠️ 권한이 필요해: ${reason}`,
@@ -1153,6 +1286,50 @@ export function apply(ctx, config) {
     return root ?? ctx
   }
 
+  /** The conversation key of a running turn, from its origin. */
+  function liveKeyOf(sessionId: string): string | undefined {
+    const origin = liveOrigins.get(sessionId)
+    return origin === undefined ? undefined : keyOf(origin)
+  }
+
+  /** A conversation's key, as the state and the queue name it. */
+  function keyOf(origin: Origin): string {
+    return origin.threadTs === null ? origin.channel : `${origin.channel}:${origin.threadTs}`
+  }
+
+  /**
+   * Questions a turn asks the person — ask_user_question, a plan review — answered where the
+   * conversation can show them. Registered first (prepend), because the shipped web answerer holds a
+   * question until a browser answers; a conversation that cannot ask (Slack today, or a terminal
+   * that is not attached) passes it on with next().
+   */
+  let questionListener = null
+  function startQuestionAnswerer() {
+    if (questionListener !== null) return
+    const host = answererContext()
+    if (typeof host.on !== 'function') return
+    questionListener = host.on('user-questions/request', async (request, next) => {
+      const sessionId = request?.agent?.id ?? request?.agent?.session?.header?.id ?? request?.agent?.session?.id
+      const origin = typeof sessionId === 'string' ? liveOrigins.get(sessionId) : undefined
+      const part = origin === undefined ? null : via(origin)
+      if (part === null || typeof part.ask !== 'function') return next()
+      const questions = (Array.isArray(request?.questions) ? request.questions : []).map((q) => ({
+        id: String(q?.id ?? ''),
+        question: String(q?.question ?? ''),
+        ...(typeof q?.header === 'string' ? { header: q.header } : {}),
+        options: (Array.isArray(q?.options) ? q.options : []).map((o) => ({ label: String(o?.label ?? ''), ...(typeof o?.description === 'string' ? { description: o.description } : {}) })),
+        multiSelect: q?.multiSelect === true,
+        ...(typeof q?.detail === 'string' ? { detail: q.detail } : {}),
+        ...(q?.intent && typeof q.intent.kind === 'string' ? { intent: { kind: q.intent.kind, ...(typeof q.intent.approve === 'string' ? { approve: q.intent.approve } : {}) } } : {}),
+      }))
+      const answers = await part.ask(origin, questions, request?.signal)
+      if (answers === undefined) return next()
+      log(`questions in ${liveKeyOf(sessionId)}: ${answers === null ? 'dismissed' : `${answers.length} answered`}`)
+      if (answers === null) throw Object.assign(new Error('the person dismissed the question'), { name: 'UserQuestionError', code: 'ASK_CANCELLED' })
+      return { answers }
+    }, { prepend: true })
+  }
+
   let approvalListener = null
   function startApprovalAnswerer() {
     if (cfg.approvalAnswerer !== true || approvalListener !== null) return
@@ -1162,7 +1339,9 @@ export function apply(ctx, config) {
     approvalListener = host.on('approval/request', async (request) => {
       const sessionId = request?.agent?.session?.header?.id ?? request?.agent?.session?.id
       if (typeof sessionId !== 'string') return 'unavailable'
-      const key = Object.keys(state.sessions).find((k) => state.sessions[k] === sessionId)
+      // A conversation's first turn is not in state.sessions yet (it is written when the turn ends):
+      // without the live origin, every first-turn approval failed closed.
+      const key = Object.keys(state.sessions).find((k) => state.sessions[k] === sessionId) ?? liveKeyOf(sessionId)
       if (key === undefined) {
         log('approval requested but this session is not mapped to a conversation — failing closed')
         return 'unavailable'
@@ -1239,6 +1418,33 @@ export function apply(ctx, config) {
     if (exists) return canonicalRoots.some((base) => under(real, base))
     return canonicalRoots.some((base) => under(real, base) || under(lexical, base))
       || roots.map((root) => resolve(root)).some((base) => under(lexical, base))
+  }
+
+  /**
+   * Text as the model writes it, to the platforms that can show it. Only this adapter's own turns
+   * (liveOrigins): a subagent's stream, or a web session's, is not this conversation's to show.
+   */
+  let streamForwarder = null
+  function startStreamForwarder() {
+    if (streamForwarder !== null || typeof ctx.on !== 'function') return
+    streamForwarder = ctx.on('agent/assistant-stream', (payload) => {
+      try {
+        const sessionId = payload?.agent?.id ?? payload?.agent?.session?.header?.id
+        const origin = typeof sessionId === 'string' ? liveOrigins.get(sessionId) : undefined
+        if (origin === undefined) return
+        const part = via(origin)
+        if (typeof part.stream !== 'function') return
+        const frame = payload?.frame
+        if (frame?.type === 'chunk' && frame.chunk?.type === 'text-delta' && typeof frame.chunk.text === 'string') {
+          part.stream(origin, { kind: 'text', text: frame.chunk.text })
+        } else if (frame?.type === 'end' && (frame.outcome?.kind === 'abandoned' || frame.outcome?.eventType === 'assistant/attempt')) {
+          // A failed model call is retried from scratch: what it streamed is not the answer.
+          part.stream(origin, { kind: 'reset' })
+        }
+      } catch (e) {
+        log(`stream forward failed: ${String((e as Error)?.message ?? e)}`)
+      }
+    })
   }
 
   let toolPolicy = null
@@ -1430,7 +1636,7 @@ export function apply(ctx, config) {
    * one's. The per-conversation queue made both reachable; found by its review.
    */
   async function runTurn(prompt: string, existingSessionId: string | undefined, origin: Origin | null = null, historyText = '', attachmentText = '', sessionKey: string | null = null, images: unknown[] = []): Promise<TurnOutcome> {
-    const sessionId = existingSessionId ?? `slack-${randomUUID()}`   // stands in for brandString(...)
+    const sessionId = existingSessionId ?? `${sessionPrefixFor(origin)}-${randomUUID()}`   // stands in for brandString(...)
     const turnKey = sessionKey ?? sessionId ?? ''
     const turnState: TurnState = {
       cause: null,
@@ -1577,10 +1783,12 @@ export function apply(ctx, config) {
     }
     let handle
     activeTurns.add(sessionId)
+    if (origin !== null) liveOrigins.set(sessionId, origin)
     try {
       handle = await adopt(existingSessionId)
     } catch (e) {
       activeTurns.delete(sessionId)
+      liveOrigins.delete(sessionId)
       // AsyncDisposable yields a PromiseLike, which has no .catch: resolve it first rather
         // than relying on the service happening to return a real Promise.
         await Promise.resolve(scope?.[Symbol.asyncDispose]?.()).then(() => {}, () => {})
@@ -1591,6 +1799,8 @@ export function apply(ctx, config) {
       // AsyncDisposable yields a PromiseLike, which has no .catch: resolve it first rather
         // than relying on the service happening to return a real Promise.
         await Promise.resolve(scope?.[Symbol.asyncDispose]?.()).then(() => {}, () => {})
+      activeTurns.delete(sessionId)
+      liveOrigins.delete(sessionId)
       throw new Error('deepbot: agents.create/resume did not return an Agent')
 
     // Post-attach steps, in the reference implementation's order.
@@ -1636,7 +1846,8 @@ export function apply(ctx, config) {
     const progressTarget = origin ?? targetFromKey(turnKey)
     const startedAt = Date.now()
     turnStartedAt.set(turnKey, startedAt)
-    const progressTimer = cfg.progressAfterMs > 0 && turnKey !== ''
+    // A platform that streams shows the turn as it happens; a progress message would say it twice.
+    const progressTimer = cfg.progressAfterMs > 0 && turnKey !== '' && typeof via(progressTarget).stream !== 'function'
       ? setTimeout(() => {
           void progress.force(turnKey, progressTarget)
             .then(() => log(progress.has(turnKey)
@@ -1714,6 +1925,9 @@ export function apply(ctx, config) {
       // turn can resume; keeping it alive would pile one agent per thread into
       // memory.
       activeTurns.delete(sessionId)
+      liveOrigins.delete(sessionId)
+      // Whatever the turn was still waiting on in the conversation (an unanswered question) ends with it.
+      if (origin !== null) { try { via(origin).turnEnded?.(origin) } catch { /* nothing waiting */ } }
       try { await handle.dispose?.() } catch (e) { log('dispose failed', String(e)) }
       try { await scope?.[Symbol.asyncDispose]?.() } catch (e) { log('preset scope dispose failed', String(e)) }
     }
@@ -1759,17 +1973,76 @@ export function apply(ctx, config) {
   // history deltas, attachments. The core keeps mapping, the turn loop, policy,
   // watches and reminders.
   const transportHost = {
-    cfg, log, sessionCwd,
+    cfg, log, sessionCwd, stateDir,
+    workspaceFor: (key: string) => cwdFor(key),
+    listConversations: (channel: string) => listConversations(channel),
+    conversationHistory: (channel: string, conversation: string) => conversationHistory(channel, conversation),
+    model: () => { try { return String(ctx.get('agentDefaultModel')?.currentSelection?.()?.model ?? '') } catch { return '' } },
+    // The tenant a conversation is recorded in (null: the home), or undefined when none is recorded.
+    boundTenant: (key: string) => (cfg.tenantIsolation === true ? state.tenantOf?.[key] : undefined),
+    // The tenant a conversation is in right now, however it was decided.
+    tenantOf: (key: string) => tenantOf(key),
+    validTenant: (name: string) => isTenantName(name),
+    // Whether the conversation has a turn running or a message waiting, for a terminal that (re)connects.
+    // Counted only where turns send typing: with no indicator, a count would be a spinner nothing stops.
+    busy: (key: string) => cfg.workingIndicator !== true ? 0 : [...liveOrigins.values()].filter((o) => keyOf(o) === key).length + (waiting.get(key)?.size ?? 0),
+    services: { get: (name: string) => ctx.get(name), on: (name: string, listener: (...args: any[]) => unknown) => (typeof ctx.on === 'function' ? ctx.on(name, listener) : undefined) },
+    // A conversation's root session, from its first turn on (state.sessions is written when a turn ends).
+    sessionFor: (key: string) => state.sessions[key] ?? [...liveOrigins].find(([, o]) => keyOf(o) === key)?.[0] ?? null,
     credential: (ref: string) => credential(ref),
     onHealth: (patch: Record<string, unknown>) => { Object.assign(health, patch); writeHealth() },
   }
+  const createPlatform = (platform: unknown) => platform === 'telegram'
+    ? createTelegramTransport(transportHost)
+    : platform === 'discord'
+      ? createDiscordTransport(transportHost)
+      : platform === 'local'
+        ? createLocalTransport(transportHost)
+        : createSlackTransport(transportHost)
+  const platforms = Array.isArray(cfg.platform) ? cfg.platform : [cfg.platform]
   const transport = cfg.transportFactory
     ? cfg.transportFactory(transportHost)
-    : cfg.platform === 'telegram'
-      ? createTelegramTransport(transportHost)
-      : cfg.platform === 'discord'
-        ? createDiscordTransport(transportHost)
-        : createSlackTransport(transportHost)
+    : platforms.length === 1
+      ? createPlatform(platforms[0])
+      : createCompositeTransport(platforms.map(createPlatform))
+
+  /**
+   * The transport that owns a conversation. Optional capabilities — typing, deleting, buttons,
+   * links — are asked of it rather than of `transport`, because with several platforms they differ
+   * per conversation: Slack has no typing, a terminal does.
+   */
+  function via(target: { channel: string; threadTs: string | null }): any {
+    return typeof transport.forTarget === 'function' ? transport.forTarget(target) : transport
+  }
+
+  /** Session ids say where the conversation lives: `slack-…` (every platform so far), `tui-…`. */
+  function sessionPrefixFor(origin: Origin | null): string {
+    const prefix = origin === null ? undefined : via(origin).sessionPrefix
+    return typeof prefix === 'string' && prefix !== '' ? prefix : 'slack'
+  }
+
+  /**
+   * The tenant the conversation's own transport was asked for (a terminal's --tenant), or undefined
+   * when nothing was asked — then the configuration decides, as for any conversation.
+   */
+  function tenantChosenByTransport(key: string): string | undefined {
+    const target = targetFromKey(key)
+    const part = via(target)
+    const chosen = typeof part.tenantFor === 'function' ? part.tenantFor(target) : null
+    return typeof chosen === 'string' ? chosen : undefined
+  }
+
+  /**
+   * Record, with a terminal conversation's first message, the workspace it is in — the tenant it
+   * asked for, else the configured one, else the home. A terminal can ask to move a conversation, so
+   * its workspace is fixed from here on; a platform that cannot ask keeps following the configuration.
+   */
+  function bindTenant(key: string): void {
+    if (cfg.tenantIsolation !== true || state.tenantOf?.[key] !== undefined) return
+    if (typeof via(targetFromKey(key)).tenantFor !== 'function') return
+    state.tenantOf = { ...(state.tenantOf ?? {}), [key]: tenantChosenByTransport(key) ?? configuredTenant(key) }
+    saveState()
+  }
 
   // ── Concurrency ───────────────────────────────────────────────────────────
   const queue = []
@@ -1850,6 +2123,7 @@ export function apply(ctx, config) {
       if (message.text.replace(/[\s\u200b-\u200f\u2060\ufeff]+/gu, '') === '') return
     const prompt = message.text.slice(0, cfg.maxPromptChars)
       state.touched[key] = Date.now()
+    bindTenant(key)
     if (!prompt) return
 
     // A pending approval turns the next message into a decision, so it is consumed
@@ -1986,7 +2260,7 @@ export function apply(ctx, config) {
           health.answered++
           writeHealth()
           log(`answered channel=${channel} len=${r.text.length} ${Date.now() - started}ms`)
-          await replyInPlaceOf(replyTarget, r.text, placeholderTs)
+          await replyInPlaceOf(replyTarget, r.text, placeholderTs, true)
           await deliverDocuments(key, replyTarget, r.text, started)
             .catch((e) => log(`documents: delivery failed: ${String((e as Error)?.message ?? e)}`))
         } else if (r.reason?.kind === 'cancelled') {
@@ -1996,7 +2270,8 @@ export function apply(ctx, config) {
           // Already reported: a working message put up since (the turn's own, when slow) is removed, not
           // turned into a second report — edited only where the platform cannot delete.
           else if (placeholderTs !== null) {
-            const gone = typeof transport.remove === 'function' && await transport.remove(replyTarget, placeholderTs).catch(() => false)
+            const remover = via(replyTarget)
+            const gone = typeof remover.remove === 'function' && await remover.remove(replyTarget, placeholderTs).catch(() => false)
             if (gone !== true) await transport.post(replyTarget, why, { replace: placeholderTs })
           }
         } else {
@@ -2067,7 +2342,9 @@ export function apply(ctx, config) {
     }
     walk(home, 0)
     if (found.length === 0) return
-    if (typeof transport.uploadFile !== 'function') {
+    // The conversation's own transport: with Slack and a terminal served together, only one uploads.
+    const uploader = via(target)
+    if (typeof uploader.uploadFile !== 'function') {
       log(`documents: ${found.length} made in ${key}, but this platform cannot upload them`)
       return
     }
@@ -2094,7 +2371,7 @@ export function apply(ctx, config) {
         log(`documents: ${basename(path)} not uploaded — ${String((e as Error)?.message ?? e)}`)
         continue
       }
-      const ok = await transport.uploadFile(target, path, undefined, bytes).catch(() => false)
+      const ok = await uploader.uploadFile(target, path, undefined, bytes).catch(() => false)
       log(`documents: ${ok ? 'uploaded' : 'upload failed for'} ${basename(path)} to ${key}`)
       // The answer names a file nobody here received: Discord refuses one over its size limit, a Slack app
       // without files:write refuses them all.
@@ -2521,15 +2798,23 @@ export function apply(ctx, config) {
       log('context injection: disabled')
     }
 
-    await transport.connect({
-      onMessage: (message: InboundMessage) => {
-        handleEvent(message).catch((e) => log('handleEvent threw', String(e)))
-      },
-      onAction: (action) => {
-        handleAction(action).catch((e) => log('handleAction threw', String(e)))
-      },
-    })
-    await recoverInflight().catch((e) => log(`inflight recovery failed: ${String((e as Error)?.message ?? e)}`))
+    const recover = () => recoverInflight().catch((e) => log(`inflight recovery failed: ${String((e as Error)?.message ?? e)}`))
+    try {
+      await transport.connect({
+        onMessage: (message: InboundMessage) => {
+          handleEvent(message).catch((e) => log('handleEvent threw', String(e)))
+        },
+        onAction: (action) => {
+          handleAction(action).catch((e) => log('handleAction threw', String(e)))
+        },
+      })
+    } catch (e) {
+      // Some parts connected (a terminal while Slack is failing): their conversations hear about the
+      // turns a restart lost now, not when the last platform comes up.
+      if (typeof transport.connectedFor === 'function') await recover()
+      throw e
+    }
+    await recover()
   }
 
   // ── Lifecycle: close the socket when the plugin unloads ───────────────────
@@ -2562,12 +2847,16 @@ export function apply(ctx, config) {
     void sessionCwd().then((cwd) => { resolvedCwd.value = cwd }).catch(() => { /* no cwd, no scope */ })
     startWithRetry()
     startDeliveryWatcher()
+    startStreamForwarder()
     startApprovalAnswerer()
+    startQuestionAnswerer()
     startToolPolicy()
     writeHealth()
     if (healthTimer === null) healthTimer = setInterval(writeHealth, cfg.heartbeatMs)
     return () => {
       stopped = true
+      // Registered on the root scope, so it does not go with this plugin by itself.
+      if (typeof questionListener === 'function') { questionListener(); questionListener = null }
       saveStateNow()                     // a debounced write must not be lost on unload
       if (healthTimer !== null) clearInterval(healthTimer)
       health.connected = false

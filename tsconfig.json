@@ -33,6 +33,7 @@
     "transports/**/*.ts",
     "types/**/*.ts",
     "tools/**/*.ts",
-    "recall/**/*.ts"
+    "recall/**/*.ts",
+    "tui/**/*.ts"
   ]
 }

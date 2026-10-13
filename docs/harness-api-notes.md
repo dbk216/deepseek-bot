@@ -132,3 +132,99 @@ the helpers directly is cleaner and strictly better.
 `ctx.effect(() => { start(); return () => stop() }, 'label')` ties a resource to
 the plugin's lifetime: the returned function runs on unload. This plugin starts
 the Socket Mode connection there and closes the socket on disposal.
+
+## 7. Services the TUI reads — **code-read**, 2026-10-13
+
+Read from the shipped `lib/*.js` of DeepSeek Harness `0.2.0-rc.2` (inside `app.asar`), for the
+terminal UI (`tui/`). Paths are under `/dsh/node_modules/@deepseek-ai/`. None of this is a
+published contract; each shape below is pinned by a fixture test so an upgrade that changes it
+fails loudly. Items marked **runtime** still need a live run to confirm.
+
+**Streaming text.** `ctx.on('agent/assistant-stream', ({ agent, frame }) => …)`
+(`dsh-agent-loop/lib/index.js:1067`). The session id is `agent.id` (equal to
+`agent.session.id`). Frames:
+
+```ts
+| { type: 'start'; attemptId; revision; turn; step }
+| { type: 'chunk'; attemptId; revision; index /* dense from 0 */; time; chunk: StreamChunk }
+| { type: 'end'; attemptId; revision; index;
+    outcome: { kind: 'committed'; eventType: 'assistant/message' | 'assistant/attempt'; seq } | { kind: 'abandoned' } }
+StreamChunk = text-delta { index; text } | reasoning-delta { index; text } | tool-call-delta
+            | block-start | block-end | usage { usage } | finish { reason }
+```
+
+A failed attempt commits as `assistant/attempt` and is retried with a new `start` for the same
+turn and step, so a renderer must drop the attempt's partial text when that happens.
+**Verified live** (2026-10-13, a gateway on the worktree with `platform: 'local'`, model
+`deepseek-v4.1-flash-ultrafast`): the adapter's `ctx.on('agent/assistant-stream')` receives a root
+turn's frames — 39 text deltas, the first 702 ms after the message, the reply at 955 ms, and the
+deltas joined equal the reply exactly (261 characters). The
+event also fires for in-process subagents; `agent.session.header.origin === 'subagent'` tells
+them apart. `dsh-headless/lib/index.js:144-189` is the shipped consumer.
+
+**Usage and context.** `sessionProjections.snapshot(session).values`:
+`tokenUsage = { uncachedInputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }`
+(cumulative) and `contextPressure = { pressureTokens?, projectedTokens?, contextWindow? }`.
+`sessionProjections.onChanged((session, key, value, seq) => …)` is the change feed.
+**Verified live**: the OpenGateway route used here fills `contextWindow` — a two-turn terminal
+conversation read 11,701 tokens and 1.2% of the context.
+
+**Questions.** `ask_user_question` (dsh-tool-ask-user) reaches `ctx.userQuestions.ask()`, which
+runs the waterfall `ctx.on('user-questions/request', (request, next) => …, { prepend: true })`:
+
+```ts
+request = { questions: { id; question; header?; options?: { label; description? }[]; multiSelect?;
+                         detail?; intent?: { kind: 'plan-review'; approve } }[];
+            agent?: Agent; signal?: AbortSignal; wait?: { callId; timed? } }
+answer  = { answers: { id; selected: string[]; custom?: string }[] }
+```
+
+A listener answers by returning, declines with `return next()`, and cancels by throwing
+`{ name: 'UserQuestionError', code: 'ASK_CANCELLED' }`. Listeners run in registration order;
+the shipped Web answerer (`dsh-api-remotes`) is `disabled: true` in this deployment's profile,
+so the adapter is the only answerer. The tool copies only `id, question, header, options,
+multi_select` from the model's input — **a model cannot set `detail` or `intent`**; only
+`exit_plan_mode` sets the `plan-review` intent. Default tool mode is `legacy`: no `wait`, so a
+question is answered in the call or not at all.
+
+**Subagents.** `ctx.subagents.listChildren(parentSessionId)` →
+`{ id; createdAt; mode: 'one-shot' | 'continuable' | 'unknown'; label? }[]`; the label is the
+model's short description, there is no separate name. On the child: `subagentTiming =
+{ settledMs; active?: { since; through }; lastTurnCompleted? }` and `tokenUsage`. Running
+versus idle: `ctx.agents.get(childId)?.status`. A child's creation appends `subagent/catalog`
+to the parent. Read a transcript without adopting the session with
+`ctx.sessionQuery.observeSession(id)` (a disposable lease with `events`).
+`subagents.interruptByParent(childId, parentId, 'continuable')` needs only ids.
+`subagents.prompt({ requestId, parentSessionId, childSessionId, mode: 'continuable', delivery:
+'queue' | 'steer', content }, signal)` needs a **live parent agent** — and this adapter releases
+the agent after every turn (`index.ts`, end of `runRegisteredTurn`), so a child can be messaged only
+while its parent's turn is running. **runtime**: the adapter's `ctx` does receive
+`agent/assistant-stream` (above), which suggests it is untagged; whether children's
+`session/event` and `agent/status` reach it, and what happens to a continuable child when its
+parent is released, still need a live subagent.
+
+**Verified live** (2026-10-13, a real `subagent` call and two background `bash` jobs in a terminal
+conversation): a catalog entry is `{ mode, label, id, createdAt }` (label: the model's short
+description), `subagentTiming` is `{ settledMs, active: { since, through } }` while running, a job
+view is `{ id, kind, label, owner, status, startedAt, output }`, and the panel follows them through
+`agent/status`, projection changes and job events. A child's log records the harness's injections
+as user-role messages (`agent-instructions`, `runtime-context`, `skill-catalog`, `time-context`
+source kinds); only `user` is the task.
+
+**A background job ends with its turn here.** dsh-jobs disposes an owner's jobs when the owning
+agent's context is disposed (`ensureOwnerCleanup` → `disposeOwned`), and this adapter releases the
+agent after every turn. Observed: a job still running when its turn ended disappeared from the
+registry. The same holds for anything else owned by the agent. Keeping an agent alive while it owns
+work would change the adapter's lifecycle and is not done; the terminal says "정리됨" instead of
+leaving the output looking live.
+
+**Jobs.** `ctx.jobs.list(ownerSessionId)`, `get(id)`, `readAt(id, from)` →
+`{ chunks: { at; text; channel?: 'stdout' | 'stderr' | 'log' }[]; next; lossy }` (does not move
+the model's read cursor — never call `read()`), `kill(id)`, and
+`jobs.events.subscribe({ owners: 'all' }, listener)` for `registered | progress | output |
+settled | removed`. Job ids and output live only in the gateway process.
+
+**Measured.** An empty scenario boots the `agent-test` profile in 0.55–1.07 s (three runs,
+500 ms poll granularity). The gateway runs as a `gui/<uid>` launch agent, so a 0600 unix socket
+in the user's home is reachable from the user's terminal; macOS limits a socket path to 104
+bytes.
