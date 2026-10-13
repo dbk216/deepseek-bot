@@ -31,28 +31,29 @@ is built before the thing it stands on. The detailed history of each milestone i
 | M6 Transports | one core, Slack / Telegram / Discord, a fake transport for the core's tests, approvals over chat |
 | M7 Agent gaps | attachments and vision, read confinement, per-tenant policy, fetch policy, usage totals |
 | Round 66 | persona restored to the prompt; the platform's own working indicator; one turn at a time per conversation; recall scoped to its channel; documents uploaded; watches and commands confined (credentials, session store, ssh-agent, the launcher and its logs out of the agent's home; no writes through links) |
+| Round 67 | one-line install; the home's `.env` refused; recall read only by the adapter, ranked by rare words and offered without a trigger word; failures in the bot's voice without host paths, a stop reported once; a restart tells the conversation its turn was lost; the probe alerts on failed scenarios; no agent socket of the user's reachable from the sandbox, hard links pinned by a test; uploads send the checked bytes; approval buttons and uploads on every platform; Markdown rendered on Telegram |
 
 ## Open
 
-In order of impact.
+- **A check-then-write window in `writeInside`.** It checks a directory's real path, then writes by
+  path; Node has no `openat` to write relative to a checked directory descriptor. Exploiting it needs
+  a process inside the agent's sandbox racing the check. Uploads no longer share the window: the
+  bytes are read from the descriptor that was checked.
+- **The live round trip on Discord and Telegram**: typing, uploads, buttons and Telegram's rendering
+  are tested against mocked APIs only (see Unverified).
 
-- **The agent can rewrite its home's `.env`.** The harness's credential chain reads `<cwd>/.env`
-  before `~/.dsh/.env`, and the agent works in that directory.
-- **The agent can read the whole recall index with its own tools.** The channel filter applies to
-  what the adapter injects, not to what the agent reads.
-- **The credential deny is by path.** A hard link elsewhere to the same file is not covered.
-- **Recall needs a trigger word** and ranks by plain word overlap.
-- **A restart loses a turn in flight** without telling the conversation.
-- **Some replies are English** ("Execution failed", "The turn did not complete") in a deployment
-  that speaks Korean.
-- **The daily scenario run has no alert** when it fails.
-- **Platform gaps:** approval buttons only on Discord, uploads and permalinks only on Slack, no
-  Markdown rendering on Telegram.
-- LOW: a check-then-write window in `writeInside` and before an upload; ssh-agent sockets other
-  than launchd's; a stop during preparation reports twice.
+Decided against:
+
+- **Permalinks on Discord and Telegram.** On Slack a link points at a thread inside a channel; on
+  Discord and Telegram the conversation *is* the channel or chat, Discord's `<#channel>` mention is
+  already a link, and a private Telegram chat has none. A link to where the person already is would
+  be a knob that does nothing.
 
 ## Unverified
 
-- Discord and Telegram typing and uploads: mocked APIs only, no live server.
+- Discord and Telegram typing, uploads and approval buttons, and Telegram's HTML rendering: mocked
+  APIs only, no live server or bot.
+- Slack approval buttons in a real workspace: they need Interactivity turned on in the app's
+  settings; without it a press does nothing and the person types the answer, which the request offers.
 - Which Slack status method a given workspace accepts; the plugin logs each refusal.
 - Whether a Slack app has `files:write` for uploads; a refusal is logged, the answer is unaffected.

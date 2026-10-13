@@ -8,27 +8,16 @@ decision with a cost.
 
 | Missing | Consequence | Where to fix |
 |---|---|---|
-| Slack attachments and images | The agent sees text only; a dropped file is invisible to it | `handleEvent`: fetch `url_private_download` with the bot token and pass it as an attachment |
-| Progress streaming into Slack | The thread is silent until the turn finishes. Fine at ~1 s, wrong for a five-minute job | Post a placeholder message, then `chat.update` it; or emit `agent/assistant-stream` frames into a throttled edit |
-| A "working on it" acknowledgement | Same as above — no feedback for slow turns | Do it together with the placeholder above |
-| Queue-depth feedback | Beyond `maxConcurrency`, work waits silently | Report queue position after N seconds of waiting |
-| `memory/` maintenance | Semantic memory is a *convention* in `AGENTS.md`, not code. Nothing extracts facts after a conversation, prunes stale ones, or injects them at prompt time | A curator plugin: schedule a pass over recent sessions, write dated facts, and add a recall step |
-| Vector / embedding recall | Recall is FTS5 + whatever the model reads, not semantic similarity. Paraphrased questions may miss | Embed and index externally, or accept keyword recall |
-| Cross-platform adapters | Slack only | The adapter is self-contained; a Discord or Telegram sibling is a new plugin with the same shape |
+| Queue position | A message waiting behind `maxConcurrency` shows the working indicator at once, but not its place in line | Report the position after N seconds of waiting |
+| Fact extraction for `memory/` | Notes are kept by the agent following `AGENTS.md`, and the adapter asks for a tidy-up when `MEMORY.md` grows or repeats; nothing extracts facts after a conversation on its own | A curator pass on a schedule over recent sessions |
+| Semantic recall | Recall is lexical: words in common, weighted by how rare they are, Korean particles stripped. A paraphrase with no shared rare word may miss | Embed and index externally; a new runtime dependency is a decision, not a detail |
 
 ## Verified partially, or not at all
 
-- **Cross-session recall does not exist.** Diagnosed, not merely unverified:
-  - the session logs are present (one zstd-compressed `session.v4.jsonl.zstd` per
-    session, bucketed by working directory);
-  - the FTS index opens but holds **0 rows**;
-  - the shipped model-facing tool set contains **no session search**, and the
-    query service's consumers (the web client, the `@session` reference source)
-    are both UI-driven.
-
-  So the index is a substrate with no consumer in the agent plane. Recall has to
-  be built: a plugin that queries `ctx.sessionQuery` and either exposes it as a
-  tool or injects bounded hits before a turn. Configuration cannot fix this.
+- **Recall is the adapter's, not the agent's.** `recall/deepbot-recall.ts` indexes past sessions into
+  `$DSH_HOME/recall/<home>/recall-index.jsonl` on a schedule; the adapter ranks passages from the same
+  channel and injects them before a turn. Sandboxed commands cannot read the index. The harness's own
+  FTS index held 0 rows when this was built and is not used.
 - **Duplicate-event suppression.** The rule is implemented and the code path was
   exercised, but no real Slack redelivery was observed, so the end-to-end path is
   untested.
@@ -87,15 +76,14 @@ decision with a cost.
 ## Verifying recall
 
 ```bash
-DB="$DSH_HOME/session-index.db"
-sqlite3 "$DB" "select count(*) from persisted_sessions;"
-sqlite3 "$DB" "select count(*) from persisted_docs;"
-sqlite3 "$DB" "select count(*) from persisted_docs where persisted_docs match 'some phrase you said';"
+INDEX=$(ls -d "$DSH_HOME"/recall/*/ | head -1)recall-index.jsonl
+wc -l "$INDEX"                              # rows: grows as conversations are indexed
+grep -c 'some phrase you said' "$INDEX"     # the phrase reached the index
+node test/run-scenario.mjs test/scenarios/recall-immediate.json
 ```
 
-If the counts stay at zero after the gateway has handled and flushed turns, the
-index is not reconciling (see the note in `docs/harness-api-notes.md` about how it
-opens) — ask the agent to search its own history and see whether it can.
+If the row count stays flat after conversations, the refresh job is not running:
+`launchctl print gui/$(id -u)/ai.deepbot.recall-index`.
 
 - **No browser.** Link reading is an HTTP fetch: no JavaScript execution and no interaction,
   so a page that renders its content client-side arrives empty. A headless browser would need

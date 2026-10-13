@@ -5,25 +5,21 @@ the caveat about version numbers is at the bottom.
 
 ## Unreleased
 
+### Added
+
 - **Install in one line**: `curl -fsSL …/install.sh | bash` fetches, builds, scaffolds the home and
   the profile, asks for the tokens on the terminal and installs the services; running it again
   updates. The profile template carries the sandbox runner, headless approvals and the deepbot row.
-- **The persona reaches the model again**: `SOUL.md`, `USER.md` and `MEMORY.md` are sent by the
-  adapter (the harness's loader reads only `AGENTS.md`), with the speaker named.
 - **The platform's own working indicator**: Slack's thread status ("앱이 작업 중"), typing on
   Discord and Telegram; a working message only where that is refused.
-- **One turn at a time per conversation**; a stop withdraws what is waiting.
-- **Recall stays in its channel**; documents a turn made are uploaded to the thread (Slack).
-- **Confinement**: watches the agent writes run read-only in the sandbox; commands cannot read the
-  deployment's credentials, the session store, the gateway's logs or use the ssh-agent; the launcher
-  and its logs live outside the agent's home; unconfined writes never follow a link.
-- **Nothing machine-specific in the repository**: paths, ids and names moved to the deployment's
-  profile and environment (`DEEPBOT_DENY_READ`, scenario `{HOME}` placeholders).
-
-## Unreleased
-
-### Added
-
+- **Approval buttons on every platform**: Block Kit on Slack (needs Interactivity on), an inline
+  keyboard on Telegram, components on Discord. Typing 허용 / 거부 still works.
+- **Documents a turn made are uploaded** on Slack, Discord and Telegram.
+- **Telegram renders Markdown**: bold, code, links and headings as HTML, plain text when refused.
+- **Recall without a trigger word**: two rare words in common with a past conversation of the same
+  channel are enough, ranked by how rare each word is, with Korean particles stripped.
+- **A restart tells the conversation** its turn was lost and asks to be told again.
+- **The health probe alerts** once per daily scenario report that has failures.
 - **Usage reporting.** Ask `사용량` / `토큰` / `usage` in a conversation and the bot answers
   from durable totals — turns, input tokens and the cache-read share — without starting a
   turn. Tokens only: the harness exposes no price, and the summary says so rather than
@@ -46,10 +42,29 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **The persona reaches the model again**: `SOUL.md`, `USER.md` and `MEMORY.md` are sent by the
+  adapter (the harness's loader reads only `AGENTS.md`), with the speaker named.
+- **One turn at a time per conversation**; a stop withdraws what is waiting, and is reported once.
+- **Failures are reported in the bot's voice** (Korean, 반말) without host paths; the last
+  honorific messages were found by a widened check.
 - A debounced state write could be lost when the plugin unloaded. Found by checking a
   five-step scenario for its usage totals and finding one turn instead of two: the pending
   timer never fired. The state is flushed on unload now.
 
+### Security
+
+- **Recall stays in its channel**, and only the adapter reads the index: it lives under the harness
+  home, which sandboxed commands cannot read.
+- **Confinement**: watches the agent writes run read-only in the sandbox; commands cannot read the
+  deployment's credentials (a hard link is no way around it), the session store or the gateway's
+  logs, nor reach any agent socket of the user's (ssh-agent, 1Password, gpg-agent); the launcher and
+  its logs live outside the agent's home; unconfined writes never follow a link.
+- **The home's `.env` cannot replace the deployment's tokens**: the agent may not write one, and the
+  launcher moves one aside before the gateway starts.
+- **An upload sends the bytes of the file that was checked**, read from one descriptor without
+  following a link.
+- **Nothing machine-specific in the repository**: paths, ids and names moved to the deployment's
+  profile and environment (`DEEPBOT_DENY_READ`, scenario `{HOME}` placeholders).
 
 ## 0.2.0 — 2026-10-10
 

@@ -98,20 +98,20 @@ Each line is traceable to code and to something that checks it.
 
 | It | Where | Checked by |
 |---|---|---|
-| Serves Slack over **Socket Mode**: receive, reply in thread, chunk long answers, drop duplicate events | `transports/slack.ts` | `test/slack.test.mjs` 36/36; `tools/qa-slack.mjs` against a live workspace |
-| Serves **Telegram** by long polling | `transports/telegram.ts` | `test/telegram.test.mjs` 28/28 |
-| Serves **Discord** (gateway websocket + REST), with buttons for approvals | `transports/discord.ts` | `test/discord.test.mjs` 35/35 |
-| Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.mjs` 141/141; `test/scenarios/restart-1.json` + `restart-2.json` |
+| Serves Slack over **Socket Mode**: receive, reply in thread, chunk long answers, drop duplicate events | `transports/slack.ts` | `test/slack.test.mjs` 54/54; `tools/qa-slack.mjs` against a live workspace |
+| Serves **Telegram** by long polling | `transports/telegram.ts` | `test/telegram.test.mjs` 41/41 |
+| Serves **Discord** (gateway websocket + REST), with buttons for approvals | `transports/discord.ts` | `test/discord.test.mjs` 38/38 |
+| Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.mjs` 152/152; `test/scenarios/restart-1.json` + `restart-2.json` |
 | Injects **persona and notes** (`SOUL.md`/`USER.md`/`MEMORY.md` from the adapter, `AGENTS.md` from `dsh-agent-instructions`), without re-sending them every turn | `index.ts` | `test/core.test.mjs`; `test/scenarios/persona.json` 4/4 |
-| **Recalls past conversations** — rank passages, then ask for what they imply | `recall/`, `recallContext.ts` | `test/recall.test.mjs` 12/12; `test/recall-context.test.mjs` 18/18 |
+| **Recalls past conversations** — rank passages, then ask for what they imply | `recall/`, `recallContext.ts` | `test/recall.test.mjs` 13/13; `test/recall-context.test.mjs` 25/25 |
 | Reads the **thread it was mentioned in**, as a delta | `transports/slack.ts` | `test/history.test.mjs` 9/9 |
 | Sends an attached **image** to the model as an image | `transports/attachments.ts`, `index.ts` | `test/attachments.test.mjs` 13/13; `vision.json` needs a model |
 | Produces **documents** (docx, pptx, xlsx) | `profile/cordis.patch.yml` office rows | `test/scenarios/document.json` asserts the artifacts |
 | Asks the user to **approve** a destructive command, in the conversation — with buttons on every platform | `index.ts`, `transports/*.ts` | approval checks in `test/core.test.mjs`; `approval-gate.json` records one open gap |
-| Confines **reads**, for commands and for the file tools — other agents' homes, credentials, the session store, the gateway's logs, the ssh-agent | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.mjs` 27/27; `test/edges.test.mjs` 19/19 |
+| Confines **reads**, for commands and for the file tools — other agents' homes, credentials, the session store, the gateway's logs, the user's agent sockets | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.mjs` 35/35; `test/edges.test.mjs` 19/19 |
 | Flags **instruction-like text** in fetched material | `injection.ts` | `test/injection.test.mjs` 31/31 |
-| **Uploads the documents a turn made** (pdf, docx, xlsx, pptx, csv changed during the turn, whose path the answer names, with one link and inside the home; on Slack it needs `files:write`) | `index.ts`, `transports/*.ts` | `test/core.test.mjs` 141/141; `test/slack.test.mjs` |
-| Runs **one turn at a time per conversation**; a later message waits, and a stop withdraws what is waiting | `index.ts` | `test/failures.test.mjs` 25/25 |
+| **Uploads the documents a turn made** (pdf, docx, xlsx, pptx, csv changed during the turn, whose path the answer names, with one link and inside the home; on Slack it needs `files:write`) | `index.ts`, `transports/*.ts` | `test/core.test.mjs` 152/152; `test/slack.test.mjs` |
+| Runs **one turn at a time per conversation**; a later message waits, and a stop withdraws what is waiting | `index.ts` | `test/failures.test.mjs` 32/32 |
 | Shows it is **working at once** with the platform's own indicator (Slack's thread status, typing elsewhere), or a progress message where that is refused | `progress.ts`, `index.ts` | `test/progress.test.mjs` 22/22; `test/core.test.mjs` |
 | **Stops** a running turn on request, and on its own timeout | `index.ts` | `test/scenarios/interrupt.json` |
 | Reports **token usage** without starting a turn | `usage.ts` | `test/usage.test.mjs` 19/19 |
@@ -138,10 +138,10 @@ suites on Node 22 with `pnpm run typecheck` in front of them.
 | Area | State |
 |---|---|
 | Slack Socket Mode, threads, chunking, dedupe | verified unit + live |
-| Telegram | implemented; unit 28/28; **live round trip not done** (needs a bot token) |
-| Discord | implemented; unit 35/35; **live round trip not done** (needs a bot token) |
+| Telegram | implemented, with buttons, uploads and Markdown; unit 41/41; **live round trip not done** (needs a bot token) |
+| Discord | implemented, with buttons and uploads; unit 38/38; **live round trip not done** (needs a bot token) |
 | Durable sessions, resume across a restart | verified (scenario: two processes) |
-| Cross-session recall, injected as a decision block | verified unit; scenarios need a model |
+| Cross-session recall, injected as a decision block | verified unit; `recall`, `recall-immediate` and `recall-decision` scenarios pass against a real model |
 | Persona/notes budgets, note hygiene | verified unit |
 | Images | implemented; the end-to-end scenario needs a model that accepts images |
 | Documents | implemented; the scenario asserts the produced files |
