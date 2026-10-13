@@ -259,6 +259,28 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   t.done()
 }
 
+// 3i. A turn in flight is written down, so a restart can say what it lost. Before, a restart dropped
+// the turn without a word and left "작업 중" on screen.
+{
+  const t = boot({ agent: 'hang', config: { runTimeoutMs: 60000 } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: 'long one' }))
+  await sleep(300)
+  const record = t.read().inflight?.['C_ALLOWED:t1']
+  check('a turn in flight is recorded in the state file', record?.channel === 'C_ALLOWED' && record?.threadTs === 't1', JSON.stringify(t.read().inflight))
+  check('with its working message', typeof record?.placeholder === 'string', JSON.stringify(record))
+  t.done()
+}
+{
+  const t = boot({ state: { inflight: { 'C_ALLOWED:t1': { channel: 'C_ALLOWED', threadTs: 't1', placeholder: 'ts-old', since: Date.now() - 5000 } } } })
+  await sleep(300)
+  const notice = t.transport.posted.find((p) => /끊겼어/.test(p.text))
+  check('after a restart the conversation is told its turn was lost', notice !== undefined, JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 30))))
+  check('in place of the working message that was left behind', notice?.replace === 'ts-old', JSON.stringify(notice))
+  check('and the record is cleared', Object.keys(t.read().inflight ?? {}).length === 0, JSON.stringify(t.read().inflight))
+  t.done()
+}
+
 // 4. Stopping a turn that is open actually stops it, and says so.
 {
   const t = boot({ agent: 'hang' })

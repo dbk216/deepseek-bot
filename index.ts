@@ -353,6 +353,8 @@ export function apply(ctx, config) {
         history: raw.history ?? {},
         touched: raw.touched ?? {},
         usage: raw.usage ?? emptyUsageStore(),
+        // Conversations with a turn accepted and not yet answered, so a restart can say what it lost.
+        inflight: raw.inflight ?? {},
       }
     } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, usage: emptyUsageStore() } }
   }
@@ -779,7 +781,41 @@ export function apply(ctx, config) {
     throttleMs: cfg.progressUpdateMs,
     label: () => String(cfg.progressText).replace('{name}', workingName).replace(/\s{2,}/g, ' ').trim(),
     log,
+    onPosted: (key, ts) => {
+      const record = state.inflight?.[key]
+      if (record !== undefined) { record.placeholder = ts; saveStateNow() }
+    },
   })
+
+  /**
+   * A conversation's turn in flight, written down. A restart used to drop it without a word and leave
+   * "작업 중" on screen; with the record, the next start says the turn was lost, in the working
+   * message's place. Cleared when the conversation has nothing running and nothing waiting. Written at
+   * once, not on the debounced save: a process that dies within half a second would lose it.
+   */
+  function recordInflight(key: string, target: Origin): void {
+    if (state.inflight?.[key] !== undefined) return
+    state.inflight = { ...(state.inflight ?? {}), [key]: { channel: target.channel, threadTs: target.threadTs, since: Date.now() } }
+    saveStateNow()
+  }
+  function settleInflight(key: string): void {
+    if (waiting.has(key) || runningTurns.has(key) || state.inflight?.[key] === undefined) return
+    delete state.inflight[key]
+    saveStateNow()
+  }
+  async function recoverInflight(): Promise<void> {
+    for (const [key, record] of Object.entries(state.inflight ?? {}) as Array<[string, { channel: string; threadTs: string | null; placeholder?: string; since?: number }]>) {
+      delete state.inflight[key]
+      saveStateNow()
+      if (Date.now() - Number(record.since ?? 0) > 24 * 3600_000) { log(`inflight ${key}: older than a day, dropped without a notice`); continue }
+      const target = { channel: record.channel, threadTs: record.threadTs }
+      // The platform's status may still say "작업 중" from the process that died: raise and lower it.
+      try { transport.startTyping?.(target, () => {})?.() } catch { /* best effort */ }
+      await replyInPlaceOf(target, '재시작하느라 하던 작업이 끊겼어. 다시 말해줄래?', record.placeholder ?? null)
+        .catch((e) => log(`inflight ${key}: notice failed: ${String((e as Error)?.message ?? e)}`))
+      log(`inflight ${key}: told the conversation its turn was lost in a restart`)
+    }
+  }
 
   /**
    * The first sign that a message was taken: the platform's own typing where it has one, otherwise
@@ -1780,6 +1816,7 @@ export function apply(ctx, config) {
       if (stopped === 'none' && withdrawn > 0) {
         await progress.settle(key)
         await replyInPlaceOf({ channel, threadTs }, `중단했어 — 기다리던 메시지 ${withdrawn}개를 취소했어.`, progress.take(key)?.ts ?? null)
+        settleInflight(key)
         return
       }
       // A running turn reports its own cancellation: it holds the progress placeholder, so
@@ -1804,6 +1841,7 @@ export function apply(ctx, config) {
     health.lastEventAt = Date.now()
     writeHealth()
     log(`accepted channel=${channel} thread=${threadTs} session=${state.sessions[key] ?? 'new'}`)
+    recordInflight(key, { channel, threadTs })
     // Before the queue, so a message waiting behind other turns also shows it was taken.
     const stopWorking = startWorking(key, { channel, threadTs })
     const ticket: Ticket = { withdrawn: false, stopWorking }
@@ -1813,7 +1851,7 @@ export function apply(ctx, config) {
     enqueueFor(key, async () => {
       const started = Date.now()
       const replyTarget = { channel, threadTs }
-      if (ticket.withdrawn) { stopWorking(); log(`withdrawn before it started in ${key}`); return }
+      if (ticket.withdrawn) { stopWorking(); log(`withdrawn before it started in ${key}`); settleInflight(key); return }
       showWorking(key, replyTarget)
       try {
         let historyText = ''
@@ -1839,7 +1877,7 @@ export function apply(ctx, config) {
         if (attachmentText !== '') log(`attachments: ${message.files.length} file(s) for ts=${ts}`)
 
         // Checked again here, after the fetches: a stop can arrive while they run, before the turn exists.
-        if (!leaveWaiting(key, ticket)) { stopWorking(); log(`withdrawn before it started in ${key}`); return }
+        if (!leaveWaiting(key, ticket)) { stopWorking(); log(`withdrawn before it started in ${key}`); settleInflight(key); return }
         // Remembered when this message's turn starts, not when it arrives: the approval listener runs
         // outside the turn, and a message queued behind another would claim that turn's approvals.
         if (message.user !== '') requesterOf.set(key, message.user)
@@ -1902,6 +1940,8 @@ export function apply(ctx, config) {
         await progress.settle(key)
         const leftover = progress.take(key)?.ts ?? null
         await replyInPlaceOf(replyTarget, `실행에 실패했어: ${withoutHome(String(e?.message ?? e)).slice(0, 300)}`, leftover)
+      } finally {
+        settleInflight(key)
       }
     }, () => ticket.withdrawn)
   }
@@ -2397,6 +2437,7 @@ export function apply(ctx, config) {
         handleAction(action).catch((e) => log('handleAction threw', String(e)))
       },
     })
+    await recoverInflight().catch((e) => log(`inflight recovery failed: ${String((e as Error)?.message ?? e)}`))
   }
 
   // ── Lifecycle: close the socket when the plugin unloads ───────────────────

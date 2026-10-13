@@ -30,6 +30,8 @@ export interface ProgressOptions {
   label: string | (() => string)
   now?: () => number
   log?: (...parts: unknown[]) => void
+  /** Called once a conversation's message exists, with its id: the core records it for a restart. */
+  onPosted?: (key: string, ts: string) => void
 }
 
 interface Entry {
@@ -72,6 +74,7 @@ export function createProgressTracker(options: ProgressOptions) {
       if (entry.ts === null) {
         const posted = await options.post(entry.target, text)
         entry.ts = posted?.ts ?? null
+        if (entry.ts !== null) options.onPosted?.(key, entry.ts)
         return
       }
       await options.post(entry.target, text, { replace: entry.ts })
