@@ -836,14 +836,14 @@ export function apply(ctx, config) {
     }
     if (pending.user !== undefined && cfg.approvalRequireSameUser === true && action.user !== pending.user) {
       log(`approval in ${key} refused: ${action.user} is not the requester (${pending.user})`)
-      await transport.post(targetFromKey(key), '이 요청을 승인할 수 있는 사람이 아닙니다 — 요청한 사람이 직접 답해주세요.')
+      await transport.post(targetFromKey(key), '이 요청을 승인할 사람이 아니야 — 요청한 사람이 직접 답해줘.')
       return
     }
     pendingApprovals.delete(key)
     const allowed = decision === 'allow'
     log(`approval in ${key} answered by button: ${allowed ? 'allowed-once' : 'rejected'}`)
     pending.resolve(allowed ? 'allowed-once' : 'rejected')
-    await transport.post(targetFromKey(key), allowed ? '허용했습니다 — 계속 진행합니다.' : '거부했습니다.')
+    await transport.post(targetFromKey(key), allowed ? '허용했어 — 계속할게.' : '거부했어.')
   }
 
   /** A whole message that is only "stop": the shapes a person actually types. */
@@ -936,8 +936,8 @@ export function apply(ctx, config) {
       const withButtons = transport.supportsButtons === true
       const asked = await transport.post(target, [
         `:warning: 권한이 필요합니다: ${reason}`,
-        withButtons ? `아래 버튼으로 결정해주세요.` : `실행하려면 *허용*, 거부하려면 *거부* 라고 답해주세요.`,
-        `(답이 없으면 ${Math.round(cfg.approvalTimeoutMs / 60000)}분 뒤 자동으로 거부됩니다.)`,
+        withButtons ? `아래 버튼으로 결정해줘.` : `실행하려면 *허용*, 거부하려면 *거부* 라고 답해줘.`,
+        `(답이 없으면 ${Math.round(cfg.approvalTimeoutMs / 60000)}분 뒤 자동으로 거부돼.)`,
       ].join('\n'), withButtons
         ? { buttons: [
             { id: `approval:allow:${key}`, label: '허용', style: 'primary' as const },
@@ -1561,14 +1561,14 @@ export function apply(ctx, config) {
         // and approving somebody else's destructive command is not theirs to make.
         if (pending.user !== undefined && cfg.approvalRequireSameUser === true && message.user !== pending.user) {
           log(`approval in ${key} refused: ${message.user} is not the requester (${pending.user})`)
-          await transport.post({ channel, threadTs }, '이 요청을 승인할 수 있는 사람이 아닙니다 — 요청한 사람이 직접 답해주세요.')
+          await transport.post({ channel, threadTs }, '이 요청을 승인할 사람이 아니야 — 요청한 사람이 직접 답해줘.')
           return
         }
       const allowed = wordIn(prompt, cfg.approveWords)
       pendingApprovals.delete(key)
       log(`approval in ${key} answered: ${allowed ? 'allowed-once' : 'rejected'} after ${Math.round((Date.now() - pending.askedAt) / 1000)}s`)
       pending.resolve(allowed ? 'allowed-once' : 'rejected')
-      await transport.post({ channel, threadTs }, allowed ? '허용했습니다 — 계속 진행합니다.' : '거부했습니다.')
+      await transport.post({ channel, threadTs }, allowed ? '허용했어 — 계속할게.' : '거부했어.')
       return
     }
 
@@ -1593,8 +1593,8 @@ export function apply(ctx, config) {
       // resolved left the stop request completely silent.
       if (stopped !== 'running') {
         await transport.post({ channel, threadTs }, stopped === 'none'
-          ? '지금 돌고 있는 작업이 없습니다.'
-          : '중단했습니다 — 시작 중이던 작업을 멈췄습니다.')
+          ? '지금 돌고 있는 작업이 없어.'
+          : '중단했어 — 시작 중이던 작업을 멈췄어.')
       }
       return
     }
@@ -1653,7 +1653,7 @@ export function apply(ctx, config) {
           log(`answered channel=${channel} len=${r.text.length} ${Date.now() - started}ms`)
           await transport.post(replyTarget, r.text, { replace: placeholderTs })
         } else if (r.reason?.kind === 'cancelled') {
-          const why = r.reason.cause === 'timed out' ? '시간이 초과돼 중단했습니다.' : '중단했습니다.'
+          const why = r.reason.cause === 'timed out' ? '시간이 초과돼서 멈췄어.' : '중단했어.'
           log(`turn cancelled cause=${String(r.reason.cause ?? '-')}`)
           await transport.post(replyTarget, why, { replace: placeholderTs })
         } else {

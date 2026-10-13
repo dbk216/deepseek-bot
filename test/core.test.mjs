@@ -205,7 +205,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   t.transport.deliver(t.transport.message({ text: '그만' }))
   await sleep(250)
   check('a stop request starts no turn', t.transport.historyCalls.length === 0, `${t.transport.historyCalls.length} call(s)`)
-  check('and says there is nothing to stop', t.transport.posted.some((p) => /작업이 없습니다/.test(p.text)), JSON.stringify(t.transport.posted.map((p) => p.text)))
+  check('and says there is nothing to stop', t.transport.posted.some((p) => /작업이 없어/.test(p.text)), JSON.stringify(t.transport.posted.map((p) => p.text)))
   t.done()
 }
 
@@ -218,7 +218,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   t.transport.deliver(t.transport.message({ text: '그만' }))
   await sleep(250)
   check('a finished turn is not reported as stoppable', !t.logs.some((l) => /cancelling the running turn/.test(l)), t.logs.filter((l) => /cancelling/.test(l)).join(' | '))
-  check('and the stop request says nothing is running', t.transport.posted.some((p) => /작업이 없습니다/.test(p.text)), JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 30))))
+  check('and the stop request says nothing is running', t.transport.posted.some((p) => /작업이 없어/.test(p.text)), JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 30))))
   t.done()
 }
 
@@ -251,7 +251,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   check('the request says how to answer', t.transport.posted.some((p) => /허용/.test(p.text) && /거부/.test(p.text)))
   t.transport.deliver(t.transport.message({ text: '허용' }))
   check('answering 허용 allows the action once', await outcome === 'allowed-once', await outcome)
-  check('a decision is confirmed', t.transport.posted.some((p) => /허용했습니다/.test(p.text)))
+  check('a decision is confirmed', t.transport.posted.some((p) => /허용했어/.test(p.text)))
   check('the decision is logged', t.logs.some((l) => /approval in C_ALLOWED:t1 answered: allowed-once/.test(l)))
   t.done()
 }
@@ -289,7 +289,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   t.transport.deliver(t.transport.message({ text: '이거 말고 다른 걸 해줘' }))
   await sleep(250)
   check('a message that is not a decision still becomes a turn', t.transport.historyCalls.length === 1, `${t.transport.historyCalls.length} turn(s)`)
-  check('and the approval is still pending', t.transport.posted.filter((p) => /허용했습니다|거부했습니다/.test(p.text)).length === 0)
+  check('and the approval is still pending', t.transport.posted.filter((p) => /허용했어|거부했어/.test(p.text)).length === 0)
   t.transport.deliver(t.transport.message({ text: '거부' }))
   check('until it is answered', await pending === 'rejected')
   t.done()
@@ -354,7 +354,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   t.transport.press('approval:allow:C_ALLOWED:t1')
   check('pressing 허용 allows the action once', await outcome === 'allowed-once', await outcome)
   check('the press is logged as a decision by button', t.logs.some((l) => /answered by button: allowed-once/.test(l)))
-  check('and a confirmation is posted', t.transport.posted.some((p) => /허용했습니다/.test(p.text)))
+  check('and a confirmation is posted', t.transport.posted.some((p) => /허용했어/.test(p.text)))
   t.done()
 }
 
@@ -498,7 +498,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   await sleep(250)
   check('a third party in the same thread cannot approve',
     await Promise.race([outcome, sleep(60).then(() => 'pending')]) !== 'allowed-once', 'still pending, as it should be')
-  check('and they are told whose request it is', t.transport.posted.some((p) => /승인할 수 있는 사람이 아닙니다/.test(p.text)),
+  check('and they are told whose request it is', t.transport.posted.some((p) => /승인할 사람이 아니야/.test(p.text)),
     JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 26))))
   check('the refusal is logged with both users',
     t.logs.some((l) => /refused: U_SOMEONE_ELSE is not the requester \(U_OWNER\)/.test(l)),
@@ -567,6 +567,20 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   check('the thread permalink is provided', t.logs.some((l) => /thread permalink provided/.test(l)),
     t.logs.filter((l) => /link:/.test(l)).join(' | ').slice(0, 90) || '(no link log)')
   t.done()
+}
+
+// 28. The bot's own messages are 반말, like everything else it says.
+//
+// This is not cosmetic. Those strings sit in the conversation, and the model copies the voice around it:
+// with "중단했습니다 — 시작 중이던 작업을 멈췄습니다" in the thread, replies drifted into 존댓말 even though
+// the persona file said 반말. Pinned here because a regression is invisible until a person notices the tone.
+{
+  const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
+  const polite = source.split('\n')
+    .map((line, i) => ({ line, i: i + 1 }))
+    .filter(({ line }) => /'[^']*(습니다|하세요|했습니다|됩니다|세[요])/.test(line))
+  check('the plugin sends no honorific messages', polite.length === 0,
+    polite.slice(0, 2).map((l) => `L${l.i}: ${l.line.trim().slice(0, 60)}`).join(' | '))
 }
 
 const failed = results.filter((r) => !r.ok)
