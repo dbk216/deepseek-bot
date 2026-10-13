@@ -1,45 +1,81 @@
 <p align="center">
-  <img src="docs/logo.svg" width="112" height="112" alt="deepbot">
+  <img src="docs/sprite.svg" width="300" alt="deepbot — a pixel whale">
 </p>
 
 <h1 align="center">deepbot</h1>
 
 <p align="center">
-  <strong>Your memory, on DeepSeek Harness</strong><br>
-  a self-hosted AI teammate that remembers your threads, reads the links you send it,<br>
-  drafts your documents, and asks before it deletes anything.
+  <strong>An always-on AI teammate for Slack, Discord and Telegram, built on DeepSeek Harness.</strong><br>
+  It remembers your threads, reads what you send it, drafts documents,<br>
+  and asks before it deletes anything.
 </p>
 
 <p align="center">
-  <strong>Version 0.2.0</strong> · <a href="CHANGELOG.md">changelog</a> · runs on DeepSeek Harness <code>0.2.0-rc.2</code>
+  <a href="https://github.com/rlaope/deepseek-bot/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rlaope/deepseek-bot/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-2E7BFF">
+  <img alt="node 22+" src="https://img.shields.io/badge/node-22%2B-2E7BFF">
+  <img alt="DeepSeek Harness 0.2.0-rc.2" src="https://img.shields.io/badge/DeepSeek%20Harness-0.2.0--rc.2-173FB5">
+  <img alt="runtime dependencies: 0" src="https://img.shields.io/badge/runtime%20deps-0-173FB5">
 </p>
 
-Every claim below is pinned by something you can run: a suite in `test/` that needs no harness
-(`pnpm test`), a scenario in `test/scenarios/` that boots a real profile and calls a real model,
-or a live check on a running deployment. Where a claim is **not** verified it says so.
+```text
+        ▄▄████▄▄            ▄▄
+      ▄██████████▄▄▄     ▄▄██
+     ████▀ ▀████████████████▀     deepbot
+     ████▄▄▄█████████████▀▀       an always-on agent on DeepSeek Harness
+      ▀████████████▀▀▀
+         ▀▀▀▀▀▀
 
-**deepbot is one plugin bundle for [DeepSeek Harness](https://github.com/deepseek-ai).** The
-harness ships the runtime — sessions, tools, sandbox, model routes, the web surface. This
-repository is the *agent edition* on top of it: a long-running process that lives in Slack,
-keeps durable sessions, remembers across conversations, and can speak first.
-
-```
-Slack (Socket Mode) ──┐
-Telegram (polling)  ──┼──▶ transports/  ──▶  index.ts (the core)  ──▶  DSH services
-Discord (gateway)   ──┘   one file per        sessions, policy,        agents · sessions
-                          platform            prompt assembly          sessionQuery · credentials
-                                                    │                        │
-                                                    │                        ▼
-                                                    │              session log (event-sourced)
-                                                    │                        │
-                                                    └── recall block ◀── memory/recall-index.jsonl
-                                                                         (written host-side)
+  you  ▸ @deepbot 지난번에 배포 롤백 어떻게 하기로 했지?
+       ⟳ deepbot 앱이 작업 중
+  bot  ▸ 화요일 스레드에서 롤백 창은 15분으로 정했어. 이번 배포 전에 그 창부터 확인하자.
 ```
 
-No process is spawned per message: the adapter drives the gateway's already-running `agents`
-service, so a turn is a session call, not a CLI invocation.
+## Install
 
----
+```bash
+curl -fsSL https://raw.githubusercontent.com/rlaope/deepseek-bot/master/install.sh | bash
+```
+
+That is the only install path, and running it again is the update. Before you run it you need:
+
+- **macOS**, with **git** and **Node.js 22+** (`brew install node`).
+- **[DeepSeek Harness](https://github.com/deepseek-ai)** — the desktop app, which ships the `dsh` CLI.
+- **A chat app** for the platform you want: a Slack app, a Telegram bot or a Discord bot
+  ([setup below](#platform-setup)), and a **DeepSeek API key**.
+
+What the installer does, in order:
+
+1. checks for the above and stops with a reason if something is missing;
+2. clones (or updates) the source into `~/.deepbot` and builds it;
+3. creates the agent's home `~/dsh-agent` — `SOUL.md`, `AGENTS.md`, `USER.md`, `MEMORY.md` — and
+   the gateway profile `~/.dsh/profiles/agent`, keeping any file that already exists;
+4. asks for the platform, the channels to answer in and the tokens, on the terminal — tokens are
+   never echoed, go to the harness's `~/.dsh/.env` (mode 600) and are never asked for twice;
+5. installs the launchd services: the gateway, a health probe, the watch runner and the recall index;
+6. prints the health status.
+
+Then invite the bot to a channel and mention it. The agent's persona is `~/dsh-agent/SOUL.md`:
+edit it, it is yours.
+
+Optional environment for the installer: `DEEPBOT_DIR`, `DEEPBOT_HOME`, `DEEPBOT_PROFILE`, `DEEPBOT_REF`,
+`DSH_BIN`, and `DEEPBOT_SKIP_SERVICES=1` to build and configure without installing any service.
+
+## Talking to it
+
+| You say | It does |
+|---|---|
+| `@deepbot …` in a channel, or anything in a DM | answers in the thread, as the persona in `SOUL.md` |
+| a follow-up while it is still working | waits, then answers it next — one turn at a time per thread |
+| `그만` / `stop` | stops the running turn and withdraws what was waiting |
+| `사용량` / `usage` | token totals for the thread, without starting a turn |
+| `허용` / `거부` (or the buttons on Discord) | answers its request to run something destructive |
+| "지난번에 … 어떻게 하기로 했지?" | recalls past threads **in this channel** and says what they imply |
+| "…가 바뀌면 알려줘" | sets up a watch: a command it runs on a schedule, in a read-only sandbox |
+| "보고서 docx로 만들어줘" | writes the document and uploads it to the thread (Slack) |
+
+While it works, the platform's own indicator shows — Slack's "앱이 작업 중" under the thread,
+Discord's and Telegram's "typing…" — so the answer is the only notification.
 
 ## What it is
 
@@ -66,20 +102,20 @@ Each line is traceable to code and to something that checks it.
 | Serves **Telegram** by long polling | `transports/telegram.ts` | `test/telegram.test.mjs` 28/28 |
 | Serves **Discord** (gateway websocket + REST), with buttons for approvals | `transports/discord.ts` | `test/discord.test.mjs` 35/35 |
 | Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.mjs` 141/141; `test/scenarios/restart-1.json` + `restart-2.json` |
-| Injects **persona and notes** (`SOUL.md`/`USER.md`/`MEMORY.md` from the adapter, `AGENTS.md` from `dsh-agent-instructions`), without re-sending them every turn | `index.ts` | `test/core.test.mjs`; `test/scenarios/persona.json` 3/3 |
+| Injects **persona and notes** (`SOUL.md`/`USER.md`/`MEMORY.md` from the adapter, `AGENTS.md` from `dsh-agent-instructions`), without re-sending them every turn | `index.ts` | `test/core.test.mjs`; `test/scenarios/persona.json` 4/4 |
 | **Recalls past conversations** — rank passages, then ask for what they imply | `recall/`, `recallContext.ts` | `test/recall.test.mjs` 12/12; `test/recall-context.test.mjs` 18/18 |
 | Reads the **thread it was mentioned in**, as a delta | `transports/slack.ts` | `test/history.test.mjs` 9/9 |
 | Sends an attached **image** to the model as an image | `transports/attachments.ts`, `index.ts` | `test/attachments.test.mjs` 13/13; `vision.json` needs a model |
 | Produces **documents** (docx, pptx, xlsx) | `profile/cordis.patch.yml` office rows | `test/scenarios/document.json` asserts the artifacts |
 | Asks the user to **approve** a destructive command, in the conversation | `index.ts` | approval checks in `test/core.test.mjs`; `approval-gate.json` records one open gap |
-| Confines **reads**, for commands and for the file tools | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.mjs` 10/10; `test/edges.test.mjs` 19/19 |
+| Confines **reads**, for commands and for the file tools — other agents' homes, credentials, the session store, the gateway's logs, the ssh-agent | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.mjs` 27/27; `test/edges.test.mjs` 19/19 |
 | Flags **instruction-like text** in fetched material | `injection.ts` | `test/injection.test.mjs` 31/31 |
 | **Uploads the documents a turn made** (pdf, docx, xlsx, pptx, csv changed during the turn, whose path the answer names, with one link and inside the home; Slack only, needs `files:write`) | `index.ts`, `transports/slack.ts` | `test/core.test.mjs` 141/141; `test/slack.test.mjs` |
 | Runs **one turn at a time per conversation**; a later message waits, and a stop withdraws what is waiting | `index.ts` | `test/failures.test.mjs` 25/25 |
-| Shows it is **working at once** (typing, or a progress message on Slack) and edits it | `progress.ts`, `index.ts` | `test/progress.test.mjs` 22/22; `test/core.test.mjs` |
+| Shows it is **working at once** with the platform's own indicator (Slack's thread status, typing elsewhere), or a progress message where that is refused | `progress.ts`, `index.ts` | `test/progress.test.mjs` 22/22; `test/core.test.mjs` |
 | **Stops** a running turn on request, and on its own timeout | `index.ts` | `test/scenarios/interrupt.json` |
 | Reports **token usage** without starting a turn | `usage.ts` | `test/usage.test.mjs` 19/19 |
-| Delivers **reminders** and **watches** — speaking first, but only when asked to | `watch/`, schedule bundle | `test/watch.test.mjs` 16/16; `test/delivery.test.mjs` 9/9 |
+| Delivers **reminders** and **watches** — speaking first, but only when asked to; a watch the agent wrote runs read-only in the sandbox | `watch/`, schedule bundle | `test/watch.test.mjs` 22/22; `test/delivery.test.mjs` 9/9 |
 | Publishes **health** so an external probe can restart a disconnected bot | `service/health-check.mjs` | `PLAN.md` M3: injected unhealthy state → restart → recovered |
 | Gives each conversation group its own **workspace** (tenants) | `index.ts` | tenant checks in `test/core.test.mjs`; `test/scenarios/tenant.json` |
 | Prunes its own bookkeeping so a long-running process does not grow forever | `index.ts` (`stateRetentionDays`) | `test/resources.test.mjs` 8/8 |
@@ -95,15 +131,15 @@ Three kinds of evidence appear in this repository, and they are not equivalent:
 3. **Live checks** were made against a running deployment and are recorded here, in `PLAN.md`, or
    in a code comment with the measurement next to it.
 
-The counts below are from a run of `pnpm test` on 2026-10-13 (macOS, Node 26.7.0): **413 checks
-in 20 suites, exit 0**, plus the `dist-fresh` build guard and a secret scan. CI runs the same
+The counts below are from a run of `pnpm test` on 2026-10-13 (macOS, Node 26.7.0): **531 checks
+in 21 suites, exit 0**, plus the `dist-fresh` build guard and a secret scan. CI runs the same
 suites on Node 22 with `pnpm run typecheck` in front of them.
 
 | Area | State |
 |---|---|
 | Slack Socket Mode, threads, chunking, dedupe | verified unit + live |
-| Telegram | implemented; unit 25/25; **live round trip not done** (needs a bot token) |
-| Discord | implemented; unit 32/32; **live round trip not done** (needs a bot token) |
+| Telegram | implemented; unit 28/28; **live round trip not done** (needs a bot token) |
+| Discord | implemented; unit 35/35; **live round trip not done** (needs a bot token) |
 | Durable sessions, resume across a restart | verified (scenario: two processes) |
 | Cross-session recall, injected as a decision block | verified unit; scenarios need a model |
 | Persona/notes budgets, note hygiene | verified unit |
@@ -112,7 +148,7 @@ suites on Node 22 with `pnpm run typecheck` in front of them.
 | Approvals over chat | answerer and buttons verified unit; the destructive-command gate is **open end to end** (below) |
 | Read confinement | implemented; a **policy** boundary, not a kernel one |
 | Watches, reminders, health probe | verified unit; health restart verified against an injected failure |
-| Streaming tokens into Slack | **not implemented** — the answer replaces one progress message |
+| Streaming tokens into Slack | **not implemented** — the answer arrives whole, after the working status |
 | Semantic/vector recall | **not implemented** — ranking is lexical, so a paraphrase can miss |
 | Browser automation | **not implemented** — link reading is an HTTP fetch |
 | Per-tenant *permission* preset | **not supported** — `permission` is read and never applied (`TODO` in `test/core.test.mjs`) |
@@ -222,7 +258,7 @@ wires up what it does not turn on by default, and adds the consumer the agent pl
 | Layer | Where | Who writes it | When the agent sees it |
 |---|---|---|---|
 | Working | the current session log | the harness | always |
-| Identity | `SOUL.md`, `AGENTS.md` | you (scaffolded by `init.sh`) | every turn |
+| Identity | `SOUL.md`, `AGENTS.md` | you (scaffolded by the installer) | every turn |
 | Semantic | `USER.md`, `MEMORY.md`, `memory/<topic>.md` | the agent, under the rules in `agent/AGENTS.md`; you may edit them | every turn |
 | Episodic | `memory/recall-index.jsonl` | the host-side indexer | when a message points at the past |
 
@@ -243,9 +279,8 @@ undated lines, and refuses on a secret, which would otherwise be in every prompt
 session log.
 
 ```bash
-./init.sh --home ~/my-agent            # scaffold all four from agent/*.md
-$EDITOR ~/my-agent/SOUL.md             # make it yours
-node tools/persona-check.mjs ~/my-agent   # or: pnpm run persona -- ~/my-agent
+$EDITOR ~/dsh-agent/SOUL.md                             # make it yours
+node ~/.deepbot/tools/persona-check.mjs ~/dsh-agent     # budgets, duplicated facts, secrets
 ```
 
 Note hygiene is deliberately small: `notes.ts` counts characters and repeated lines and asks the
@@ -571,96 +606,70 @@ operator in the log, instead of silent. `test/injection.test.mjs` (31/31) weight
 as heavily as the attacks, because a guard that flags ordinary conversation is a guard nobody
 reads.
 
-## Requirements
+## Platform setup
 
-- **DeepSeek Harness** (the `dsh` CLI), version `0.2.0-rc.2`. On macOS it ships inside the desktop
-  app; pass its path via `DSH_BIN` if it is not where the scripts expect it.
-- **Node.js 22+** for the build, the tests and the service jobs. The adapter itself uses the
-  built-in `fetch` and `WebSocket`.
-- **A Slack app using Socket Mode.** No public URL is needed.
-- **A model credential.** The default route reads `DEEPSEEK_API_KEY`; a gateway route reads
-  whatever key its provider entry names (`docs/harness-api-notes.md` §4 has the layer order).
-
-## Slack app setup
+### Slack
 
 1. Create an app at <https://api.slack.com/apps>.
-2. **Socket Mode** → on → generate an app-level token with `connections:write` (`xapp-…`).
-3. **OAuth & Permissions** → bot scopes. The transport calls `conversations.history` /
-   `conversations.replies`, `users.info`, `url_private_download` and the files upload API, so:
-   `app_mentions:read`, `chat:write`, `channels:read`, `channels:history` (plus `groups:history`
-   for private channels), `users:read`, `files:read` (attachments), `files:write` (document
-   upload).
-4. **Event Subscriptions** → subscribe to `app_mention`.
-5. Install to the workspace → bot token (`xoxb-…`).
+2. **Socket Mode** → on → generate an app-level token with `connections:write` (`xapp-…`). No public
+   URL is needed.
+3. **OAuth & Permissions** → bot scopes: `app_mentions:read`, `chat:write`, `channels:read`,
+   `channels:history` (plus `groups:history` for private channels), `users:read`, `files:read`
+   (attachments) and `files:write` (document uploads).
+4. **Event Subscriptions** → subscribe to `app_mention` (and `message.im` for DMs).
+5. Install it to the workspace and copy the bot token (`xoxb-…`).
 6. `/invite` the bot into every channel it should serve. **A bot cannot see a channel it has not
-   been invited to** — this is the most common silent failure.
+   been invited to** — the most common silent failure.
 
-> One Socket Mode connection per app. Opening a second one makes Slack split events across them,
-> and both clients start dropping messages. If you are migrating from another bot, stop the old
-> process before starting this one.
+The working status ("앱이 작업 중") uses `agents.sessions.setStatus`, or
+`assistant.threads.setStatus` where the workspace has not turned agent sessions on; both need only
+`chat:write`. If both are refused, a `⏳ … 작업 중…` message stands in and the reply replaces it.
 
-## Install
+> One Socket Mode connection per app. A second one makes Slack split events across them and both
+> start dropping messages: stop any other process using the same app first.
 
-The sources are TypeScript and the profile loads `dist/index.js`, so a checkout without `dist/`
-cannot start.
+### Telegram
 
-```bash
-pnpm install                 # typescript and @types/node
-pnpm run build               # tsc -> dist/
-pnpm run typecheck           # no emit; CI gates on this and on pnpm test
-```
+Create a bot with [@BotFather](https://t.me/BotFather) and give the installer its token. In groups,
+mention the bot or reply to it; for it to see group messages at all, turn off privacy mode in
+BotFather (`/setprivacy`).
 
-```bash
-# 1) create the agent home (persona files) and the gateway profile
-./init.sh                    # add --dry-run to see what it would do first
-#    ~/dsh-agent/            <- SOUL.md AGENTS.md USER.md MEMORY.md, memory/ state/
-#    $DSH_HOME/profiles/agent/  <- the profile, with this repo registered as a bundle
-#    Re-running it keeps every file that already exists.
-#    Flags: --home <dir>, --profile <name>, --port <n>, --skip-profile, --dry-run
+### Discord
 
-# 2) provide credentials (resolved by the harness credential service, never by this code)
-cat >> "$DSH_HOME/.env" <<'EOF'
-SLACK_BOT_TOKEN=xoxb-<your-bot-token>
-SLACK_APP_TOKEN=xapp-<your-app-token>
-EOF
-chmod 600 "$DSH_HOME/.env"
+Create an application at <https://discord.com/developers/applications>, add a bot, turn on the
+**Message Content** privileged intent, and invite it with the `bot` scope and the *Send Messages*,
+*Read Message History* and *Attach Files* permissions. Give the installer the bot token.
 
-# 3) set the channels this agent may answer in
-$EDITOR /absolute/path/to/deepbot/cordis.patch.yml   # targetChannels, replyMode
+## Running it
 
-# 4) run it
-dsh --profile agent --port 19500 --no-open
-```
-
-`targetChannels` accepts explicit channel IDs or `'*'` for *every channel the bot was invited
-to*. **The plugin refuses to start with an empty list**, so a misconfiguration cannot turn the bot
-loose everywhere. `replyMode: 'mention'` answers `@`-mentions in channels (DMs are always
-answered); `'all'` answers every human message in the allowed channels.
-
-To make it survive logout and reboot:
+The installer leaves four launchd jobs; each script also takes `--status` and `--uninstall`.
 
 ```bash
-service/install-service.sh            # launchd; auto-start + restart on exit
-service/install-service.sh --status   # state, HTTP port, recent plugin log
-service/install-service.sh --uninstall
-
-service/install-health.sh             # 5-minute health probe (DEEPBOT_ALERT_TO=U123 to DM on failure)
-node service/health-check.mjs --status
-
-recall/install-refresh.sh             # launchd backstop that rebuilds the recall index
-watch/install-watch.sh                # evaluates due watches every minute
+~/.deepbot/service/install-service.sh --status    # the gateway: state, port, recent plugin log
+node ~/.dsh/service/health-check.mjs --status     # what the bot itself reports
+~/.deepbot/service/install-health.sh --uninstall  # remove the health probe (likewise the others)
 ```
 
-The service wrapper rebuilds TypeScript when `dist/` is missing or older than the sources, and if
-a build fails it starts with the existing `dist/` rather than taking a working bot down — refusing
-only when there is nothing to load. It also strips inherited `DSH_PROFILE` / `DSH_SESSION_ID`
-variables and fixes the working directory, because both of those silently break a gateway started
-from inside another DSH session.
+| Job | Script | What it does |
+|---|---|---|
+| gateway | `service/install-service.sh` | runs the harness with this profile; restarts on exit |
+| health | `service/install-health.sh` | probes every 5 minutes, restarts a disconnected bot, rotates logs |
+| watch | `watch/install-watch.sh` | evaluates due watches every minute |
+| recall index | `recall/install-refresh.sh` | rebuilds the recall index every 10 minutes (it is also rebuilt after every turn) |
+
+Runtime copies (the launcher, the sandbox runner, the probe) live in `~/.dsh/service`, outside the
+agent's home, and their logs in `~/.dsh/service/logs`: nothing the agent can write is ever run
+unconfined. To change where a deployment's own private data is protected from the agent's commands,
+set `DEEPBOT_DENY_READ` (colon-separated paths) before installing the services.
+
+`targetChannels` in the profile's `cordis.patch.yml` accepts channel ids or `'*'` for every channel
+the bot was invited to; **the plugin refuses to start with an empty list**. `replyMode: mention`
+answers @-mentions in channels (DMs always); `'all'` answers every human message in them.
 
 ## Tests and scenarios
 
 ```bash
-pnpm test                     # 20 suites, no harness, no network, no account
+pnpm test                     # 21 suites, no harness, no network, no account
 pnpm test:profile             # the composed posture of the installed profiles
 node test/run-scenario.mjs    # default: test/scenarios/recall.json (needs a model credential)
 ```
@@ -744,21 +753,24 @@ uncertain.
 ## Layout
 
 ```
+install.sh                     the one-line installer and updater
+init.sh                        scaffolds the agent home and the gateway profile (install.sh runs it)
 index.ts                       the adapter: orchestration, policy gates, prompt assembly
+safeWrite.ts                   unconfined writes into the agent's home that never follow a link
 transports/                    the platform seam: slack.ts, telegram.ts, discord.ts, attachments.ts
 recall/                        the host-side indexer (deepbot-recall.ts) + its refresh job
 recallContext.ts               the block injected when a message points at the past
 notes.ts                       when to ask the model to tidy up the notes
-progress.ts                    one message per turn, created once and edited
+progress.ts                    the working message, where a platform's own indicator is refused
 usage.ts                       token totals that survive a restart
 injection.ts                   detecting instruction-like text in fetched material
 watch/                         the watch runner and its installer
-profile/                       the gateway profile: bundle list, memory switch, office rows
+profile/                       the gateway profile: bundles, sandbox runner, approvals, the deepbot row
 service/                       runner, launchd installers, health probe, log rotation
 agent/                         SOUL.md / AGENTS.md / USER.md / MEMORY.md templates
 tools/                         persona-check, the secret scanner, the live Slack QA runner
 test/                          unit suites, scenarios, fixtures
-docs/                          harness API notes, limitations, the logo
+docs/                          harness API notes, limitations, the sprite and the logo
 cordis.patch.yml               the bundle patch that inserts the adapter row
 ```
 

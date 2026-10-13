@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 168" width="360" height="168" shape-rendering="crispEdges" role="img" aria-label="deepbot: a pixel whale">
+  <title>deepbot</title>
+  <!-- An original pixel sprite drawn for this project; it is not DeepSeek's logo. -->
+  <rect x="132" y="0" width="12" height="12" fill="#6CC8FF"/>
+  <rect x="168" y="0" width="12" height="12" fill="#6CC8FF"/>
+  <rect x="144" y="12" width="24" height="12" fill="#6CC8FF"/>
+  <rect x="144" y="24" width="12" height="12" fill="#6CC8FF"/>
+  <rect x="96" y="36" width="108" height="12" fill="#173FB5"/>
+  <rect x="72" y="48" width="24" height="12" fill="#173FB5"/>
+  <rect x="96" y="48" width="108" height="12" fill="#2E7BFF"/>
+  <rect x="204" y="48" width="24" height="12" fill="#173FB5"/>
+  <rect x="324" y="48" width="24" height="12" fill="#173FB5"/>
+  <rect x="60" y="60" width="12" height="12" fill="#173FB5"/>
+  <rect x="72" y="60" width="156" height="12" fill="#2E7BFF"/>
+  <rect x="228" y="60" width="12" height="12" fill="#173FB5"/>
+  <rect x="312" y="60" width="12" height="12" fill="#173FB5"/>
+  <rect x="324" y="60" width="12" height="12" fill="#2E7BFF"/>
+  <rect x="336" y="60" width="12" height="12" fill="#173FB5"/>
+  <rect x="48" y="72" width="12" height="12" fill="#173FB5"/>
+  <rect x="60" y="72" width="180" height="12" fill="#2E7BFF"/>
+  <rect x="240" y="72" width="12" height="12" fill="#173FB5"/>
+  <rect x="300" y="72" width="12" height="12" fill="#173FB5"/>
+  <rect x="312" y="72" width="24" height="12" fill="#2E7BFF"/>
+  <rect x="336" y="72" width="12" height="12" fill="#173FB5"/>
+  <rect x="36" y="84" width="12" height="12" fill="#173FB5"/>
+  <rect x="48" y="84" width="24" height="12" fill="#2E7BFF"/>
+  <rect x="72" y="84" width="12" height="12" fill="#FFFFFF"/>
+  <rect x="84" y="84" width="12" height="12" fill="#0A1A44"/>
+  <rect x="96" y="84" width="156" height="12" fill="#2E7BFF"/>
+  <rect x="252" y="84" width="12" height="12" fill="#173FB5"/>
+  <rect x="288" y="84" width="12" height="12" fill="#173FB5"/>
+  <rect x="300" y="84" width="24" height="12" fill="#2E7BFF"/>
+  <rect x="324" y="84" width="12" height="12" fill="#173FB5"/>
+  <rect x="36" y="96" width="12" height="12" fill="#173FB5"/>
+  <rect x="48" y="96" width="24" height="12" fill="#2E7BFF"/>
+  <rect x="72" y="96" width="24" height="12" fill="#0A1A44"/>
+  <rect x="96" y="96" width="168" height="12" fill="#2E7BFF"/>
+  <rect x="264" y="96" width="24" height="12" fill="#173FB5"/>
+  <rect x="288" y="96" width="24" height="12" fill="#2E7BFF"/>
+  <rect x="312" y="96" width="12" height="12" fill="#173FB5"/>
+  <rect x="36" y="108" width="12" height="12" fill="#173FB5"/>
+  <rect x="48" y="108" width="252" height="12" fill="#2E7BFF"/>
+  <rect x="300" y="108" width="12" height="12" fill="#173FB5"/>
+  <rect x="36" y="120" width="12" height="12" fill="#173FB5"/>
+  <rect x="48" y="120" width="36" height="12" fill="#A9CFFF"/>
+  <rect x="84" y="120" width="204" height="12" fill="#2E7BFF"/>
+  <rect x="288" y="120" width="12" height="12" fill="#173FB5"/>
+  <rect x="48" y="132" width="12" height="12" fill="#173FB5"/>
+  <rect x="60" y="132" width="72" height="12" fill="#A9CFFF"/>
+  <rect x="132" y="132" width="120" height="12" fill="#2E7BFF"/>
+  <rect x="252" y="132" width="24" height="12" fill="#173FB5"/>
+  <rect x="60" y="144" width="24" height="12" fill="#173FB5"/>
+  <rect x="84" y="144" width="120" height="12" fill="#A9CFFF"/>
+  <rect x="204" y="144" width="48" height="12" fill="#173FB5"/>
+  <rect x="84" y="156" width="120" height="12" fill="#173FB5"/>
+</svg>

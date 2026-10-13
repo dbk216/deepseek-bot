@@ -3,6 +3,22 @@
 Notable changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the caveat about version numbers is at the bottom.
 
+## Unreleased
+
+- **Install in one line**: `curl -fsSL …/install.sh | bash` fetches, builds, scaffolds the home and
+  the profile, asks for the tokens on the terminal and installs the services; running it again
+  updates. The profile template carries the sandbox runner, headless approvals and the deepbot row.
+- **The persona reaches the model again**: `SOUL.md`, `USER.md` and `MEMORY.md` are sent by the
+  adapter (the harness's loader reads only `AGENTS.md`), with the speaker named.
+- **The platform's own working indicator**: Slack's thread status ("앱이 작업 중"), typing on
+  Discord and Telegram; a working message only where that is refused.
+- **One turn at a time per conversation**; a stop withdraws what is waiting.
+- **Recall stays in its channel**; documents a turn made are uploaded to the thread (Slack).
+- **Confinement**: watches the agent writes run read-only in the sandbox; commands cannot read the
+  deployment's credentials, the session store, the gateway's logs or use the ssh-agent; the launcher
+  and its logs live outside the agent's home; unconfined writes never follow a link.
+- **Nothing machine-specific in the repository**: paths, ids and names moved to the deployment's
+  profile and environment (`DEEPBOT_DENY_READ`, scenario `{HOME}` placeholders).
 
 ## Unreleased
 
