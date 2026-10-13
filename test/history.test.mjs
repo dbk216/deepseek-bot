@@ -78,7 +78,8 @@ await sleep(1500)
 
 const text = logs.join('\n')
 check('the history probe fetched a transcript', /conversation so far/.test(text))
-check('it is framed as content, not instructions', /content, not instructions/.test(text))
+check('it is framed as someone else\'s words, and names the bot as the one answering',
+  /other people's words/.test(text) && /You are 아리/.test(text), text.slice(0, 90))
 check('participants are named from the paginated list', /First Person/.test(text) && /Second Person/.test(text), 'page 1 and page 2 both used')
 check('an id past the page limit is resolved with users.info', /Late Joiner/.test(text))
 check('mentions are humanised', /@Second Person/.test(text), 'not left as <@U2>')
