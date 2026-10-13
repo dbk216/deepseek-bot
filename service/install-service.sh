@@ -70,6 +70,11 @@ mkdir -p "$RUNTIME_DIR" "$LOG_DIR" "$AGENT_HOME" "$AGENT_HOME/state"
 cp "$DIR/run-gateway.sh" "$RUNTIME_DIR/run-gateway.sh"
 chmod +x "$RUNTIME_DIR/run-gateway.sh"
 echo "✅ runtime copy: $RUNTIME_DIR/run-gateway.sh"
+# The sandbox runner the profile points at. A copy, not the working tree: the harness runs it for every
+# command, so an edit in the repository would otherwise reach the live agent the moment it is saved.
+cp "$DIR/confined-runner.sh" "$RUNTIME_DIR/confined-runner.sh"
+chmod +x "$RUNTIME_DIR/confined-runner.sh"
+echo "✅ runtime copy: $RUNTIME_DIR/confined-runner.sh (point the profile's sandbox.runnerCommand here)"
 
 # 1b) No read-isolation profile is installed.
 #
