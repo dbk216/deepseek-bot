@@ -27,7 +27,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -115,6 +115,10 @@ function loadAgentWatches() {
   try {
     for (const entry of readdirSync(dir)) {
       if (!entry.endsWith('.json')) continue
+      // Only a plain file of reasonable size. The agent writes this directory: a FIFO here blocked
+      // the read forever and stopped every watch, the operator's included.
+      const stat = lstatSync(join(dir, entry))
+      if (!stat.isFile() || stat.size > 64 * 1024) { log(`skipping ${entry} in the agent's watches: not a plain file under 64 KiB`); continue }
       const one = loadJson(join(dir, entry), null)
       if (one === null) continue
       if (Array.isArray(one.watches)) found.push(...one.watches)
@@ -161,8 +165,11 @@ state.watches ??= {}
 const now = Date.now()
 const pendings = []
 
+// An id is a key in the state object, so it is a plain name and not one Object.prototype already has:
+// "__proto__" landed on the prototype and skipped the baseline.
+const validId = (id) => typeof id === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(id) && !(id in Object.prototype)
 for (const watch of config.watches) {
-  if (typeof watch?.id !== 'string' || typeof watch?.command !== 'string') {
+  if (!validId(watch?.id) || typeof watch?.command !== 'string') {
     log(`skipping an invalid watch entry: ${JSON.stringify(watch)?.slice(0, 120)}`)
     summary.errors++
     continue

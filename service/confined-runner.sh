@@ -26,7 +26,6 @@
 set -uo pipefail
 
 HOME_DIR="${DEEPBOT_HOME:-$HOME/dsh-agent}"
-STATE_DIR="${DEEPBOT_CONFINE_STATE:-$HOME/.dsh/service}"
 
 mode="read-only"
 workspace_root=""
@@ -109,14 +108,8 @@ if [ ! -x /usr/bin/sandbox-exec ]; then
   exit 70
 fi
 
-mkdir -p "$STATE_DIR" 2>/dev/null || true
-# BSD mktemp requires the X's at the END of the template. A suffix after them makes it
-# create one literal name, so two commands at once collide and the second dies with
-# "mkstemp failed: File exists" — which is a command that never ran, not a denial.
-sb_file="$(mktemp "${TMPDIR:-/tmp}/deepbot-confine.XXXXXX")" || exit 70
-profile > "$sb_file" || { rm -f "$sb_file"; exit 70; }
-
-/usr/bin/sandbox-exec -f "$sb_file" "${command[@]}"
-status=$?
-rm -f "$sb_file"
-exit $status
+# The profile goes inline. It used to be a file in TMPDIR — which confined commands may write —
+# read back by path, so one running command could rewrite the profile another invocation was
+# about to apply. Inline there is nothing to rewrite, and no temp-name collisions to get wrong.
+sb_profile="$(profile)" || exit 70
+exec /usr/bin/sandbox-exec -p "$sb_profile" "${command[@]}"

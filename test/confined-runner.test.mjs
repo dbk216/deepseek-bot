@@ -72,7 +72,7 @@ for (const resolved of [false, true]) {
   writeFileSync(join(fakeHome, '.dsh', '.credentials.yaml'), 'refs: { x: canary-cred-9b7 }\n')
   writeFileSync(join(fakeHome, '.dsh', '.credentials.yaml.bak-20261008'), 'canary-bak-3c4\n')
   writeFileSync(join(fakeHome, '.dsh', 'other.txt'), 'readable-2e8\n')
-  const env = { ...process.env, HOME: fakeHome, DEEPBOT_CONFINE_STATE: join(fakeHome, 'state') }
+  const env = { ...process.env, HOME: fakeHome }
   const text = execFileSync(RUNNER, ['--print-profile', ...READ_ONLY, '--', 'true'], { encoding: 'utf8', env })
   const as = resolved ? ' (resolved home)' : ' (home under a symlink)'
   check('the profile denies the credential files' + as, text.includes(`(deny file-read* (literal "${fakeHome}/.dsh/.env"))`)
@@ -86,6 +86,17 @@ for (const resolved of [false, true]) {
   check('nor a backup of it' + as, !read('.credentials.yaml.bak-20261008').includes('canary-bak-3c4'))
   check('the rest of ~/.dsh stays readable' + as, read('other.txt').includes('readable-2e8'), read('other.txt').slice(0, 40))
   rmSync(made, { recursive: true, force: true })
+}
+
+// The profile reaches sandbox-exec inline. It used to be written to a file in TMPDIR — a directory
+// confined commands may write — and read back by path, so one running command could rewrite the
+// profile another invocation was about to apply. A command inside the runner lists TMPDIR: the
+// file used to be there for exactly as long as the command ran.
+{
+  const tmp = mkdtempSync(join(tmpdir(), 'runner-tmp-'))
+  const listed = execFileSync(RUNNER, [...READ_ONLY, '--', '/bin/ls', '-a', tmp], { encoding: 'utf8', env: { ...process.env, TMPDIR: tmp } })
+  check('no profile file exists while a command runs', !/deepbot-confine/.test(listed), listed.replace(/\n/g, ' ').trim())
+  rmSync(tmp, { recursive: true, force: true })
 }
 
 const failed = results.filter((r) => !r.ok)

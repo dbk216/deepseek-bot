@@ -155,6 +155,11 @@ function runWith(config, statePath) {
   process.env.DEEPBOT_HOME = agentHome
   const out = runWith(hostConfig, join(dir, 'confine-state.json'))
   check('an agent-written watch cannot write', !existsSync(agentMark), out.split('\n').find((l) => /agent-writes/.test(l))?.slice(0, 100) ?? '')
+  // And it did run — "no file" alone would also hold for a runner that refuses everything. The
+  // touch is denied, the echo after it succeeds, so the check ends ok.
+  if (process.platform === 'darwin') {
+    check('it ran, inside the sandbox', /watch agent-writes: baseline recorded \(ok\)/.test(out), out.split('\n').find((l) => /agent-writes/.test(l))?.slice(0, 100) ?? '')
+  }
   check('the operator\'s own watch still can', existsSync(hostMark))
 
   // Reusing a host watch's id must not let an agent file run its own command with the host's trust.
@@ -163,6 +168,26 @@ function runWith(config, statePath) {
   runWith(hostConfig, join(dir, 'shared-state.json'))
   check('an agent file that takes a host watch\'s id is confined too', !existsSync(sharedMark))
   delete process.env.DEEPBOT_HOME
+}
+
+// 10) What the agent can put in its watches directory cannot stop the run. A FIFO there blocked the
+// read forever — every watch, the operator's included, stopped — and an id like "__proto__" landed on
+// Object.prototype in the state and skipped the baseline.
+{
+  const home2 = join(dir, 'agent-home-2')
+  mkdirSync(join(home2, 'watches'), { recursive: true })
+  execFileSync('mkfifo', [join(home2, 'watches', 'stuck.json')])
+  writeFileSync(join(home2, 'watches', 'proto.json'), JSON.stringify({ id: '__proto__', command: 'echo x', channel: 'C' }))
+  const hostOk = join(dir, 'host-ok.json')
+  writeFileSync(hostOk, JSON.stringify({ watches: [{ id: 'host-ok', command: 'echo fine', channel: 'C_HOST' }] }))
+  let out = ''
+  let finished = true
+  try {
+    out = execFileSync(process.execPath, [WATCH, '--config', hostOk, '--state', join(dir, 'fifo-state.json'), '--dry-run', '--force'],
+      { encoding: 'utf8', timeout: 10000, env: { ...process.env, DEEPBOT_HOME: home2 } })
+  } catch (e) { out = String(e?.stdout ?? ''); finished = e?.signal !== 'SIGTERM' }
+  check('a FIFO in the watches directory does not stop the run', finished && /watch host-ok: baseline recorded/.test(out), out.split('\n').slice(-2).join(' | ').slice(0, 120))
+  check('an id like __proto__ is refused', /skipping an invalid watch entry.*__proto__/.test(out), out.split('\n').find((l) => /proto/.test(l))?.slice(0, 100) ?? '(no line)')
 }
 delete process.env.DEEPBOT_HOME
 
