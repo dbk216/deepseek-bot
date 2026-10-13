@@ -373,6 +373,21 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   t.done()
 }
 
+// 17b. The agent cannot write its home's .env. The harness reads <cwd>/.env before the deployment's
+// own credentials, and the gateway runs in the agent's home: a .env there would replace the tokens.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  const t = boot({ home, state: { sessions: { 'C_ALLOWED:t1': 'slack-abc' } } })
+  await sleep(80)
+  const exec = (name, args) => ({ name, arguments: args, agent: { session: { header: { id: 'slack-abc' } } } })
+  check('write to the home\'s .env is refused', t.gate(exec('write', { file_path: join(home, '.env'), content: 'X=1' }))?.kind === 'deny')
+  check('so is edit of a .env variant', t.gate(exec('edit', { file_path: join(home, '.env.local'), old_string: 'a', new_string: 'b' }))?.kind === 'deny')
+  check('a relative path is resolved against the home', t.gate(exec('write', { file_path: '.env', content: 'X=1' }))?.kind === 'deny')
+  check('an ordinary file is not', t.gate(exec('write', { file_path: join(home, 'notes.md'), content: 'hi' })) === 'delegated')
+  rmSync(home, { recursive: true, force: true })
+  t.done()
+}
+
 // 18. Buttons, where the transport can render them: the same decision, made in place.
 {
   const t = boot({ state: { sessions: { 'C_ALLOWED:t1': 'slack-abc' } }, config: { fake: { supportsButtons: true } } })

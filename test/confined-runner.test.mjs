@@ -19,7 +19,7 @@ if (process.platform !== 'darwin') {
   process.exit(0)
 }
 import { fileURLToPath } from 'node:url'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -127,6 +127,21 @@ for (const resolved of [false, true]) {
     try { execFileSync(RUNNER, [...READ_ONLY, '--', '/usr/bin/ssh-add', '-l'], { stdio: 'pipe' }) } catch { inside = false }
     check('a command inside the runner cannot reach the ssh-agent', !inside)
   }
+}
+
+// The workspace's own .env cannot be written: the harness's credential chain reads <cwd>/.env before
+// the deployment's, and the gateway's cwd is this workspace.
+{
+  const ws = realpathSync(mkdtempSync(join(tmpdir(), 'runner-ws-')))
+  const args = ['--ro-bind', '/', '/', '--dev', '/dev', '--die-with-parent', '--tmpfs', '/tmp', '--bind', ws, ws]
+  const run = (cmd) => { try { execFileSync(RUNNER, [...args, '--', '/bin/sh', '-c', cmd], { stdio: 'pipe' }); return true } catch { return false } }
+  run(`touch ${ws}/.env`)
+  run(`echo X=1 > ${ws}/.env.local`)
+  run(`touch ${ws}/notes.md`)
+  check('a command cannot create the workspace .env', !existsSync(join(ws, '.env')))
+  check('nor a .env variant', !existsSync(join(ws, '.env.local')))
+  check('and can still write anything else there', existsSync(join(ws, 'notes.md')))
+  rmSync(ws, { recursive: true, force: true })
 }
 
 const failed = results.filter((r) => !r.ok)

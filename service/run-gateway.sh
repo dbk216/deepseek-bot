@@ -84,6 +84,16 @@ cd "$AGENT_HOME" || { echo "[gateway] cannot enter agent home: $AGENT_HOME" >&2;
 
 echo "[gateway] starting $(date '+%Y-%m-%d %H:%M:%S') — profile=$PROFILE port=$PORT cwd=$AGENT_HOME"
 
+# The harness reads <cwd>/.env before the deployment's own credentials, and this is the agent's home:
+# a .env here — the agent's, not the operator's, whose tokens live in ~/.dsh/.env — would replace them.
+# The sandbox and the tool gate refuse to write one; this moves aside any that is there anyway.
+for envfile in "$AGENT_HOME"/.env "$AGENT_HOME"/.env.*; do
+  [ -e "$envfile" ] || [ -L "$envfile" ] || continue
+  aside="$HOME/.dsh/service/logs/refused-$(basename "$envfile").$(date +%Y%m%dT%H%M%S)"
+  mkdir -p "$(dirname "$aside")" && mv "$envfile" "$aside"
+  echo "[gateway] moved $envfile aside to $aside — credentials belong in ~/.dsh/.env" >&2
+done
+
 # Read isolation.
 #
 # The harness sandbox governs WRITES. Its macOS Seatbelt profile is allow-default

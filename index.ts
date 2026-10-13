@@ -1180,6 +1180,8 @@ export function apply(ctx, config) {
       try {
         const denied = readScopeDecision(exec)
         if (denied !== null) return denied
+        const credential = envFileDecision(exec)
+        if (credential !== null) return credential
         const unfetchable = fetchDecision(exec)
         if (unfetchable !== null) return unfetchable
         const ask = destructiveDecision(exec)
@@ -1190,6 +1192,22 @@ export function apply(ctx, config) {
         return next()
       }
     })
+  }
+
+  /**
+   * Deny writing the home's .env. The harness's credential chain reads <cwd>/.env before the
+   * deployment's own credentials, and the gateway runs in the agent's home: a .env the agent wrote
+   * there would replace the tokens at the next start. Commands are held off by the sandbox runner.
+   */
+  function envFileDecision(exec): { kind: string; reason: string } | null {
+    const name = exec?.name ?? exec?.toolName
+    if (name !== 'write' && name !== 'edit') return null
+    const target = exec?.arguments?.file_path
+    if (typeof target !== 'string' || target === '' || resolvedCwd.value === null) return null
+    const path = resolve(resolvedCwd.value, target)
+    if (dirname(path) !== resolve(resolvedCwd.value) || !/^\.env(\..*)?$/.test(basename(path))) return null
+    log(`write to the home's .env denied: ${name} ${path}`)
+    return { kind: 'deny', reason: 'the .env in this directory is read as credentials, so it cannot be written. Ask the user to change credentials themselves.' }
   }
 
   /** Deny a file-tool read outside the roots, or null to let the call proceed. */

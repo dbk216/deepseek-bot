@@ -65,6 +65,12 @@ profile() {
     [ -n "$workspace_root" ] && printf '(allow file-write* (subpath %s))\n' "$(sbpl "$workspace_root")"
     printf '(allow file-write* (subpath "/tmp") (subpath "/private/tmp") (subpath "/var/folders"))\n'
     printf '(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper"))\n'
+    # Except the workspace's .env: the harness's credential chain reads <cwd>/.env before the
+    # deployment's own, and the gateway runs in this workspace — a .env here would replace the tokens.
+    if [ -n "$workspace_root" ]; then
+      escaped="$(printf '%s' "$workspace_root" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
+      printf '(deny file-write* (regex #"^%s/\\.env(\\..*)?$"))\n' "$escaped"
+    fi
   else
     echo '(deny file-write*)'
     printf '(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper"))\n'
