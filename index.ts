@@ -650,6 +650,8 @@ export function apply(ctx, config) {
       const recallContext = createRecallContext({
         indexPath: join(cwd, 'memory', 'recall-index.jsonl'),
         topN: cfg.recallTopN, maxChars: cfg.recallMaxChars, triggerWords: cfg.recallTriggerWords,
+        // This conversation's channel only: a DM's words must not surface in a channel's answer.
+        channel: origin?.channel ?? null,
       })
       const past = recallContext.block(prompt)
       if (past !== '') {

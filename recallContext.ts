@@ -20,6 +20,8 @@ export interface RecallRow {
   ts?: number
   role?: string
   sessionId?: string
+  /** The channel the session belonged to, as the indexer read it from the adapter's block. */
+  channel?: string
   text?: string
 }
 
@@ -32,6 +34,12 @@ export interface RecallOptions {
   maxChars?: number
   /** Only look when the message points at the past; empty means always. */
   triggerWords?: readonly string[]
+  /**
+   * Only passages from this channel. Ranking used every row in the home, so a word in common was
+   * enough to put a DM into a public channel's answer. A row with no channel is left out too. Null
+   * or absent means no restriction: a turn with no conversation, such as a scenario.
+   */
+  channel?: string | null
   now?: () => number
 }
 
@@ -90,7 +98,9 @@ export function createRecallContext(options: RecallOptions) {
         if (!this.triggered(prompt)) return ''
         const query = words(prompt)
         if (query.length === 0) return ''
+        const channel = options.channel ?? null
         const ranked = load()
+          .filter((row) => channel === null || row.channel === channel)
           .map((row) => {
             const text = String(row.text).toLowerCase()
             return { row, score: query.reduce((n, w) => n + (text.includes(w) ? 1 : 0), 0) }

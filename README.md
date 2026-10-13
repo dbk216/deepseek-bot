@@ -65,9 +65,9 @@ Each line is traceable to code and to something that checks it.
 | Serves Slack over **Socket Mode**: receive, reply in thread, chunk long answers, drop duplicate events | `transports/slack.ts` | `test/slack.test.mjs` 36/36; `tools/qa-slack.mjs` against a live workspace |
 | Serves **Telegram** by long polling | `transports/telegram.ts` | `test/telegram.test.mjs` 28/28 |
 | Serves **Discord** (gateway websocket + REST), with buttons for approvals | `transports/discord.ts` | `test/discord.test.mjs` 35/35 |
-| Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.mjs` 128/128; `test/scenarios/restart-1.json` + `restart-2.json` |
+| Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.mjs` 130/130; `test/scenarios/restart-1.json` + `restart-2.json` |
 | Injects **persona and notes** (`SOUL.md`/`USER.md`/`MEMORY.md` from the adapter, `AGENTS.md` from `dsh-agent-instructions`), without re-sending them every turn | `index.ts` | `test/core.test.mjs`; `test/scenarios/persona.json` 3/3 |
-| **Recalls past conversations** — rank passages, then ask for what they imply | `recall/`, `recallContext.ts` | `test/recall.test.mjs` 7/7; `test/recall-context.test.mjs` 12/12 |
+| **Recalls past conversations** — rank passages, then ask for what they imply | `recall/`, `recallContext.ts` | `test/recall.test.mjs` 11/11; `test/recall-context.test.mjs` 17/17 |
 | Reads the **thread it was mentioned in**, as a delta | `transports/slack.ts` | `test/history.test.mjs` 9/9 |
 | Sends an attached **image** to the model as an image | `transports/attachments.ts`, `index.ts` | `test/attachments.test.mjs` 13/13; `vision.json` needs a model |
 | Produces **documents** (docx, pptx, xlsx) | `profile/cordis.patch.yml` office rows | `test/scenarios/document.json` asserts the artifacts |
@@ -205,6 +205,14 @@ wires up what it does not turn on by default, and adds the consumer the agent pl
   costs about 0.4 s for 61 session logs, which is affordable; a ten-minute window made "what did
   we just discuss?" fail in exactly the situation it is asked. `recall/install-refresh.sh`
   installs a launchd job that rebuilds it on an interval anyway, as a backstop.
+- **Recall stays in its channel.** Each row records the channel its session belonged to, read from
+  the adapter's own `[this conversation]` block (never from what the user typed after the marker).
+  The block injected into a turn ranks only rows from that turn's channel: a DM's passages surface
+  only in that DM, and a row whose channel is unknown is left out. Before this, one shared word was
+  enough to put a DM into a public channel's answer. A turn with no conversation (a scenario) is not
+  filtered. **Not closed:** the agent can still read the whole index file with its own tools, which
+  `AGENTS.md` tells it to do when asked about the past; closing that needs a per-channel index or a
+  read rule, and is not done. `test/recall.test.mjs`, `test/recall-context.test.mjs`, `test/core.test.mjs`.
 
 ## Memory: the layers, and who writes what
 

@@ -15,7 +15,7 @@
  */
 import './dist-fresh.mjs'   // fails loudly on a stale dist
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../dist/index.js'
@@ -726,6 +726,25 @@ for (const remove of [false, true]) {
   check('no typing and no working message when it is off',
     t.transport.typing.length === 0 && t.transport.posted.length === 1 && t.transport.posted[0].replace === null,
     JSON.stringify(t.transport.posted).slice(0, 120))
+  t.done()
+}
+
+// 34. Recall stays in the conversation's channel: the turn hands its channel to the ranking.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  mkdirSync(join(home, 'memory'), { recursive: true })
+  writeFileSync(join(home, 'memory', 'recall-index.jsonl'), [
+    { ts: 1, role: 'user', sessionId: 'a', channel: 'C_ALLOWED', text: '지난번 배포 롤백 same-channel-4e1' },
+    { ts: 2, role: 'user', sessionId: 'b', channel: 'D_SECRET', text: '지난번 배포 롤백 dm-secret-8b6' },
+  ].map((r) => JSON.stringify(r)).join('\n'))
+  const t = boot({ agent: 'ready', home })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '지난번 배포 롤백 어떻게 했지' }))
+  await sleep(400)
+  const sent = t.followups.map(textOf).join('\n')
+  check('recall shows a passage from this channel', sent.includes('same-channel-4e1'), sent.slice(0, 80) || '(no followup)')
+  check('and not one from a DM', !sent.includes('dm-secret-8b6'))
+  rmSync(home, { recursive: true, force: true })
   t.done()
 }
 

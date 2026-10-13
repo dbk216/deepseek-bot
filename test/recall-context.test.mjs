@@ -60,6 +60,26 @@ check('an untriggered block is empty', ctx.block('이거 요약해줘') === '')
   check('an unparseable index yields no block, not a throw', broken.block('지난주 배포') === '')
 }
 
+// 5. Only the conversation's own channel. Ranking used every row of the shared home, so a word in
+// common was enough to put a DM into a public channel's answer. A row with no channel is left out
+// when the turn has one; a turn with none (a scenario) still sees everything.
+{
+  const scoped = join(dir, 'scoped.jsonl')
+  writeFileSync(scoped, [
+    { ts: 1, role: 'user', sessionId: 'p', channel: 'C_PUBLIC', text: '지난번 배포 롤백 public-7a1' },
+    { ts: 2, role: 'user', sessionId: 'd', channel: 'D_PRIVATE', text: '지난번 배포 롤백 private-3f9' },
+    { ts: 3, role: 'user', sessionId: 'u', text: '지난번 배포 롤백 unknown-5c2' },
+  ].map((r) => JSON.stringify(r)).join('\n'))
+  const inPublic = createRecallContext({ indexPath: scoped, channel: 'C_PUBLIC' }).block('지난번 배포 롤백 어떻게 했지')
+  check('a passage from this channel is shown', inPublic.includes('public-7a1'), inPublic.slice(0, 60))
+  check('a passage from a DM is not', !inPublic.includes('private-3f9'))
+  check('nor one whose channel is unknown', !inPublic.includes('unknown-5c2'))
+  const inDm = createRecallContext({ indexPath: scoped, channel: 'D_PRIVATE' }).block('지난번 배포 롤백 어떻게 했지')
+  check('the DM sees its own and not the channel\'s', inDm.includes('private-3f9') && !inDm.includes('public-7a1'))
+  const anywhere = createRecallContext({ indexPath: scoped }).block('지난번 배포 롤백 어떻게 했지')
+  check('without a channel nothing is filtered', ['public-7a1', 'private-3f9', 'unknown-5c2'].every((m) => anywhere.includes(m)))
+}
+
 rmSync(dir, { recursive: true, force: true })
 const failed = results.filter((x) => !x.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
