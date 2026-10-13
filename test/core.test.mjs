@@ -281,7 +281,7 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   await sleep(60)
   const outcome = t.askApproval()
   await sleep(100)
-  check('an approval request is posted into the conversation', t.transport.posted.some((p) => /권한이 필요합니다/.test(p.text)), JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 40))))
+  check('an approval request is posted into the conversation', t.transport.posted.some((p) => /권한이 필요해/.test(p.text)), JSON.stringify(t.transport.posted.map((p) => p.text.slice(0, 40))))
   check('the request says how to answer', t.transport.posted.some((p) => /허용/.test(p.text) && /거부/.test(p.text)))
   t.transport.deliver(t.transport.message({ text: '허용' }))
   check('answering 허용 allows the action once', await outcome === 'allowed-once', await outcome)
@@ -655,9 +655,13 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
 // the persona file said 반말. Pinned here because a regression is invisible until a person notices the tone.
 {
   const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
+  // Quoted and template strings both, and 입니다/합니다 as well: the first version looked only inside
+  // single quotes and only for 습니다-shapes, so "이미 처리된 요청입니다" and a template's "권한이
+  // 필요합니다" went out for weeks. Comment lines are prose, not messages.
   const polite = source.split('\n')
     .map((line, i) => ({ line, i: i + 1 }))
-    .filter(({ line }) => /'[^']*(습니다|하세요|했습니다|됩니다|세[요])/.test(line))
+    .filter(({ line }) => !/^\s*(\/\/|\*)/.test(line))
+    .filter(({ line }) => /['`][^'`]*(습니다|입니다|합니다|하세요|세요|십시오)/.test(line))
   check('the plugin sends no honorific messages', polite.length === 0,
     polite.slice(0, 2).map((l) => `L${l.i}: ${l.line.trim().slice(0, 60)}`).join(' | '))
 }

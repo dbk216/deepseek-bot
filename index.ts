@@ -972,7 +972,7 @@ export function apply(ctx, config) {
     const pending = pendingApprovals.get(key)
     if (pending === undefined) {
       log(`an approval button was pressed in ${key} but nothing is pending`)
-      await transport.post(targetFromKey(key), '이미 처리된 요청입니다.')
+      await transport.post(targetFromKey(key), '이미 처리된 요청이야.')
       return
     }
     if (pending.user !== undefined && cfg.approvalRequireSameUser === true && action.user !== pending.user) {
@@ -1076,7 +1076,7 @@ export function apply(ctx, config) {
       // decision by a slower route.
       const withButtons = transport.supportsButtons === true
       const asked = await transport.post(target, [
-        `:warning: 권한이 필요합니다: ${reason}`,
+        `⚠️ 권한이 필요해: ${reason}`,
         withButtons ? `아래 버튼으로 결정해줘.` : `실행하려면 *허용*, 거부하려면 *거부* 라고 답해줘.`,
         `(답이 없으면 ${Math.round(cfg.approvalTimeoutMs / 60000)}분 뒤 자동으로 거부돼.)`,
       ].join('\n'), withButtons
