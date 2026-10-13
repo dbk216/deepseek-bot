@@ -14,6 +14,8 @@ export function createFakeTransport(options = {}) {
   const posted = []
   const historyCalls = []
   const attachmentCalls = []
+  const typing = []
+  const removed = []
   let onMessage = null
   let onAction = null
   let closed = 0
@@ -28,6 +30,8 @@ export function createFakeTransport(options = {}) {
     posted,
     historyCalls,
     attachmentCalls,
+    typing,
+    removed,
     get closed() { return closed },
     /** Push an inbound message as if the platform had delivered it. */
     deliver(message) {
@@ -53,6 +57,18 @@ export function createFakeTransport(options = {}) {
     async identity() { return { name: 'fakebot', id: 'U_FAKE', team: 'T_FAKE' } },
     async connect(handlers) { onMessage = handlers.onMessage; onAction = handlers.onAction ?? null },
     supportsButtons: options.supportsButtons ?? false,
+    // Native typing, only when asked for: the default fake is a platform without it, like Slack.
+    ...(options.typing === true ? {
+      startTyping(target) {
+        const entry = { target, stopped: false }
+        typing.push(entry)
+        return () => { entry.stopped = true }
+      },
+    } : {}),
+    // Deleting a message, only when asked for, like Slack's chat.delete.
+    ...(options.remove === true ? {
+      async remove(target, ts) { removed.push({ target, ts }); return true },
+    } : {}),
     /** Press a button, as a platform would. */
     press(id, user = 'U_USER') {
       if (onAction === null) throw new Error('fake transport received no onAction handler')
@@ -60,7 +76,11 @@ export function createFakeTransport(options = {}) {
     },
     async post(target, text, opts = {}) {
       posted.push({ target, text, replace: opts.replace ?? null, buttons: opts.buttons ?? null })
-      return { channel: target.channel, ts: `ts-${posted.length}` }
+      const ts = `ts-${posted.length}`
+      // A real post takes time, and the races between a working message and its answer only exist
+      // while one is in flight. Recorded first, so the order of requests is still the order of calls.
+      if (Number(options.postDelayMs) > 0) await new Promise((r) => setTimeout(r, Number(options.postDelayMs)))
+      return { channel: target.channel, ts }
     },
     async fetchHistory(target, opts) {
       historyCalls.push({ target, ...opts })

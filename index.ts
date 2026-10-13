@@ -183,7 +183,12 @@ const DEFAULTS = {
   approveWords: ['허용', '승인', '응', 'ㅇㅇ', 'yes', 'allow', 'ok', 'ㅇ'],
   denyWords: ['거부', '아니', '안돼', 'no', 'deny', 'ㄴㄴ'],
   progressAfterMs: 8000,
-  progressText: ':hourglass_flowing_sand: 작업 중입니다…',
+  // `{name}` is the persona's first heading ("아리"), else the bot's own name. A Unicode emoji, not
+  // Slack's `:hourglass_flowing_sand:`, which Discord and Telegram print as text.
+  progressText: '⏳ {name} 작업 중…',
+  // Show at once that a message was taken: the platform's own typing where it has one, otherwise
+  // the progress message above, posted immediately instead of after progressAfterMs.
+  workingIndicator: true,
   downloadAttachments: true,
   maxAttachmentBytes: 10 * 1024 * 1024,
   attachmentsDir: undefined,        // default: <cwd>/attachments
@@ -565,18 +570,30 @@ export function apply(ctx, config) {
    * Dynamic context is new by nature: attachments, and only the messages that
    * arrived since the last turn.
    *
-   * The four standing files — SOUL.md, AGENTS.md, USER.md, MEMORY.md — are
-   * deliberately not injected here. dsh-agent-instructions appends them once as a
-   * durable baseline, adds only deltas afterwards, and is built so that new
-   * content does not invalidate existing KV cache entries. Injecting them here
-   * duplicated AGENTS.md (measured: 7,625 characters per turn on top of the
-   * harness's own 3,634) and left a copy in every historical turn.
+   * AGENTS.md is not injected here: the harness's dsh-agent-instructions sends it, and
+   * sending it again duplicated it (measured: 7,625 characters per turn on top of the
+   * harness's own 3,634). SOUL.md, USER.md and MEMORY.md are, because that loader —
+   * mounted inside the `standard` agent preset — reads only AGENTS.md and CLAUDE.md;
+   * the top-level row a profile can patch is disabled. They go in the standing part,
+   * so they are sent once per conversation and again only when they change.
    */
   async function contextPreamble(origin = null, historyText = '', attachmentText = '', sessionKey = null, prompt = '') {
     if (!cfg.injectInstructions) return { preamble: '', instructions: 0, memory: 0 }
     const cwd = await sessionCwd()
 
     const standing = []
+    // Who the agent is and what it knows, first. Without these, asked "아리 널 어떻게 활용할수있니",
+    // the model did not know it was 아리 and wrote a message to 아리 instead of answering. Read from
+    // the conversation's own directory, so a tenant gets its own persona rather than the home's.
+    const home = await cwdFor(sessionKey)
+    for (const [file, limit, heading] of [
+      [cfg.personaFile, cfg.maxPersonaChars, '[who you are]'],
+      [cfg.userFile, cfg.maxUserChars, '[about the user]'],
+      [cfg.factsFile, cfg.maxFactsChars, '[what you know about the work]'],
+    ]) {
+      const text = typeof file === 'string' && file !== '' ? readTextIfPresent(join(home, file), Number(limit)) : null
+      if (text !== null) standing.push(`${heading} ${file}\n${text.trim()}`)
+    }
     if (origin !== null) {
       const watchConfig = `${cwd}/watches/${origin.channel}-${origin.threadTs}.json`
       standing.push([
@@ -729,13 +746,57 @@ export function apply(ctx, config) {
    */
   const activeTurns = new Set()
 
+  // Who is working, for the working message. Set at startup from the persona's first heading.
+  let workingName = ''
+
+  /** The first `# ` heading of the persona file ("아리"), or null when there is none. */
+  function personaName(home: string): string | null {
+    const text = readTextIfPresent(join(home, cfg.personaFile), cfg.maxPersonaChars)
+    const heading = text?.split('\n').find((line) => /^#\s+\S/.test(line))
+    return heading === undefined ? null : heading.replace(/^#\s+/, '').trim().slice(0, 40)
+  }
+
   // The in-place progress message. One per conversation, replaced by the answer.
   const progress = createProgressTracker({
     post: (target, text, opts) => transport.post(target, text, opts),
     throttleMs: cfg.progressUpdateMs,
-    label: cfg.progressText,
+    label: () => String(cfg.progressText).replace('{name}', workingName).replace(/\s{2,}/g, ' ').trim(),
     log,
   })
+
+  /**
+   * The first sign that a message was taken: the platform's own typing where it has one, otherwise
+   * the progress message posted now rather than after progressAfterMs. Returns what stops the typing.
+   * The reply waits for the progress message with `progress.settle` before it takes its place.
+   */
+  function startWorking(key: string, target: Origin): () => void {
+    if (cfg.workingIndicator !== true) return () => {}
+    if (typeof transport.startTyping === 'function') {
+      try { return transport.startTyping(target) }
+      catch (e) { log(`typing failed: ${String((e as Error)?.message ?? e)}`); return () => {} }
+    }
+    void progress.force(key, target)
+      .catch((e) => log(`working message failed: ${String((e as Error)?.message ?? e)}`))
+    return () => {}
+  }
+
+  /**
+   * Send a turn's reply where its working message was. Where the platform can delete, the reply is a
+   * new message and the working message is removed: an edit raises no notification, so replacing in
+   * place had every answer reach a phone as "⏳ 아리 작업 중…". Elsewhere the reply edits it.
+   */
+  async function replyInPlaceOf(target: Origin, text: string, placeholderTs: string | null): Promise<void> {
+    if (placeholderTs === null || typeof transport.remove !== 'function') {
+      await transport.post(target, text, { replace: placeholderTs })
+      return
+    }
+    const sent = await transport.post(target, text)
+    // A reply that did not go out must not take the working message with it: edit instead.
+    if (sent === null) { await transport.post(target, text, { replace: placeholderTs }); return }
+    // The answer is out by now, so a throw here must not reach the caller's "Execution failed".
+    const removed = await transport.remove(target, placeholderTs).catch(() => false)
+    if (removed !== true) log(`working message ${placeholderTs} left in ${target.channel}: delete refused`)
+  }
 
   // Token accounting. The store is the state file's `usage` section, so the numbers are
   // the same after a restart.
@@ -1398,7 +1459,12 @@ export function apply(ctx, config) {
       await agent.whenIdle()
       const firstSeq = agent.session.seq
       const { preamble } = await contextPreamble(origin ?? null, historyText, attachmentText, sessionKey, prompt)
-      const body = preamble === '' ? prompt : `${preamble}[user message]\n${prompt}`
+      // Whose message this is, in the platform's mention form: the persona names people that way
+      // (`<@U…>는 케이홉`), which means nothing to a model that cannot see who is speaking. A line of
+      // its own, before the marker: the recall indexer keeps only what follows the last
+      // `[user message]`, so a marker carrying the name would index the whole preamble as speech.
+      const speaker = typeof origin?.user === 'string' && origin.user !== '' ? `[speaker] <@${origin.user}>\n` : ''
+      const body = preamble === '' && speaker === '' ? prompt : `${preamble}${speaker}[user message]\n${prompt}`
       const refs = await admitImages(images)
       agent.followup(userMessage(refs.length === 0
         ? body
@@ -1603,6 +1669,8 @@ export function apply(ctx, config) {
     health.lastEventAt = Date.now()
     writeHealth()
     log(`accepted channel=${channel} thread=${threadTs} session=${state.sessions[key] ?? 'new'}`)
+    // Before the queue, so a message waiting behind other turns also shows it was taken.
+    const stopWorking = startWorking(key, { channel, threadTs })
 
     enqueue(async () => {
       const started = Date.now()
@@ -1632,7 +1700,7 @@ export function apply(ctx, config) {
 
         let r
         try {
-          r = await withTimeout(runTurn(prompt, state.sessions[key], { channel, threadTs }, historyText, attachmentText, key, attachmentImages), cfg.runTimeoutMs)
+          r = await withTimeout(runTurn(prompt, state.sessions[key], { channel, threadTs, user: message.user }, historyText, attachmentText, key, attachmentImages), cfg.runTimeoutMs)
           // Advance the thread pointer only after the turn succeeded, so a failed
           // turn does not swallow messages it never delivered.
           if (historyLastTs !== null && r.reason?.kind === 'completed') {
@@ -1640,30 +1708,35 @@ export function apply(ctx, config) {
             saveState()
           }
         } finally {
-          /* no timers here: the turn owns them, and a timeout or a stop cancels it */
+          // The turn owns its own timers; a timeout or a stop cancels it. Typing ends here, before the
+          // reply is posted: a tick landing after the reply would show "typing…" under the answer.
+          stopWorking()
         }
         if (r.sessionId && r.sessionId !== state.sessions[key]) { state.sessions[key] = r.sessionId; saveState() }
         // The answer takes the progress message's place, so a slow turn leaves one
         // message that changed rather than a stale "working on it" plus an answer.
+        await progress.settle(key)
         const placeholderTs = progress.take(key)?.ts ?? null
         const ok = r.reason?.kind === 'completed'
         if (ok && r.text) {
           health.answered++
           writeHealth()
           log(`answered channel=${channel} len=${r.text.length} ${Date.now() - started}ms`)
-          await transport.post(replyTarget, r.text, { replace: placeholderTs })
+          await replyInPlaceOf(replyTarget, r.text, placeholderTs)
         } else if (r.reason?.kind === 'cancelled') {
           const why = r.reason.cause === 'timed out' ? '시간이 초과돼서 멈췄어.' : '중단했어.'
           log(`turn cancelled cause=${String(r.reason.cause ?? '-')}`)
-          await transport.post(replyTarget, why, { replace: placeholderTs })
+          await replyInPlaceOf(replyTarget, why, placeholderTs)
         } else {
           log(`turn ended abnormally reason=${JSON.stringify(r.reason)}`)
-          await transport.post(replyTarget, `The turn did not complete (${r.reason?.kind ?? 'unknown'}). Log: ${LOG}`, { replace: placeholderTs })
+          await replyInPlaceOf(replyTarget, `The turn did not complete (${r.reason?.kind ?? 'unknown'}). Log: ${LOG}`, placeholderTs)
         }
       } catch (e) {
         log('turn failed', String(e?.stack ?? e))
+        stopWorking()
+        await progress.settle(key)
         const leftover = progress.take(key)?.ts ?? null
-        await transport.post(replyTarget, `Execution failed: ${String(e?.message ?? e).slice(0, 300)}`, { replace: leftover })
+        await replyInPlaceOf(replyTarget, `Execution failed: ${String(e?.message ?? e).slice(0, 300)}`, leftover)
       }
     })
   }
@@ -1953,6 +2026,13 @@ export function apply(ctx, config) {
           const hit = step.expectToolUse.some((t) => used.includes(t))
           checks.push({ what: `used one of ${step.expectToolUse.join('/')} (saw: ${used.join('/') || 'none'})`, ok: hit })
         }
+        // The other direction: an answer that must come from the prompt, not from the model opening the
+        // file itself — which is how a persona scenario passed on code that never sent the persona.
+        if (Array.isArray(step.expectNoToolUse) && step.expectNoToolUse.length > 0) {
+          const used = r.toolsUsed ?? []
+          const hit = step.expectNoToolUse.filter((t) => used.includes(t))
+          checks.push({ what: `used none of ${step.expectNoToolUse.join('/')} (saw: ${used.join('/') || 'none'})`, ok: hit.length === 0 })
+        }
         const failedChecks = checks.filter((c) => !c.ok)
         // A step passes when its own expectations hold and the turn ended the way the
         // step said it would. Without expectReason the norm is a completed turn; a
@@ -2056,6 +2136,7 @@ export function apply(ctx, config) {
     const me = await transport.identity()
 
     const cwd = await sessionCwd()
+    workingName = personaName(cwd) ?? me.name ?? ''
     log(`starting — bot=@${me.name} team=${me.team ?? '-'} channels=${targetChannels.join(',')} mode=${cfg.replyMode}`)
     log(`session cwd=${cwd}  state=${stateDir}  mapped sessions=${Object.keys(state.sessions).length}`)
     if (cfg.injectInstructions) {

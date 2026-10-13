@@ -26,8 +26,8 @@ export interface ProgressOptions {
   post: ProgressPoster['post']
   /** Everything but the first update waits at least this long between edits. */
   throttleMs: number
-  /** Prefix for the message, e.g. "⏳ 작업 중입니다…". */
-  label: string
+  /** Prefix for the message, e.g. "⏳ 아리 작업 중…". A function is read at each render. */
+  label: string | (() => string)
   now?: () => number
   log?: (...parts: unknown[]) => void
 }
@@ -38,6 +38,8 @@ interface Entry {
   lastUpdate: number
   tools: string[]
   startedAt: number
+  /** The renders asked for so far, run one after another. */
+  chain: Promise<void>
 }
 
 export function createProgressTracker(options: ProgressOptions) {
@@ -54,18 +56,29 @@ export function createProgressTracker(options: ProgressOptions) {
     }
     const seconds = Math.round((now() - entry.startedAt) / 1000)
     if (seconds >= 5) parts.push(`${seconds}s`)
-    return parts.length === 0 ? options.label : `${options.label} — ${parts.join(' · ')}`
+    const label = typeof options.label === 'function' ? options.label() : options.label
+    return parts.length === 0 ? label : `${label} — ${parts.join(' · ')}`
   }
 
-  async function render(key: string, entry: Entry): Promise<void> {
+  /**
+   * One render at a time per conversation. A render asked for while the first post is still in flight
+   * waits for it and then edits that message. Run side by side, both saw no message yet and both posted;
+   * the answer replaced one, and the other stayed in the thread saying "작업 중" for good.
+   */
+  function render(key: string, entry: Entry): Promise<void> {
     entry.lastUpdate = now()
-    const text = summary(entry)
-    if (entry.ts === null) {
-      const posted = await options.post(entry.target, text)
-      entry.ts = posted?.ts ?? null
-      return
-    }
-    await options.post(entry.target, text, { replace: entry.ts })
+    const run = entry.chain.then(async () => {
+      const text = summary(entry)
+      if (entry.ts === null) {
+        const posted = await options.post(entry.target, text)
+        entry.ts = posted?.ts ?? null
+        return
+      }
+      await options.post(entry.target, text, { replace: entry.ts })
+    })
+    // A failed render is the caller's to report; it must not stop the next one.
+    entry.chain = run.catch(() => {})
+    return run
   }
 
   return {
@@ -76,11 +89,12 @@ export function createProgressTracker(options: ProgressOptions) {
     async note(key: string, target: ProgressTarget, toolName?: string): Promise<void> {
       let entry = entries.get(key)
       if (entry === undefined) {
-        entry = { target, ts: null, lastUpdate: 0, tools: [], startedAt: now() }
+        entry = { target, ts: null, lastUpdate: 0, tools: [], startedAt: now(), chain: Promise.resolve() }
         entries.set(key, entry)
       }
       if (toolName !== undefined) entry.tools.push(toolName)
-      const first = entry.ts === null
+      // Never rendered, rather than "no message id yet": a first post still in flight has no id either.
+      const first = entry.lastUpdate === 0
       if (!first && now() - entry.lastUpdate < options.throttleMs) return
       await render(key, entry)
     },
@@ -89,10 +103,20 @@ export function createProgressTracker(options: ProgressOptions) {
     async force(key: string, target: ProgressTarget): Promise<void> {
       let entry = entries.get(key)
       if (entry === undefined) {
-        entry = { target, ts: null, lastUpdate: 0, tools: [], startedAt: now() }
+        entry = { target, ts: null, lastUpdate: 0, tools: [], startedAt: now(), chain: Promise.resolve() }
         entries.set(key, entry)
       }
       await render(key, entry)
+    },
+
+    /** Wait for every render already asked for, so the answer takes the place of a message that exists. */
+    async settle(key: string): Promise<void> {
+      const entry = entries.get(key)
+      if (entry === undefined) return
+      // Until nothing more was queued while waiting: a render another message asked for meanwhile
+      // would otherwise run after the answer had taken this message's place.
+      let seen: Promise<void> | null = null
+      while (seen !== entry.chain) { seen = entry.chain; await seen }
     },
 
     /** The message to replace with the answer, if one was posted. Clears the entry. */

@@ -1,0 +1,17 @@
+{
+  "_comment": "Acceptance for the persona reaching the model. Live, 2026-10-13: asked '아리 널 어떻게 활용할수있니', the model — which had never been shown SOUL.md, because the harness's instruction loader reads only AGENTS.md and CLAUDE.md — wrote a message to 아리 on the user's behalf ('아리야, 나 홍길동이야…') instead of answering as 아리. The motto exists only in the seeded SOUL.md, and the turn may not open files, so the answer can contain it only if SOUL.md reached the prompt. Without the no-tool condition this scenario passed on the code that never sent the persona: the model read SOUL.md itself.",
+  "seed": {
+    "SOUL.md": "# 아리\n\n너는 Example Team의 한국어 범용 에이전트 **아리**다. 프로젝트를 정리하고, 코드를 읽고 고치며, 필요한 정보를 찾아 검증하는 실무 파트너다.\n\n- 기본 말투는 반말이다.\n- 네 좌우명은 '박자는 정확하게, 결과는 확실하게'다. 자기소개를 할 때는 이 좌우명을 한 번 말한다.\n"
+  },
+  "steps": [
+    {
+      "session": "A",
+      "say": "아리 널 어떻게 활용할수있니? 그리고 네 좌우명이 뭐였지? 파일은 열지 말고 지금 아는 것만으로 답해.",
+      "_why_say": "The motto is asked for, not hoped for: runs that only asked how to use 아리 answered correctly and never volunteered it.",
+      "expectContains": "박자는 정확하게",
+      "expectNoToolUse": ["read", "grep", "glob", "bash", "fs_read", "fs_grep", "read_image"],
+      "_why": "Not a bare '아리야': it is also how 아리 introduces itself ('— 아리야.'). Only the vocative followed by the user's own voice is the reversal.",
+      "expectNotAnyOf": ["아리야, 나", "나 홍길동이야", "짧게 답해줘"]
+    }
+  ]
+}

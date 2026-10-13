@@ -116,6 +116,9 @@ export function createSlackApi({ cfg, log, sessionCwd }) {
     let lastTs = null
     for (const m of (r.messages ?? [])) {
       if (m.ts === currentTs) continue                       // the question itself
+      // Nor anything after it: those belong to later turns, and the bot's own working message is
+      // posted before the history is read. The pointer stays behind them, so the next turn gets them.
+      if (Number(m.ts) > Number(currentTs)) continue
       if (m.subtype && m.subtype !== 'thread_broadcast') continue
       // Only what has not been delivered yet. Without this the whole thread is
       // re-sent every turn and stays in history, so a long thread is repeated
@@ -538,6 +541,23 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
   }
 
   /**
+   * Delete one of the bot's own messages. The working message is removed rather than edited into the
+   * answer: Slack raises no notification for an edit, so every answer would have reached a phone as
+   * "⏳ 아리 작업 중…". chat.delete needs only chat:write for a message the bot posted.
+   */
+  async function remove(target: Target, ts: string): Promise<boolean> {
+    try {
+      const r = await api.slackPost<{ ok: boolean; error?: string }>(requireToken(), 'chat.delete', { channel: target.channel, ts })
+      if (r.ok === true) return true
+      log(`delete failed: ${r.error ?? 'unknown'} (ts=${ts})`)
+      return false
+    } catch (e) {
+      log(`delete failed: ${String((e as Error)?.message ?? e)} (ts=${ts})`)
+      return false
+    }
+  }
+
+  /**
    * A permalink for a conversation.
    *
    * Slack renders its own `<#C…>` mention, but someone who writes "#random" gets plain text, and a
@@ -557,6 +577,7 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
     ready,
     permalinkFor,
     uploadFile,
+    remove,
     // Slack's own interactive components are block actions, which this adapter does not
     // handle; a request here is answered by a reply in the thread instead.
     supportsButtons: false,

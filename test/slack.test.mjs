@@ -145,6 +145,27 @@ function transportFor(api) {
   check('and the answer is still reported as sent', sent?.ts !== undefined && sent?.ts !== '', JSON.stringify(sent))
 }
 
+// 6b. Removing a message uses chat.delete. The working message is removed rather than edited into the
+// answer, because an edit raises no notification and every answer would have arrived as "작업 중".
+{
+  const api = stubSlack()
+  const t = transportFor(api)
+  await t.authenticate()
+  const removed = await t.remove({ channel: 'C1', threadTs: 't1' }, 'ts-working')
+  const del = api.calls.find((c) => c.method === 'chat.delete')
+  check('remove calls chat.delete on that message', del?.body?.channel === 'C1' && del?.body?.ts === 'ts-working', JSON.stringify(del?.body))
+  check('and reports success', removed === true)
+  api.restore()
+
+  const refused = stubSlack({ fail: ['chat.delete'], error: 'message_not_found' })
+  const t2 = transportFor(refused)
+  await t2.authenticate()
+  const result = await t2.remove({ channel: 'C1', threadTs: 't1' }, 'gone')
+  refused.restore()
+  check('a refused delete is reported as false and logged', result === false && t2.logs.some((l) => /delete failed.*message_not_found/.test(l)),
+    t2.logs.join(' | ').slice(0, 90))
+}
+
 // 7. A transport built without a chunk size still sends the text.
 // Found live: the QA harness passed a partial config, chunkChars was undefined, the slice
 // went to NaN, and every reply was an empty body — which Slack answers with `no_text`. The

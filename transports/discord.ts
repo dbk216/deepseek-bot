@@ -117,6 +117,30 @@ export function createDiscordTransport(host: DiscordHost): DiscordTransport {
     return await res.json() as T
   }
 
+  /**
+   * Discord's "is typing…" lasts ten seconds or until the bot posts, so it is re-sent every eight
+   * while a turn runs. A channel the bot may not type in answers 403: that is logged once and the
+   * repetition stops, rather than failing every eight seconds for the length of the turn.
+   */
+  function startTyping(target: Target): () => void {
+    const intervalMs = Number(cfg.typingIntervalMs) > 0 ? Number(cfg.typingIntervalMs) : 8000
+    let timer: ReturnType<typeof setInterval> | null = null
+    let failed = false
+    const stop = () => { if (timer !== null) { clearInterval(timer); timer = null } }
+    const send = () => {
+      if (failed) return
+      rest(`/channels/${target.channel}/typing`, { method: 'POST' }).catch((e) => {
+        if (failed) return
+        failed = true
+        stop()
+        log(`discord typing failed: ${String((e as Error)?.message ?? e)}`)
+      })
+    }
+    send()
+    timer = setInterval(send, intervalMs)
+    return stop
+  }
+
   async function identity() {
     if (!ready()) await authenticate()
     const me = await rest<DiscordUser>('/users/@me')
@@ -302,6 +326,7 @@ export function createDiscordTransport(host: DiscordHost): DiscordTransport {
     authenticate,
     ready,
     hasSocket,
+    startTyping,
     supportsButtons: true,
 
     async connect({ onMessage: handler, onAction: actionHandler }: {

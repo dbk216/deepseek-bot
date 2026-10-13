@@ -108,6 +108,19 @@ export interface Transport {
   /** Upload a local file into the conversation, when the platform supports it. */
   uploadFile?(target: Target, filePath: string, title?: string): Promise<boolean>
 
+  /**
+   * The platform's own "is typing…", shown while a turn runs. Platforms let it lapse after a few
+   * seconds, so the transport repeats it until the returned function is called. A transport without
+   * one (Slack has none for bots) leaves this out, and the core posts a working message instead.
+   */
+  startTyping?(target: Target): () => void
+
+  /**
+   * Delete a message the bot posted, where the platform allows it. With it, the answer arrives as a
+   * new message and the working message is removed; without it, the answer edits the working message.
+   */
+  remove?(target: Target, ts: string): Promise<boolean>
+
   /** Whether this transport can render buttons. */
   readonly supportsButtons: boolean
 

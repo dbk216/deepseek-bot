@@ -31,4 +31,6 @@ export interface Origin {
   channel: string
   /** null on platforms without threads: the session is per conversation. */
   threadTs: string | null
+  /** Who wrote the message, in platform terms, when a person did. */
+  user?: string
 }

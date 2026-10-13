@@ -49,6 +49,9 @@ globalThis.fetch = async (url) => {
             { ts: '1000.1', user: 'U1', text: 'should we ship it?' },
             { ts: '1000.2', user: 'U2', text: 'yes <@U2> — and ask <@U3>' },
             { ts: '1000.3', user: 'U9', text: 'the question itself' },
+            // Posted after the question: the bot's own working message, which now exists before the
+            // history is read. It is not part of the conversation this turn answers.
+            { ts: '1000.4', user: 'U9', text: '⏳ 아리 작업 중…' },
           ],
         }
       }
@@ -85,6 +88,7 @@ check('an id past the page limit is resolved with users.info', /Late Joiner/.tes
 check('mentions are humanised', /@Second Person/.test(text), 'not left as <@U2>')
 check('raw mention syntax does not survive', !/<@U[0-9]+>/.test(text))
 check('the question being answered is excluded', !/the question itself/.test(text))
+check('nothing posted after the question is included, the working message first of all', !/작업 중/.test(text))
 check('users.list was paged', calls.filter((c) => c === 'users.list').length === 2, `${calls.filter((c) => c === 'users.list').length} call(s)`)
 
 rmSync(stateDir, { recursive: true, force: true })

@@ -101,6 +101,36 @@ function tracker(options = {}) {
   check('and take reports no message', t.take('k')?.ts === null)
 }
 
+// 7. Renders are serial. A second render while the first post is still in flight edits that message
+// instead of posting another — two posts meant one of them was never replaced. settle() waits for all.
+{
+  const posted = []
+  const t = createProgressTracker({
+    async post(target, text, opts = {}) {
+      posted.push({ text, replace: opts.replace ?? null })
+      const ts = `ts-${posted.length}`
+      await new Promise((r) => setTimeout(r, 30))
+      return { ts }
+    },
+    throttleMs: 0, label: 'working', now: () => 1000,
+  })
+  void t.force('k', target)
+  void t.force('k', target)
+  await t.settle('k')
+  check('a render during an in-flight post edits rather than posts', posted.length === 2 && posted[1].replace === 'ts-1', JSON.stringify(posted))
+  check('settle waits for every render', t.take('k')?.ts === 'ts-1')
+  check('settle on an unknown conversation resolves', await t.settle('none').then(() => true))
+}
+
+// 8. The label can be computed, so it can name who is working once that is known.
+{
+  let name = ''
+  const { t, posted } = tracker({ label: () => `⏳ ${name} 작업 중…` })
+  name = '아리'
+  await t.force('k', target)
+  check('a computed label is read when the message is rendered', posted[0]?.text === '⏳ 아리 작업 중…', posted[0]?.text)
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

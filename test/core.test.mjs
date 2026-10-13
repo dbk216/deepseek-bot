@@ -30,7 +30,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const homeDir = process.cwd()
 
 /** Boot the plugin with a fake transport and a state file we control. */
-function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
+function boot({ state = {}, config = {}, agent = 'throw', home = null } = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), 'deepbot-core-'))
   writeFileSync(join(stateDir, 'sessions.json'), JSON.stringify({
     sessions: {}, seen: {}, standing: {}, history: {}, ...state,
@@ -43,6 +43,8 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   // throw where a real service would do work, so a test still sees the failure.
   const created = []
   const permissionSets = []
+  // What the model was handed: the prompt is only visible here, in the ready-agent mode.
+  const followups = []
   const stubs = {
     agents: {
       create: async (options) => {
@@ -53,7 +55,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
           return {
             agent: {
               session: { header: { id: options?.sessionId ?? 's1' }, seq: 0, eventAt: () => undefined },
-              followup: () => {}, whenIdle: async () => {}, cancel: () => {},
+              followup: (message) => { followups.push(message) }, whenIdle: async () => {}, cancel: () => {},
             },
             dispose: async () => {},
           }
@@ -78,6 +80,9 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
       defaultPreset: 'standard',
     },
   }
+  // The agent's home. Without an `fs` service the plugin falls back to process.cwd(), which is this
+  // repository and has no persona files, so a test that needs them points the home at its own directory.
+  if (home !== null) stubs.fs = { resolve: async () => home, processPath: (path) => path }
   const ctx = {
     get: (name) => stubs[name],
     effect: (fn) => fn(),
@@ -103,8 +108,10 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   /** Fire an approval request the way the harness would, and get the outcome back. */
   const askApproval = (sessionId = 'slack-abc', reason = 'escalate sandbox to danger-full-access') =>
     listeners['approval/request'][0]({ agent: { session: { header: { id: sessionId } } }, reason })
-  return { transport, logs, stateDir, read, askApproval, gate, created, permissionSets, done: () => rmSync(stateDir, { recursive: true, force: true }) }
+  return { transport, logs, stateDir, read, askApproval, gate, created, permissionSets, followups, done: () => rmSync(stateDir, { recursive: true, force: true }) }
 }
+/** The text of a user message the core handed to the agent. */
+const textOf = (message) => (message?.content ?? []).map((block) => block?.text ?? '').join('')
 
 // 1. An allowed message reaches the transport, with the thread it arrived in.
 {
@@ -581,6 +588,145 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
     .filter(({ line }) => /'[^']*(습니다|하세요|했습니다|됩니다|세[요])/.test(line))
   check('the plugin sends no honorific messages', polite.length === 0,
     polite.slice(0, 2).map((l) => `L${l.i}: ${l.line.trim().slice(0, 60)}`).join(' | '))
+}
+
+// 29. The persona and the two fact files reach the model.
+//
+// The instruction loader the harness composes (inside the `standard` agent preset) reads AGENTS.md and
+// CLAUDE.md and nothing else, so SOUL.md, USER.md and MEMORY.md reached no live turn. Asked "아리 널
+// 어떻게 활용할수있니", the model did not know it was 아리 and wrote a message *to* 아리 instead of answering.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  writeFileSync(join(home, 'SOUL.md'), '# 아리\n\n너는 아리다. persona-marker-7f3\n')
+  writeFileSync(join(home, 'USER.md'), 'user-marker-1c9\n')
+  writeFileSync(join(home, 'MEMORY.md'), 'facts-marker-4b2\n')
+  writeFileSync(join(home, 'AGENTS.md'), 'agents-marker-8d5\n')
+  const t = boot({ agent: 'ready', home })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '아리 널 어떻게 활용할수있니', user: 'U_USER' }))
+  await sleep(400)
+  const sent = t.followups.map(textOf).join('\n')
+  check('the persona reaches the model', sent.includes('persona-marker-7f3'), sent.slice(0, 80) || '(no followup)')
+  check('so do the facts about the user and the work', sent.includes('user-marker-1c9') && sent.includes('facts-marker-4b2'))
+  check('AGENTS.md is left to the harness rather than sent twice', !sent.includes('agents-marker-8d5'))
+  check('the persona comes before the question',
+    sent.indexOf('persona-marker-7f3') >= 0 && sent.indexOf('persona-marker-7f3') < sent.indexOf('아리 널 어떻게'))
+  // The persona names people by their platform id (`<@U…>는 케이홉`), which is useless unless the
+  // model knows whose message it is reading.
+  check('the model is told who is speaking', sent.includes('[speaker] <@U_USER>\n[user message]'),
+    (sent.match(/\[speaker\][^\n]*/) ?? ['(no speaker line)'])[0])
+  // The recall indexer keeps what follows the last `[user message]` and nothing else
+  // (recall/deepbot-recall.ts, stripInjectedPreamble). Anything else there would be indexed as speech.
+  const said = sent.slice(sent.lastIndexOf('[user message]') + '[user message]'.length).trim()
+  check('what follows the last marker is exactly what the user said', said === '아리 널 어떻게 활용할수있니', JSON.stringify(said.slice(0, 60)))
+  rmSync(home, { recursive: true, force: true })
+  t.done()
+}
+
+// 30. A tenant's turn carries the tenant's persona, not the home's.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  writeFileSync(join(home, 'SOUL.md'), '# 아리\nhome-persona-2a1\n')
+  const tenants = mkdtempSync(join(tmpdir(), 'tenants-'))
+  const template = mkdtempSync(join(tmpdir(), 'tpl-'))
+  writeFileSync(join(template, 'SOUL.md'), '# acme\ntenant-persona-6e0\n')
+  const t = boot({
+    agent: 'ready', home,
+    config: { targetChannels: ['*'], tenantIsolation: true, tenantChannels: { C_ALLOWED: 'acme' }, tenantRoot: tenants, tenantTemplateDir: template },
+  })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '안녕' }))
+  await sleep(400)
+  const sent = t.followups.map(textOf).join('\n')
+  check('a tenant gets its own persona', sent.includes('tenant-persona-6e0'), sent.slice(0, 80) || '(no followup)')
+  check('and not the shared home\'s', !sent.includes('home-persona-2a1'))
+  for (const dir of [home, tenants, template]) rmSync(dir, { recursive: true, force: true })
+  t.done()
+}
+
+// 31. A message is acknowledged at once.
+//
+// Before this the first sign of life came after progressAfterMs (8 s), so a quick turn showed nothing
+// until the answer and a slow one looked dead. A transport without native typing — Slack — gets the
+// working message immediately, and the reply takes its place rather than arriving as a second message.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  writeFileSync(join(home, 'SOUL.md'), '# 아리\n')
+  const t = boot({ home, config: { progressAfterMs: 60000 } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: 'will fail' }))
+  await sleep(400)
+  const [first, ...rest] = t.transport.posted
+  check('the first message is a working message', first?.replace === null && /작업 중/.test(first?.text ?? ''), JSON.stringify(first))
+  check('it names who is working, from the persona', /아리 작업 중/.test(first?.text ?? ''), first?.text)
+  check('the reply replaces it', rest.length >= 1 && rest.every((p) => p.replace === 'ts-1'), JSON.stringify(rest).slice(0, 120))
+  rmSync(home, { recursive: true, force: true })
+  t.done()
+}
+
+// 31b. Where the platform can delete, the reply is a new message and the working message is removed.
+// An edit raises no notification, so replacing in place would have every answer arrive on a phone as
+// "⏳ 아리 작업 중…" now that the working message is posted for every turn, not only slow ones.
+{
+  const t = boot({ config: { progressAfterMs: 60000, fake: { remove: true } } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: 'will fail' }))
+  await sleep(400)
+  const [first, ...rest] = t.transport.posted
+  check('the working message is posted first', first?.replace === null && /작업 중/.test(first?.text ?? ''), JSON.stringify(first))
+  check('the reply is a new message, so it notifies', rest.length === 1 && rest[0].replace === null && !/작업 중/.test(rest[0].text),
+    JSON.stringify(rest).slice(0, 120))
+  check('and the working message is removed', t.transport.removed.length === 1 && t.transport.removed[0].ts === 'ts-1',
+    JSON.stringify(t.transport.removed))
+  t.done()
+}
+
+// 31c. Two messages in one thread while the first working message is still being posted.
+//
+// Found by review: the second message posted a second working message, the first turn's answer replaced
+// only the first, and the second stayed in the thread saying "작업 중" forever. Reproduced with a post
+// that takes 150 ms — with an instant fake post the race does not exist and the suite stayed green.
+for (const remove of [false, true]) {
+  const t = boot({ config: { progressAfterMs: 60000, fake: { postDelayMs: 150, remove } } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: 'first' }))
+  await sleep(20)
+  t.transport.deliver(t.transport.message({ text: 'second' }))
+  await sleep(1500)
+  const posts = t.transport.posted
+  const created = posts.map((p, i) => ({ ...p, ts: `ts-${i + 1}` })).filter((p) => p.replace === null && /작업 중/.test(p.text))
+  const settled = new Set([...posts.map((p) => p.replace), ...t.transport.removed.map((r) => r.ts)])
+  const orphans = created.filter((p) => !settled.has(p.ts)).map((p) => p.ts)
+  check(`no working message is left behind (${remove ? 'delete' : 'edit'} platform)`, created.length >= 1 && orphans.length === 0,
+    `created ${created.map((p) => p.ts).join(',') || 'none'}; orphaned ${orphans.join(',') || 'none'}`)
+  t.done()
+}
+
+// 32. A transport with native typing uses it instead, and the typing ends with the turn.
+{
+  const t = boot({ config: { progressAfterMs: 60000, fake: { typing: true } } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: 'will fail' }))
+  await sleep(400)
+  check('typing starts for the conversation', t.transport.typing.length === 1 && t.transport.typing[0].target.channel === 'C_ALLOWED',
+    JSON.stringify(t.transport.typing))
+  // Within progressAfterMs only (60 s here): past it a slow turn gets the progress message as well.
+  check('no working message is posted on top of it before progressAfterMs', !t.transport.posted.some((p) => /작업 중/.test(p.text)),
+    t.transport.posted.map((p) => p.text).join(' | ').slice(0, 90))
+  check('typing stops once the turn is over', t.transport.typing[0]?.stopped === true)
+  t.done()
+}
+
+// 33. The indicator can be turned off, and then nothing precedes the reply.
+{
+  const t = boot({ config: { progressAfterMs: 60000, workingIndicator: false, fake: { typing: true } } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: 'will fail' }))
+  await sleep(400)
+  check('no typing and no working message when it is off',
+    t.transport.typing.length === 0 && t.transport.posted.length === 1 && t.transport.posted[0].replace === null,
+    JSON.stringify(t.transport.posted).slice(0, 120))
+  t.done()
 }
 
 const failed = results.filter((r) => !r.ok)

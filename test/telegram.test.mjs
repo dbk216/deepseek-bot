@@ -228,6 +228,23 @@ function groupMessage(overrides = {}) {
   check('the loop keeps running after a failure', attempts >= 1 && t.hasSocket() === false)
 }
 
+// 12. Typing is a chat action. It lapses after five seconds, so it is repeated until stopped.
+{
+  const api = fakeApi()
+  const t = transportFor(api, mkdtempSync(join(tmpdir(), 'tg-')), { typingIntervalMs: 40 })
+  await t.identity()
+  const actions = () => api.calls.filter((c) => c.method === 'sendChatAction')
+  const stop = t.startTyping({ channel: '7', threadTs: '10' })
+  await sleep(110)
+  stop()
+  const sent = actions().length
+  await sleep(120)
+  check('typing is sent as a chat action', actions()[0]?.body?.chat_id === '7' && actions()[0]?.body?.action === 'typing',
+    JSON.stringify(actions()[0]?.body))
+  check('and repeated while the turn runs', sent >= 2, `${sent} call(s)`)
+  check('it stops when the turn is over', actions().length === sent, `${sent} → ${actions().length}`)
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

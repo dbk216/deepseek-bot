@@ -101,6 +101,29 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
   function ready(): boolean { return typeof token === 'string' && token !== '' }
   function hasSocket(): boolean { return polling }
 
+  /**
+   * Telegram's "typing…" is a chat action that lasts five seconds or until the bot sends, so it is
+   * re-sent every four while a turn runs. A refusal is logged once and the repetition stops.
+   */
+  function startTyping(target: Target): () => void {
+    const intervalMs = Number(cfg.typingIntervalMs) > 0 ? Number(cfg.typingIntervalMs) : 4000
+    let timer: ReturnType<typeof setInterval> | null = null
+    let failed = false
+    const stop = () => { if (timer !== null) { clearInterval(timer); timer = null } }
+    const send = () => {
+      if (failed) return
+      call('sendChatAction', { chat_id: target.channel, action: 'typing' }).catch((e) => {
+        if (failed) return
+        failed = true
+        stop()
+        log(`telegram typing failed: ${String((e as Error)?.message ?? e)}`)
+      })
+    }
+    send()
+    timer = setInterval(send, intervalMs)
+    return stop
+  }
+
   async function identity() {
     if (!ready()) await authenticate()
     const me = await call<TelegramUser>('getMe')
@@ -234,6 +257,7 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
     // Inline keyboards exist, but this transport answers decisions by reply text.
     supportsButtons: false,
     hasSocket,
+    startTyping,
 
     async connect(handlers: { onMessage: (message: InboundMessage) => void }) {
       onMessage = handlers.onMessage

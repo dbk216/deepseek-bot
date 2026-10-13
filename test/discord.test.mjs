@@ -253,6 +253,34 @@ function message(overrides = {}) {
   check('and the interaction is acknowledged', api2.rest.some((c) => c.path === '/interactions/I1/T1/callback'), JSON.stringify(api2.rest.map((c) => c.path).slice(-2)))
 }
 
+// 9. Typing: Discord's own "is typing…". It lapses after ten seconds, so it is repeated until stopped.
+{
+  const api = fakeDiscord()
+  const t = transportFor(api, mkdtempSync(join(tmpdir(), 'dc-')), { typingIntervalMs: 40 })
+  await t.identity()
+  const typingCalls = () => api.rest.filter((c) => c.method === 'POST' && c.path === '/channels/C1/typing').length
+  const stop = t.startTyping({ channel: 'C1', threadTs: null })
+  await sleep(110)
+  stop()
+  const sent = typingCalls()
+  await sleep(120)
+  check('typing is sent at once and repeated while the turn runs', sent >= 2, `${sent} call(s)`)
+  check('it stops when the turn is over', typingCalls() === sent, `${sent} → ${typingCalls()}`)
+
+  // A channel the bot may not type in answers 403. That is said once, not every eight seconds.
+  const denied = fakeDiscord()
+  const deniedFetch = async (url, init = {}) => String(url).endsWith('/typing')
+    ? { ok: false, status: 403, json: async () => ({}), text: async () => '{"message":"Missing Permissions"}' }
+    : denied.fetchImpl(url, init)
+  const t2 = transportFor({ ...denied, fetchImpl: deniedFetch }, mkdtempSync(join(tmpdir(), 'dc-')), { typingIntervalMs: 20 })
+  await t2.identity()
+  const stop2 = t2.startTyping({ channel: 'C1', threadTs: null })
+  await sleep(100)
+  stop2()
+  const lines = t2.logs.filter((l) => /typing failed/.test(l))
+  check('a refused typing call is logged once and not repeated', lines.length === 1, `${lines.length} line(s)`)
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

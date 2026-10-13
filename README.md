@@ -62,19 +62,19 @@ Each line is traceable to code and to something that checks it.
 
 | It | Where | Checked by |
 |---|---|---|
-| Serves Slack over **Socket Mode**: receive, reply in thread, chunk long answers, drop duplicate events | `transports/slack.ts` | `test/slack.test.mjs` 33/33; `tools/qa-slack.mjs` against a live workspace |
-| Serves **Telegram** by long polling | `transports/telegram.ts` | `test/telegram.test.mjs` 25/25 |
-| Serves **Discord** (gateway websocket + REST), with buttons for approvals | `transports/discord.ts` | `test/discord.test.mjs` 32/32 |
-| Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.mjs` 108/108; `test/scenarios/restart-1.json` + `restart-2.json` |
-| Injects **persona and notes** every turn, without re-sending them every turn | `index.ts`, `dsh-agent-instructions` | `test/core.test.mjs`; `tools/persona-check.mjs` 13/13 |
+| Serves Slack over **Socket Mode**: receive, reply in thread, chunk long answers, drop duplicate events | `transports/slack.ts` | `test/slack.test.mjs` 36/36; `tools/qa-slack.mjs` against a live workspace |
+| Serves **Telegram** by long polling | `transports/telegram.ts` | `test/telegram.test.mjs` 28/28 |
+| Serves **Discord** (gateway websocket + REST), with buttons for approvals | `transports/discord.ts` | `test/discord.test.mjs` 35/35 |
+| Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.mjs` 128/128; `test/scenarios/restart-1.json` + `restart-2.json` |
+| Injects **persona and notes** (`SOUL.md`/`USER.md`/`MEMORY.md` from the adapter, `AGENTS.md` from `dsh-agent-instructions`), without re-sending them every turn | `index.ts` | `test/core.test.mjs`; `test/scenarios/persona.json` 3/3 |
 | **Recalls past conversations** — rank passages, then ask for what they imply | `recall/`, `recallContext.ts` | `test/recall.test.mjs` 7/7; `test/recall-context.test.mjs` 12/12 |
-| Reads the **thread it was mentioned in**, as a delta | `transports/slack.ts` | `test/history.test.mjs` 8/8 |
+| Reads the **thread it was mentioned in**, as a delta | `transports/slack.ts` | `test/history.test.mjs` 9/9 |
 | Sends an attached **image** to the model as an image | `transports/attachments.ts`, `index.ts` | `test/attachments.test.mjs` 13/13; `vision.json` needs a model |
 | Produces **documents** (docx, pptx, xlsx) | `profile/cordis.patch.yml` office rows | `test/scenarios/document.json` asserts the artifacts |
 | Asks the user to **approve** a destructive command, in the conversation | `index.ts` | approval checks in `test/core.test.mjs`; `approval-gate.json` records one open gap |
 | Confines **reads**, for commands and for the file tools | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.mjs` 10/10; `test/edges.test.mjs` 19/19 |
 | Flags **instruction-like text** in fetched material | `injection.ts` | `test/injection.test.mjs` 31/31 |
-| Posts a **progress message** on a slow turn and edits it | `progress.ts` | `test/progress.test.mjs` 18/18 |
+| Shows it is **working at once** (typing, or a progress message on Slack) and edits it | `progress.ts`, `index.ts` | `test/progress.test.mjs` 22/22; `test/core.test.mjs` |
 | **Stops** a running turn on request, and on its own timeout | `index.ts` | `test/scenarios/interrupt.json` |
 | Reports **token usage** without starting a turn | `usage.ts` | `test/usage.test.mjs` 19/19 |
 | Delivers **reminders** and **watches** — speaking first, but only when asked to | `watch/`, schedule bundle | `test/watch.test.mjs` 16/16; `test/delivery.test.mjs` 9/9 |
@@ -148,10 +148,19 @@ thread.
 Prompt caching reuses a stable prefix, so anything that changes early in the prompt throws away
 everything after it, and anything repeated every turn is paid for every turn. Two rules follow.
 
-**Standing context goes in once.** `SOUL.md`, `AGENTS.md`, `USER.md` and `MEMORY.md` are injected
-by `dsh-agent-instructions` (a profile row), which appends them as one durable baseline and adds
-only deltas. Re-injecting them per turn duplicated `AGENTS.md` — measured at 7,625 characters per
-turn on top of the harness's own 3,634 — and left a copy of every file in every historical turn.
+**Standing context goes in once.** `AGENTS.md` is injected by `dsh-agent-instructions`, which
+appends it as one durable baseline and adds only deltas. Re-injecting it per turn duplicated it —
+measured at 7,625 characters per turn on top of the harness's own 3,634.
+
+`SOUL.md`, `USER.md` and `MEMORY.md` are **not** read by that loader, whatever a profile says: the
+instance that runs is mounted inside the `standard` agent preset with the default candidates
+(`AGENTS.md`, `CLAUDE.md`), and the top-level `agent-instructions` row a profile can patch is
+disabled. This README used to say otherwise, and from 2026-10-10 to 2026-10-13 the live bot ran
+without its persona — asked "아리 널 어떻게 활용할수있니", it wrote a message *to* 아리 instead of
+answering. The adapter now puts those three files at the top of its own standing block (below), so
+they are sent once per conversation and again only when they change. `test/core.test.mjs` checks
+they reach the model and `AGENTS.md` does not go twice; `test/scenarios/persona.json` checks it
+against a real model, with file tools forbidden so the model cannot read `SOUL.md` itself.
 
 **Only the changing part is dynamic.** The adapter's own block — where this conversation is, which
 directory is writable, which notes exist, whether the notes need tidying — is hashed (SHA-1, per
@@ -391,15 +400,33 @@ One boundary worth stating: the injection guard covers channel history, attachme
 arrive as material. The `fetch` tool's own output goes straight into the model's context and is
 **not** annotated.
 
-## Progress on a slow turn
+## Progress on a turn
 
-After `progressAfterMs` (8 seconds by default) a turn posts one message saying it is working, and
-**edits that same message** as tools run, with tool names and elapsed time. The answer replaces
-it, so a slow turn leaves one message that changed rather than a stale "working on it" plus an
-answer. Edits are throttled (`progressUpdateMs`, 2.5 s) because every edit is a rate-limited API
-call: the message says roughly what is happening, not every step. A turn that finishes quickly
-shows nothing at all, and a turn whose completion fails still replaces the progress message with
-the failure, so nothing is left claiming to be working.
+A message that is taken is acknowledged **at once** (`workingIndicator`, on by default). Discord
+and Telegram show their own "is typing…", re-sent every 8 s and 4 s because each lapses on its own,
+and stopped before the answer is posted. Slack has no typing indicator for bots, so there the
+progress message — `⏳ 아리 작업 중…`, the name taken from the persona's first heading — is posted
+immediately instead of after `progressAfterMs`.
+
+The progress message **is edited in place** as tools run, with tool names and elapsed time; on a
+platform with typing it appears only once a turn has run for `progressAfterMs` (8 s). When the turn
+ends it gives way to the answer, so a turn leaves one message rather than a stale "working on it"
+plus an answer. On Slack the answer is posted as a **new message and the progress message is
+deleted** (`chat.delete`, which `chat:write` covers): an edit raises no notification, so with the
+progress message on every turn, every answer would have reached a phone as "작업 중". Where a
+platform cannot delete, the answer edits the progress message instead. Edits are throttled
+(`progressUpdateMs`, 2.5 s) because every edit is a rate-limited API call: the message says roughly
+what is happening, not every step. Renders are serial per conversation and the answer waits for
+them, so a second message in the same thread cannot post a second progress message that nothing
+replaces (`test/core.test.mjs`, with a post that takes 150 ms). A turn whose completion fails still
+gives way to the failure, so nothing is left claiming to be working.
+
+`progressAfterMs: 0` no longer silences Slack: to post nothing until the answer, set
+`workingIndicator: false`. Slack's thread history now stops at the message being answered, so the
+progress message, posted before the history is read, is not quoted back to the model.
+
+Not verified on a live Discord or Telegram server: typing is checked against the mocked APIs in
+`test/discord.test.mjs` and `test/telegram.test.mjs`, the same as the rest of those transports.
 
 The rule worth knowing when changing this code lives in `progress.ts`, tested with no agent and no
 platform: create once, edit after, never leave it behind. An orphaned "working on it" is worse than
@@ -632,6 +659,7 @@ step failed, 2 on setup problems. Flags: `--timeout <s>`, `--seed <file>`, `--du
 | `recall-decision.json` | recall ends in a decision ("here is what happened, therefore this") rather than a dump of passages |
 | `restart-1.json` + `restart-2.json` | a second process resumes the first's session and still knows what was said (`pnpm test:restart`) |
 | `notes-hygiene.json` | the consolidation advice reaches the prompt when `MEMORY.md` is over budget |
+| `persona.json` | the model answers as the persona in `SOUL.md`, knowing a fact only that file holds, without opening it |
 | `vision.json` | the model answers with a colour that only the attached image reveals |
 | `browser.json` | a fact and its source URL come from a fetched page, not the prompt |
 | `document.json` | a produced `.docx` / `.pptx` is a real ZIP with the expected OOXML parts and text |
