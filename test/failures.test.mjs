@@ -26,7 +26,7 @@ function check(name, ok, detail = '') {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** `agents.create` behaviour: 'throw' (default), 'hang', or a working stub. */
+/** `agents.create` behaviour: 'throw' (default), 'hang', or 'slow' (see below). */
 function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), 'deepbot-fail-'))
   writeFileSync(join(stateDir, 'sessions.json'), JSON.stringify({ sessions: {}, seen: {}, standing: {}, history: {}, ...state }))
@@ -34,14 +34,36 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   const logs = []
   const listeners = {}
   const created = []
+  // 'slow': the create takes 100 ms, and the agent runs until it is cancelled. The delay is what puts
+  // the turn's own timeout behind the job's, which is the order that let a timed-out turn release the
+  // conversation while its agent still ran.
+  const events = []
+  let agentsMade = 0
+  async function slowAgent(options) {
+    const n = ++agentsMade
+    await sleep(100)
+    events.push({ at: Date.now(), kind: 'created', n })
+    let stop
+    const stopped = new Promise((resolve) => { stop = resolve })
+    return {
+      agent: {
+        session: { header: { id: options?.sessionId ?? `s${n}` }, seq: 0, eventAt: () => undefined },
+        followup: () => {}, whenIdle: () => stopped,
+        cancel: (reason) => { events.push({ at: Date.now(), kind: 'cancelled', n, reason }); stop() },
+      },
+      dispose: async () => {},
+    }
+  }
   const stubs = {
     agents: {
       create: async (options) => {
         created.push(options)
         if (agent === 'hang') return await new Promise(() => {})       // never resolves
+        if (agent === 'slow') return slowAgent(options)
         throw new Error('fake: agents.create is not implemented')
       },
-      resume: async () => { throw new Error('fake: no agents') },
+      // A second turn in the conversation resumes the first one's session.
+      resume: async (options) => { if (agent === 'slow') return slowAgent(options); throw new Error('fake: no agents') },
     },
     sessions: { flush: async () => {} },
     agentDefaultModel: { currentSelection: () => ({ provider: 'fake', model: 'fake' }) },
@@ -56,7 +78,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   const ctx = { get: (n) => stubs[n], effect: (fn) => fn(), on: (n, h) => { (listeners[n] ??= []).push(h); return () => {} }, logger: { info: (l) => logs.push(String(l)) } }
   apply(ctx, { targetChannels: ['C_ALLOWED'], stateDir, transportFactory: () => transport, progressAfterMs: 50, ...config })
   return {
-    transport, logs, created,
+    transport, logs, created, events,
     read: () => JSON.parse(readFileSync(join(stateDir, 'sessions.json'), 'utf8')),
     done: () => rmSync(stateDir, { recursive: true, force: true }),
   }
@@ -104,7 +126,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   t.transport.deliver(t.transport.message({ text: 'while you are busy' }))
   await sleep(150)
   check('a second message waits while the first turn is open', t.created.length === 1, `${t.created.length} create(s)`)
-  await sleep(900)
+  await sleep(1100)
   check('and runs once the first turn has ended', t.created.length === 2, `${t.created.length} create(s)`)
   check('nothing says it was ignored', !t.logs.some((l) => /ignored|dropped|refused the message/i.test(l)),
     t.logs.filter((l) => /accepted|ignored|dropped/.test(l)).join(' | ').slice(0, 120))
@@ -129,14 +151,17 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
 // 3c. A stop for a message that has not started says it stopped it — not "nothing is running" while
 // "작업 중" is on screen — and the report takes the working message's place.
 {
-  const t = boot({ agent: 'hang', config: { maxConcurrency: 1, runTimeoutMs: 60000, targetChannels: ['*'] } })
+  // The other conversation holds the only slot until its backstop (400 ms + 400 ms grace) lets go;
+  // the checks run after that, so a withdrawn message that still ran would be counted. Checked at
+  // 300 ms, as first written, nothing could have run yet either way.
+  const t = boot({ agent: 'hang', config: { maxConcurrency: 1, runTimeoutMs: 400, targetChannels: ['*'] } })
   await sleep(60)
   t.transport.deliver(t.transport.message({ text: 'elsewhere', target: { channel: 'C_OTHER', threadTs: 't0' } }))
   await sleep(150)
   t.transport.deliver(t.transport.message({ text: 'waits for a slot' }))
   await sleep(150)
   t.transport.deliver(t.transport.message({ text: '그만' }))
-  await sleep(300)
+  await sleep(1400)
   const posts = t.transport.posted.map((p, i) => ({ ...p, ts: `ts-${i + 1}` }))
   const inThread = posts.filter((p) => p.target.channel === 'C_ALLOWED')
   const working = inThread.find((p) => p.replace === null && /작업 중/.test(p.text))
@@ -144,6 +169,41 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   check('the stop says it withdrew the waiting message', /중단/.test(report?.text ?? '') && !/없어/.test(report?.text ?? ''), report?.text)
   check('in place of the working message', working !== undefined && report?.replace === working.ts, JSON.stringify(inThread).slice(0, 160))
   check('and the waiting message never starts', t.created.length === 1, `${t.created.length} create(s)`)
+  t.done()
+}
+
+// 3d. A turn that times out is stopped before the conversation's next message starts. The job's own
+// timeout fired first (it starts before the agent exists, the turn's after), so the next turn began
+// while the old agent still ran, and the old turn's timer — looking up the conversation's key —
+// cancelled the new turn instead of its own.
+{
+  const t = boot({ agent: 'slow', config: { runTimeoutMs: 300 } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: 'runs past its timeout' }))
+  await sleep(20)
+  t.transport.deliver(t.transport.message({ text: 'next' }))
+  await sleep(1300)
+  const firstCancel = t.events.find((e) => e.kind === 'cancelled' && e.n === 1)
+  const secondCreate = t.events.find((e) => e.kind === 'created' && e.n === 2)
+  check('the timed-out turn\'s own agent is cancelled', firstCancel !== undefined, JSON.stringify(t.events))
+  check('and the next message starts only after that', firstCancel !== undefined && secondCreate !== undefined && secondCreate.at >= firstCancel.at,
+    JSON.stringify(t.events.map((e) => `${e.kind}${e.n}`)))
+  t.done()
+}
+
+// 3e. A stop ends the typing of the messages it withdraws at once — not when they would have reached
+// a slot, which behind another conversation's turn could be minutes of "typing…" under "중단했어".
+{
+  const t = boot({ agent: 'hang', config: { maxConcurrency: 1, runTimeoutMs: 60000, targetChannels: ['*'], fake: { typing: true } } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: 'elsewhere', target: { channel: 'C_OTHER', threadTs: 't0' } }))
+  await sleep(100)
+  t.transport.deliver(t.transport.message({ text: 'waits for a slot' }))
+  await sleep(100)
+  t.transport.deliver(t.transport.message({ text: '그만' }))
+  await sleep(100)
+  const typing = t.transport.typing.find((entry) => entry.target.channel === 'C_ALLOWED')
+  check('the withdrawn message stops typing at once', typing?.stopped === true, JSON.stringify(t.transport.typing))
   t.done()
 }
 

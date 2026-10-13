@@ -843,12 +843,13 @@ export function apply(ctx, config) {
    * asking to stop go through here, so there is one place where cancellation
    * happens and one place to look when it does not.
    */
-  const runningTurns = new Map<string, {
+  type TurnState = {
     cancel: (reason: string) => void
     cause: string | null
     /** False while the agent is still being created: then the turn cannot report itself. */
     prepared: boolean
-  }>()
+  }
+  const runningTurns = new Map<string, TurnState>()
 
   /** @returns whether anything was actually running. */
   /**
@@ -1259,7 +1260,30 @@ export function apply(ctx, config) {
    * Create a session (or resume one) and drive it to completion.
    * @returns {Promise<{text: string, reason: unknown, sessionId: string}>}
    */
+  /**
+   * A turn, registered from the moment it is called. Registration used to come after the preset,
+   * scope and workspace steps — several awaits — so a stop in that window found nothing running and
+   * the turn went ahead; and the entry was deleted by key, so a turn ending late removed a newer
+   * one's. The per-conversation queue made both reachable; found by its review.
+   */
   async function runTurn(prompt: string, existingSessionId: string | undefined, origin: Origin | null = null, historyText = '', attachmentText = '', sessionKey: string | null = null, images: unknown[] = []): Promise<TurnOutcome> {
+    const sessionId = existingSessionId ?? `slack-${randomUUID()}`   // stands in for brandString(...)
+    const turnKey = sessionKey ?? sessionId ?? ''
+    const turnState: TurnState = {
+      cause: null,
+      prepared: false,
+      cancel: (reason) => { turnState.cause = reason },   // upgraded once the agent exists
+    }
+    runningTurns.set(turnKey, turnState)
+    try {
+      return await runRegisteredTurn({ sessionId, turnKey, turnState }, prompt, existingSessionId, origin, historyText, attachmentText, sessionKey, images)
+    } finally {
+      if (runningTurns.get(turnKey) === turnState) runningTurns.delete(turnKey)
+    }
+  }
+
+  async function runRegisteredTurn(turn: { sessionId: string; turnKey: string; turnState: TurnState }, prompt: string, existingSessionId: string | undefined, origin: Origin | null = null, historyText = '', attachmentText = '', sessionKey: string | null = null, images: unknown[] = []): Promise<TurnOutcome> {
+    const { sessionId, turnKey, turnState } = turn
     // Fetched material says what it is, where an instruction would appear. Applied here
     // rather than in handleEvent because this is where both paths converge: the scenario
     // harness calls runTurn directly, so a guard that only ran in production would be
@@ -1380,28 +1404,11 @@ export function apply(ctx, config) {
     }
 
     let handle
-    let sessionId = existingSessionId ?? `slack-${randomUUID()}`   // stands in for brandString(...)
     activeTurns.add(sessionId)
-      // Register the turn *before* the agent exists. A create still in flight left the
-      // conversation looking idle, so two quick messages started two agents in one thread and
-      // a stop request answered "nothing is running". Found by the failure-injection sweep.
-      const turnKey = sessionKey ?? sessionId ?? ''
-      const turnState: {
-        cause: string | null
-        /** True once an agent exists: only then can the turn report its own cancellation. */
-        prepared: boolean
-        cancel: (reason: string) => void
-      } = {
-        cause: null,
-        prepared: false,
-        cancel: (reason) => { turnState.cause = reason },   // upgraded once the agent exists
-      }
-      runningTurns.set(turnKey, turnState)
     try {
       handle = await adopt(existingSessionId)
     } catch (e) {
       activeTurns.delete(sessionId)
-        runningTurns.delete(turnKey)
       // AsyncDisposable yields a PromiseLike, which has no .catch: resolve it first rather
         // than relying on the service happening to return a real Promise.
         await Promise.resolve(scope?.[Symbol.asyncDispose]?.()).then(() => {}, () => {})
@@ -1443,18 +1450,20 @@ export function apply(ctx, config) {
         turnState.cause = reason
         try { agent.cancel?.(reason) } catch (e) { log(`agent.cancel failed: ${String(e?.message ?? e)}`) }
       }
-      if (turnState.cause !== null) {
-        log(`turn in ${turnKey} was stopped before it started (${turnState.cause})`)
-        return { text: '', reason: { kind: 'cancelled', cause: turnState.cause }, toolsUsed: [], sessionId }
-      }
-      const turnTimeout = setTimeout(() => { cancelRunning(turnKey, 'timed out') }, cfg.runTimeoutMs)
+      // Its own turn, not whatever is registered under the key: once this turn's reply was out, a
+      // newer turn in the conversation could hold that key, and a late timer would cancel it.
+      const turnTimeout = setTimeout(() => {
+        log(`cancelling the running turn in ${turnKey} (timed out)`)
+        turnState.cancel('timed out')
+      }, cfg.runTimeoutMs)
 
     // Progress lives here, not in the Slack message handler, for the same reason the
     // recall refresh does: this is the one place every caller passes through. Armed
     // from the message path only, the progress path could not be exercised by the
     // test harness at all.
     const progressTarget = origin ?? targetFromKey(turnKey)
-    turnStartedAt.set(turnKey, Date.now())
+    const startedAt = Date.now()
+    turnStartedAt.set(turnKey, startedAt)
     const progressTimer = cfg.progressAfterMs > 0 && turnKey !== ''
       ? setTimeout(() => {
           void progress.force(turnKey, progressTarget)
@@ -1466,6 +1475,13 @@ export function apply(ctx, config) {
       : null
 
     try {
+      // Inside the try: a turn stopped while its agent was being created still releases the agent
+      // and its scope below. Returning before it left the session held, and the queue now starts the
+      // conversation's next turn at once.
+      if (turnState.cause !== null) {
+        log(`turn in ${turnKey} was stopped before it started (${turnState.cause})`)
+        return { text: '', reason: { kind: 'cancelled', cause: turnState.cause }, toolsUsed: [], sessionId }
+      }
       await agent.whenIdle()
       const firstSeq = agent.session.seq
       const { preamble } = await contextPreamble(origin ?? null, historyText, attachmentText, sessionKey, prompt)
@@ -1520,10 +1536,8 @@ export function apply(ctx, config) {
       // work nobody asked to stop.
       clearTimeout(turnTimeout)
       if (progressTimer !== null) clearTimeout(progressTimer)
-      turnStartedAt.delete(turnKey)
-      // Same reason: a leftover entry would let a stop request report that it stopped
-      // a turn that finished long ago.
-      runningTurns.delete(turnKey)
+      if (turnStartedAt.get(turnKey) === startedAt) turnStartedAt.delete(turnKey)
+      // The registration itself is released by runTurn, and only if it is still this turn's.
       // Release the agent after every turn. The log is persisted, so the next
       // turn can resume; keeping it alive would pile one agent per thread into
       // memory.
@@ -1604,9 +1618,10 @@ export function apply(ctx, config) {
    * enter the global queue one after another; other conversations are not held up behind them.
    */
   const conversationTail = new Map<string, Promise<void>>()
-  function enqueueFor(key: string, job: () => Promise<void>): void {
+  function enqueueFor(key: string, job: () => Promise<void>, skip: () => boolean = () => false): void {
     const run = (conversationTail.get(key) ?? Promise.resolve())
-      .then(() => new Promise<void>((done) => enqueue(() => Promise.resolve(job()).finally(done))))
+      // A withdrawn message does not wait for a slot only to do nothing with it.
+      .then(() => skip() ? undefined : new Promise<void>((done) => enqueue(() => Promise.resolve(job()).finally(done))))
     conversationTail.set(key, run)
     void run.finally(() => { if (conversationTail.get(key) === run) conversationTail.delete(key) })
   }
@@ -1616,16 +1631,19 @@ export function apply(ctx, config) {
    * ticket just before its turn begins. Without this the bot said it had stopped and then started
    * on the next message in the queue.
    */
-  const waiting = new Map<string, Set<{ withdrawn: boolean }>>()
+  type Ticket = { withdrawn: boolean; stopWorking: () => void }
+  const waiting = new Map<string, Set<Ticket>>()
   function withdrawWaiting(key: string): number {
     const tickets = waiting.get(key)
     if (tickets === undefined) return 0
-    for (const ticket of tickets) ticket.withdrawn = true
+    // Typing stops now, not when the withdrawn job would have reached a slot — which, behind another
+    // conversation's turn, could be minutes of "typing…" under "중단했어".
+    for (const ticket of tickets) { ticket.withdrawn = true; ticket.stopWorking() }
     waiting.delete(key)
     return tickets.size
   }
   /** Leave the waiting list; false when a stop withdrew this message meanwhile. */
-  function leaveWaiting(key: string, ticket: { withdrawn: boolean }): boolean {
+  function leaveWaiting(key: string, ticket: Ticket): boolean {
     const tickets = waiting.get(key)
     tickets?.delete(ticket)
     if (tickets?.size === 0) waiting.delete(key)
@@ -1723,7 +1741,7 @@ export function apply(ctx, config) {
     log(`accepted channel=${channel} thread=${threadTs} session=${state.sessions[key] ?? 'new'}`)
     // Before the queue, so a message waiting behind other turns also shows it was taken.
     const stopWorking = startWorking(key, { channel, threadTs })
-    const ticket = { withdrawn: false }
+    const ticket: Ticket = { withdrawn: false, stopWorking }
     if (!waiting.has(key)) waiting.set(key, new Set())
     waiting.get(key)?.add(ticket)
 
@@ -1762,7 +1780,12 @@ export function apply(ctx, config) {
         if (message.user !== '') requesterOf.set(key, message.user)
         let r
         try {
-          r = await withTimeout(runTurn(prompt, state.sessions[key], { channel, threadTs, user: message.user }, historyText, attachmentText, key, attachmentImages), cfg.runTimeoutMs)
+          // Past the turn's own timeout, with room for it: the turn cancels its agent at runTimeoutMs
+          // after the agent exists, and this one must not end the job — releasing the conversation's
+          // next message — while that agent still holds the session. It is the backstop for a turn
+          // that never gets that far.
+          const backstopMs = cfg.runTimeoutMs + Math.min(60000, cfg.runTimeoutMs)
+          r = await withTimeout(runTurn(prompt, state.sessions[key], { channel, threadTs, user: message.user }, historyText, attachmentText, key, attachmentImages), backstopMs)
           // Advance the thread pointer only after the turn succeeded, so a failed
           // turn does not swallow messages it never delivered.
           if (historyLastTs !== null && r.reason?.kind === 'completed') {
@@ -1801,7 +1824,7 @@ export function apply(ctx, config) {
         const leftover = progress.take(key)?.ts ?? null
         await replyInPlaceOf(replyTarget, `Execution failed: ${String(e?.message ?? e).slice(0, 300)}`, leftover)
       }
-    })
+    }, () => ticket.withdrawn)
   }
 
   /** Generic so the caller keeps the turn's shape: `unknown` here is what forced casts at every call site. */
