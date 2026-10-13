@@ -1170,22 +1170,24 @@ export function apply(ctx, config) {
     } catch { card = undefined }
     const first = typeof args === 'string' ? args : args !== null && typeof args === 'object' ? Object.values(args).find((v) => typeof v === 'string') : undefined
     const title = clip(typeof card?.title === 'string' ? card.title : typeof first === 'string' ? first : '', 300)
-    // The first three files of an edit, each side cut to whole lines within a budget. A cut side
-    // is marked, so the card can say so instead of showing the lines past the cut as removed.
+    // The first three files of an edit, each side cut to whole lines within a budget. Which side
+    // was cut is said, so the card can tell a real change from a line that only fell past a cut.
     // Lines as well as characters: the card compares the two sides line by line, and past a few
     // hundred a side it would not compare them at all.
     const side = (text: string) => {
       let kept = text
       if (kept.length > 8000) { const head = kept.slice(0, 8000); const end = head.lastIndexOf('\n'); kept = end > 0 ? head.slice(0, end) : head }
       const lines = kept.split('\n')
-      if (lines.length > 400) kept = lines.slice(0, 400).join('\n')
+      // A final newline is not a line of its own: 400 lines that end in one are whole.
+      const count = lines.length - (kept.endsWith('\n') ? 1 : 0)
+      if (count > 400) kept = lines.slice(0, 400).join('\n')
       return { text: kept, cut: kept.length < text.length }
     }
     const diff = card?.card === 'diff' && Array.isArray(card.diffs)
       ? card.diffs.slice(0, 3).map((d: any) => {
           const before = typeof d?.oldText === 'string' ? side(d.oldText) : null
           const after = side(String(d?.newText ?? ''))
-          return { path: clip(String(d?.path ?? ''), 300), old: before === null ? null : before.text, new: after.text, ...(before?.cut === true || after.cut ? { truncated: true } : {}) }
+          return { path: clip(String(d?.path ?? ''), 300), old: before === null ? null : before.text, new: after.text, ...(before?.cut === true ? { oldCut: true } : {}), ...(after.cut ? { newCut: true } : {}) }
         })
       : undefined
     return { kind: 'tool', name, ...(typeof data?.callId === 'string' ? { callId: data.callId } : {}), ...(title !== '' ? { title } : {}), ...(diff !== undefined ? { diff } : {}) }

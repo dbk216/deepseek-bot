@@ -514,7 +514,14 @@ function boot({ state = {}, config = {} } = {}) {
   const later = c.frames.filter((f) => f.type === 'stream' && f.kind === 'tool')
   const cut = later.find((f) => f.callId === 'c3')?.diff?.[0]
   check('tools: a large edit is cut to few enough lines to compare', cut?.old.split('\n').length <= 400 && cut.new.split('\n').length <= 400, `${cut?.old.split('\n').length} / ${cut?.new.split('\n').length}`)
-  check('tools: a large edit is cut at a line boundary and marked as cut', cut?.truncated === true && cut.old.length <= 8000 && /^line \d+$/.test(cut.old.split('\n').at(-1)) && /^line \d+$/.test(cut.new.split('\n').at(-1)), JSON.stringify({ truncated: cut?.truncated, oldEnd: cut?.old?.slice(-20), newEnd: cut?.new?.slice(-20) }))
+  check('tools: a large edit is cut at a line boundary and marked as cut', cut?.oldCut === true && cut?.newCut === true && cut.old.length <= 8000 && /^line \d+$/.test(cut.old.split('\n').at(-1)) && /^line \d+$/.test(cut.new.split('\n').at(-1)), JSON.stringify({ oldCut: cut?.oldCut, newCut: cut?.newCut, oldEnd: cut?.old?.slice(-20), newEnd: cut?.new?.slice(-20) }))
+  // Which side was cut is said per side; a text of exactly the line limit that ends in a newline is whole.
+  const exact = `${Array.from({ length: 400 }, (_, i) => `l${i}`).join('\n')}\n`
+  emit('session/event', agent.session, { type: 'tool/call', data: { name: 'str_replace_editor', callId: 'c6',
+    arguments: JSON.stringify({ command: 'str_replace', path: '/w/e.ts', old_str: exact, new_str: `${exact}${'x\n'.repeat(50)}` }) } })
+  await sleep(80)
+  const sides = c.frames.find((f) => f.type === 'stream' && f.kind === 'tool' && f.callId === 'c6')?.diff?.[0]
+  check('tools: only the side that was cut is marked', sides !== undefined && sides.oldCut === undefined && sides.newCut === true, JSON.stringify({ oldCut: sides?.oldCut, newCut: sides?.newCut }))
   check('tools: a presenter that answers with a promise is not waited for: the first argument is the title', later.find((f) => f.callId === 'c4')?.title === '/w/x')
   check('tools: another session\'s tool call is not shown in this conversation', !later.some((f) => f.callId === 'c5'))
   check('stream: a terminal turn posts no progress message (the steps are already on screen)', !c.frames.some((f) => f.type === 'post' && /작업 중/.test(f.text)))

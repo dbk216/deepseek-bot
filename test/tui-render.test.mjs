@@ -352,6 +352,12 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   check('markdown: a URL followed by a run of closing brackets is laid out quickly', closers < 1500, `${closers}ms`)
   const korean = md('https://x.com에서 확인, 그리고 (https://a.b/c)(https://d.e/f)', 200)[0].spans.filter((sp) => sp.link !== undefined).map((sp) => sp.link)
   check('markdown: a bare URL ends where printable ASCII ends, and two in brackets are two', JSON.stringify(korean) === JSON.stringify(['https://x.com', 'https://a.b/c', 'https://d.e/f']), JSON.stringify(korean))
+  // A link to the wrong page is worse than none: a path that goes on in Korean is not linked by
+  // its ASCII part, and a URL's own bracket pairs are not taken for the start of another URL.
+  const wrong = md('https://namu.wiki/w/대한민국 그리고 https://a/(x)(y) 끝', 200)[0].spans.filter((sp) => sp.link !== undefined).map((sp) => sp.link)
+  check('markdown: a path continuing outside ASCII is not linked short, and (x)(y) stays one URL', JSON.stringify(wrong) === JSON.stringify(['https://a/(x)(y)']), JSON.stringify(wrong))
+  const repeated = timed('(https://a.b/c)'.repeat(40_000))
+  check('markdown: many bracketed URLs in a row are laid out quickly', repeated < 1500, `${repeated}ms`)
 
   const screen = new Screen(30, 2)
   screen.put(0, 0, '문서', 'L', 30, 'https://ex.am/ple')

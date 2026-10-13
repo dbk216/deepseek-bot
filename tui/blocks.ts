@@ -128,7 +128,7 @@ export interface ToolStep {
   name: string
   callId?: string
   title?: string
-  diff?: Array<{ path: string; old: string | null; new: string; truncated?: boolean }>
+  diff?: Array<{ path: string; old: string | null; new: string; oldCut?: boolean; newCut?: boolean }>
 }
 
 export interface ToolCallBlock extends Block {
@@ -142,18 +142,23 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
   const style = sgr(theme.tool, mode)
   const removed = sgr(theme.danger, mode)
   const added = sgr(theme.ok, mode)
-  // Only what changed: the lines around a change are in the file. Of a cut edit, the changes
-  // after the last line both sides share are left out too: past the cut, a line can look removed
-  // or added only because the other side's copy of it fell outside.
+  // Only what changed: the lines around a change are in the file. Of a cut edit, a change after
+  // the last line both sides share may be no change at all — the other side's copy of that line can
+  // lie past its cut. So there a removal is withheld when the new side was cut (the line may still
+  // be in the file), and an addition when the old side was (it may have been there already).
   let uncompared = false
+  let withheld = 0
   const changes = (step.diff ?? []).flatMap((d) => {
     const ops = lineDiff(d.old === null ? [] : d.old.split('\n'), d.new.split('\n'))
     // Too long to compare line by line: said, never guessed at.
     if (ops === null) { uncompared = true; return [] }
     const shared = ops.map((l) => l.op).lastIndexOf(' ')
-    return (d.truncated === true && shared >= 0 ? ops.slice(0, shared) : ops).filter((l) => l.op !== ' ')
+    const sure = ops.slice(0, shared + 1)
+    const tail = ops.slice(shared + 1).filter((l) => !(l.op === '-' && d.newCut === true) && !(l.op === '+' && d.oldCut === true))
+    withheld += ops.length - sure.length - tail.length
+    return [...sure, ...tail].filter((l) => l.op !== ' ')
   })
-  const cut = (step.diff ?? []).some((d) => d.truncated === true)
+  const cut = (step.diff ?? []).some((d) => d.oldCut === true || d.newCut === true)
   let own = 0
   let outcome: { ok: boolean; text: string } | null = null
   const block: ToolCallBlock = {
@@ -167,8 +172,10 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
       const diff = changes.flatMap((d) => layout(d.text === '' ? ' ' : d.text, width, d.op === '-' ? removed : added, { first: pad(`  ${d.op} `, d.op === '-' ? removed : added), rest: pad('    ') }))
       out.push(...fold(diff, detail.expanded ? UNFOLDED.diff : FOLDED.diff, detail, style))
       const note = uncompared ? '… 변경이 커서 줄 단위로 비교하지 않음'
-        : cut ? (changes.length === 0 ? '… 큰 변경: 표시할 수 있는 앞부분에 차이 없음 (잘림)' : '… 큰 변경이라 앞부분만 표시 (잘림)')
-          : ''
+        : !cut ? ''
+          : changes.length > 0 ? '… 큰 변경이라 앞부분만 표시 (잘림)'
+            : withheld > 0 ? '… 큰 변경: 잘린 경계의 줄이라 표시하지 않음 (잘림)'
+              : '… 큰 변경: 표시할 수 있는 앞부분에 차이 없음 (잘림)'
       if (note !== '') out.push({ spans: [pad('    '), { text: note, style }], soft: false })
       if (outcome !== null) {
         const shown = outcome.ok ? style : removed

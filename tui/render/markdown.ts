@@ -44,12 +44,11 @@ function safeUrl(url: string): string | undefined {
 
 /**
  * A bare URL without what belongs to the sentence around it: a closing bracket it never opened, a
- * full stop — and, of two bracketed URLs side by side, only the first. One pass over the token:
- * a URL followed by a long run of brackets must not be rescanned for each one.
+ * full stop. One pass over the token: a URL followed by a long run of brackets must not be
+ * rescanned for each one.
  */
 function bareUrl(token: string): string {
-  const next = token.indexOf(')(')
-  let end = next === -1 ? token.length : next + 1
+  let end = token.length
   let opens = 0
   let closes = 0
   for (let i = 0; i < end; i++) { if (token[i] === '(') opens++; else if (token[i] === ')') closes++ }
@@ -67,8 +66,9 @@ export function inline(text: string, base: string, s: MarkdownStyles): Span[] {
   const push = (t: string, style: string, link?: string) => { if (t !== '') out.push(link === undefined ? { text: t, style } : { text: t, style, link }) }
   // Emphasis only at word edges, as Markdown has it: snake_case_names and 2*3*4 stay as written. A
   // link's label and target are bounded, so a run of brackets cannot make each one scan to the end.
-  // A bare URL is printable ASCII (it ends where Korean begins), without the brackets around it.
-  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![\w*])\*[^*\s][^*\n]*?\*(?![\w*]))|((?<![\w_])_[^_\s][^_\n]*?_(?![\w_]))|(\[[^\]\n]{1,200}\]\([^)\s]{1,2100}\))|(:[a-z0-9_+]+:)|(https?:\/\/[\x21-\x3b\x3d\x3f-\x5a\x5c\x5e-\x7e]+)/g
+  // A bare URL is printable ASCII (it ends where Korean begins), bounded, without the brackets
+  // around it, and it stops before ")(http": the next bracketed URL is a URL of its own.
+  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![\w*])\*[^*\s][^*\n]*?\*(?![\w*]))|((?<![\w_])_[^_\s][^_\n]*?_(?![\w_]))|(\[[^\]\n]{1,200}\]\([^)\s]{1,2100}\))|(:[a-z0-9_+]+:)|(https?:\/\/(?:(?!\)\(https?:\/\/)[\x21-\x3b\x3d\x3f-\x5a\x5c\x5e-\x7e]){1,2001})/g
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
@@ -88,7 +88,13 @@ export function inline(text: string, base: string, s: MarkdownStyles): Span[] {
       push(label, s.link, safeUrl(url))
       // Shown as well, for a terminal without hyperlinks and for a copy.
       if (url !== label) push(` (${url})`, s.dim)
-    } else if (m[7]) push(token, s.link, safeUrl(token))
+    } else if (m[7]) {
+      // A path that goes on outside ASCII ("…/w/대한민국") is cut short here: shown, but not linked
+      // to a page it does not name. After a host or a word ("x.com에서") what follows is the sentence.
+      const next = text.charCodeAt(at + token.length)
+      const cutShort = next > 0x7f && /[/=\-_%#?&]$/.test(token)
+      push(token, cutShort ? base : s.link, cutShort ? undefined : safeUrl(token))
+    }
     else push(SHORTCODES[token.slice(1, -1)], base)
     last = at + token.length
   }

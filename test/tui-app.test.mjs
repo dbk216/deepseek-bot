@@ -16,7 +16,7 @@ import { fakeClock, fakeTerminal } from './tui-fakes.mjs'
 import { COMMAND_INFO, COMMANDS, HELP } from '../dist/tui/cli.js'
 import { appendHistory, loadHistory, HISTORY_KEEP } from '../dist/tui/history.js'
 import { fileFinder } from '../dist/tui/files.js'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -572,7 +572,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   // lines "removed" only because they fell past the cut.
   const t = setup({ rows: 40 })
   t.app.turnStarted()
-  t.app.toolCall({ name: 'edit', callId: 'e1', title: 'Edit big.ts', diff: [{ path: 'big.ts', old: 'keep 1\nkeep 2\ntail out', new: 'new top\nkeep 1\nkeep 2', truncated: true }] })
+  t.app.toolCall({ name: 'edit', callId: 'e1', title: 'Edit big.ts', diff: [{ path: 'big.ts', old: 'keep 1\nkeep 2\ntail out', new: 'new top\nkeep 1\nkeep 2', newCut: true }] })
   t.clock.advance(20)
   let screen = t.term.screen.text()
   check('tools: a cut diff shows the change, not the line that only fell past the cut', screen.includes('+ new top') && !screen.includes('- tail out'), screen.split('\n').slice(-14).join(' | '))
@@ -580,13 +580,29 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   // A cut edit long enough that its lines are not compared at all: no line is shown as removed or
   // added on a guess (the fixture: one line put on top of 900).
   const many = Array.from({ length: 900 }, (_, i) => `line ${i}`)
-  t.app.toolCall({ name: 'edit', callId: 'e2', title: 'Edit huge.ts', diff: [{ path: 'huge.ts', old: many.join('\n'), new: ['top', ...many.slice(0, 899)].join('\n'), truncated: true }] })
+  t.app.toolCall({ name: 'edit', callId: 'e2', title: 'Edit huge.ts', diff: [{ path: 'huge.ts', old: many.join('\n'), new: ['top', ...many.slice(0, 899)].join('\n'), oldCut: true, newCut: true }] })
   t.clock.advance(20)
   screen = t.term.screen.text()
   check('tools: an edit too long to compare shows no invented removals', !screen.includes('- line 0') && /비교하지 않음/.test(screen), screen.split('\n').slice(-10).join(' | '))
-  t.app.toolCall({ name: 'edit', callId: 'e3', title: 'Edit tail.ts', diff: [{ path: 'tail.ts', old: 'a\nb\nold tail', new: 'a\nb\nnew tail', truncated: true }] })
+  t.app.toolCall({ name: 'edit', callId: 'e3', title: 'Edit same.ts', diff: [{ path: 'same.ts', old: 'a\nb', new: 'a\nb', oldCut: true, newCut: true }] })
   t.clock.advance(20)
-  check('tools: a cut edit whose change is past the cut says there is nothing to show, not "the first part"', /앞부분에 차이 없음/.test(t.term.screen.text()))
+  check('tools: a cut edit whose kept parts are the same says so', /앞부분에 차이 없음/.test(t.term.screen.text()))
+  // Which side was cut decides what may be a guess. Three edits as the core's cut sends them:
+  const olds = Array.from({ length: 300 }, (_, i) => `old ${i}`)
+  const adds = Array.from({ length: 260 }, (_, i) => `add ${i}`)
+  const card = (id, diff) => { t.app.toolCall({ name: 'edit', callId: id, title: `Edit ${id}`, diff: [diff] }); t.clock.advance(20); return t.term.screen.text().split('\n').slice(-24).join('\n') }
+  // 1. A block put above a text that is all still there: only the new side lost its tail.
+  let shown = card('n1', { path: 'a', old: olds.join('\n'), new: [...adds, ...olds.slice(0, 140)].join('\n'), newCut: true })
+  check('tools: text still in the file is not shown removed because the new side was cut', shown.includes('+ add 0') && !/- old \d/.test(shown), shown.replace(/\n/g, ' | '))
+  // 2. Lines put above the only line of a file: the new side's copy of that line is past its cut.
+  shown = card('n2', { path: 'b', old: 'export default App', new: adds.slice(0, 160).join('\n'), newCut: true })
+  check('tools: the one old line is not shown removed, and the additions are shown', shown.includes('+ add 0') && !shown.includes('- export default App'), shown.replace(/\n/g, ' | '))
+  // 3. Lines put below it: additions after the last shared line are real when the old side is whole.
+  shown = card('n3', { path: 'c', old: 'export default App', new: ['export default App', ...adds.slice(0, 160)].join('\n'), newCut: true })
+  check('tools: additions below the last shared line are shown, not "no difference"', shown.includes('+ add 0') && !/차이 없음/.test(shown), shown.replace(/\n/g, ' | '))
+  // And the other side: when the old text was cut, an addition past the last shared line may be old text.
+  shown = card('n4', { path: 'd', old: 'same\nold kept', new: 'same\nmaybe old\n', oldCut: true })
+  check('tools: an addition past the last shared line is withheld when the old side was cut', !shown.includes('+ maybe old') && shown.includes('- old kept') && !/차이 없음/.test(shown), shown.replace(/\n/g, ' | '))
   t.key('\x0f')
   t.app.thinking(Array.from({ length: 600 }, (_, i) => `생각 ${i}`).join('\n'))
   t.clock.advance(20)
@@ -622,6 +638,11 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.closeQuestion('q9')
   t.clock.advance(20)
   check('complete: the list is back for the text in the box once the question is gone', t.app.completion !== null && t.term.screen.text().includes('/help'))
+  // An entry reached with the arrows and then edited is being typed again: its list opens.
+  t.app.editor.set('')
+  t.key('\x1b[A'); t.key('\x1b[A')   // back to /help
+  t.key('\x7f')
+  check('complete: deleting in a recalled command opens its list', t.app.editor.text === '/hel' && t.app.completion !== null, JSON.stringify(t.app.editor.text))
 }
 
 {
@@ -678,8 +699,10 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   // A huge directory is listed in part, and which part does not depend on the order the disk gives.
   mkdirSync(join(root, 'many'))
   for (let i = 0; i < 2100; i++) writeFileSync(join(root, 'many', `f${String(i).padStart(4, '0')}`), '')
-  const first = fileFinder()(root, 'many/f', 5000)
-  check('files: a directory over the cap keeps its first names in order', first.includes('many/f0000') && first.includes('many/f1999') && !first.includes('many/f2099'), `${first.length} listed`)
+  // The disk's order is not sorted everywhere: read it backwards here, so only sorting before the cut passes.
+  const backwards = (dir, options) => readdirSync(dir, options).reverse()
+  const first = fileFinder(undefined, backwards)(root, 'many/f', 5000)
+  check('files: a directory over the cap keeps its first names, whatever order the disk gives', first.includes('many/f0000') && first.includes('many/f1999') && !first.includes('many/f2099'), `${first.length} listed`)
   rmSync(root, { recursive: true, force: true })
 }
 
