@@ -1077,7 +1077,7 @@ export function apply(ctx, config) {
       const withButtons = transport.supportsButtons === true
       const asked = await transport.post(target, [
         `⚠️ 권한이 필요해: ${reason}`,
-        withButtons ? `아래 버튼으로 결정해줘.` : `실행하려면 *허용*, 거부하려면 *거부* 라고 답해줘.`,
+        withButtons ? `아래 버튼을 누르거나 *허용* / *거부* 라고 답해줘.` : `실행하려면 *허용*, 거부하려면 *거부* 라고 답해줘.`,
         `(답이 없으면 ${Math.round(cfg.approvalTimeoutMs / 60000)}분 뒤 자동으로 거부돼.)`,
       ].join('\n'), withButtons
         ? { buttons: [

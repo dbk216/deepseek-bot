@@ -243,6 +243,54 @@ function transportFor(api) {
   check('under the file\'s own name', api.calls.find((c) => c.method === 'files.getUploadURLExternal')?.body?.filename === 'report.docx')
 }
 
+// 6e. Approval buttons on Slack: a decision made in place, as on Discord. They used to exist only there;
+// a Slack user had to type 허용. Block Kit carries them, the text stays for notifications, and the press
+// comes back over Socket Mode as an interactive envelope.
+{
+  const api = stubSlack()
+  const t = transportFor(api)
+  await t.authenticate()
+  check('the transport says it can render buttons', t.supportsButtons === true)
+  await t.post({ channel: 'C1', threadTs: 't1' }, '⚠️ 권한이 필요해', {
+    buttons: [{ id: 'approval:allow:C1:t1', label: '허용', style: 'primary' }, { id: 'approval:deny:C1:t1', label: '거부', style: 'danger' }],
+  })
+  api.restore()
+  const body = api.calls.find((c) => c.method === 'chat.postMessage')?.body
+  const actions = (body?.blocks ?? []).find((b) => b.type === 'actions')
+  check('the message carries an actions block', actions?.elements?.length === 2, JSON.stringify(body?.blocks)?.slice(0, 120))
+  check('each button carries its id and style', actions?.elements?.[0]?.action_id === 'approval:allow:C1:t1' && actions?.elements?.[0]?.style === 'primary'
+    && actions?.elements?.[1]?.style === 'danger', JSON.stringify(actions?.elements))
+  check('and the text is still there for the notification', body?.text?.includes('권한이 필요해'))
+
+  // The press, as Socket Mode delivers it.
+  const sockets = []
+  class FakeSocket {
+    constructor() { this.handlers = {}; this.sent = []; sockets.push(this) }
+    addEventListener(type, fn) { (this.handlers[type] ??= []).push(fn) }
+    send(payload) { this.sent.push(JSON.parse(payload)) }
+    close() {}
+    emit(type, data) { for (const fn of this.handlers[type] ?? []) fn(data) }
+  }
+  const api2 = stubSlack()
+  const pressed = []
+  const t2 = createSlackTransport({
+    cfg: { platform: 'slack', stateDir: '.', targetChannels: ['*'], chunkChars: 4000 },
+    log: () => {}, sessionCwd: async () => process.cwd(), credential: async () => 'token-for-test', onHealth: () => {},
+    WebSocketImpl: FakeSocket,
+  })
+  await t2.connect({ onMessage: () => {}, onAction: (action) => pressed.push(action) })
+  sockets[0].emit('message', { data: JSON.stringify({
+    envelope_id: 'E1', type: 'interactive',
+    payload: { type: 'block_actions', user: { id: 'U9' }, channel: { id: 'C1' }, message: { ts: '2.2', thread_ts: 't1' },
+      actions: [{ action_id: 'approval:allow:C1:t1', value: 'approval:allow:C1:t1' }] },
+  }) })
+  await t2.close()
+  api2.restore()
+  check('a press reaches the core', pressed.length === 1 && pressed[0].id === 'approval:allow:C1:t1', JSON.stringify(pressed))
+  check('with the thread and the person who pressed', pressed[0]?.target?.channel === 'C1' && pressed[0]?.target?.threadTs === 't1' && pressed[0]?.user === 'U9')
+  check('and the envelope is acknowledged', sockets[0].sent.some((m) => m.envelope_id === 'E1'))
+}
+
 // 7. A transport built without a chunk size still sends the text.
 // Found live: the QA harness passed a partial config, chunkChars was undefined, the slice
 // went to NaN, and every reply was an empty body — which Slack answers with `no_text`. The

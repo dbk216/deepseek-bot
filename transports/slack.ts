@@ -19,7 +19,7 @@ import type {
   SlackHistoryResponse, SlackMember, SlackMembersResponse, SlackMessage,
   SlackPostResponse, SlackResponse, SlackUserInfoResponse,
 } from '../types/slack.js'
-import type { AttachmentManifest, InboundMessage, PostedMessage, Target, Transport } from '../types/transport.js'
+import type { AttachmentManifest, InboundMessage, PostedMessage, Target, Transport, ActionButton, ActionEvent } from '../types/transport.js'
 import { writeAttachments, type AttachmentSource } from './attachments.js'
 
 export function createSlackApi({ cfg, log, sessionCwd }) {
@@ -385,6 +385,7 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
   }
 
   let onMessage: ((message: InboundMessage) => void) | null = null
+  let onAction: ((action: ActionEvent) => void) | null = null
   // From auth.test, so a thread reference can be a real link rather than plain text.
   let workspaceUrl: string | null = null
 
@@ -414,6 +415,17 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
       if (env.type === 'disconnect') {
         log(`disconnect received (reason=${(env as { reason?: string }).reason ?? '-'}) — reconnecting`)
         try { socket.close() } catch { /* ignore */ }
+        return
+      }
+      // A button press: block actions, acknowledged above like every envelope.
+      if (env.type === 'interactive' && (env as { payload?: { type?: string } }).payload?.type === 'block_actions') {
+        const payload = (env as { payload: Record<string, any> }).payload
+        for (const action of payload.actions ?? []) {
+          const id = String(action.action_id ?? action.value ?? '')
+          const channel = String(payload.channel?.id ?? payload.container?.channel_id ?? '')
+          const threadTs = payload.message?.thread_ts ?? payload.container?.thread_ts ?? payload.message?.ts ?? null
+          if (id !== '' && channel !== '' && onAction) onAction({ id, target: { channel, threadTs }, user: String(payload.user?.id ?? '') })
+        }
         return
       }
       if (env.type === 'events_api' && env.payload?.event) {
@@ -447,7 +459,28 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
    * Send, or replace a progress placeholder with the first chunk of the answer.
    * Markdown in, Slack dialect out: rendering belongs to the transport.
    */
-  async function postChunked(target: Target, markdown: string, replaceTs: string | null): Promise<PostedMessage | null> {
+  /**
+   * Buttons as Block Kit: the text as a section and the buttons as an actions block. The text stays in
+   * `text` as well, which is what a notification and a screen reader use. Only for a body that fits a
+   * section; a longer one goes without, and the person answers by typing.
+   */
+  function blocksFor(body: string, buttons: ActionButton[]): Record<string, unknown> {
+    if (buttons.length === 0 || body.length > 2900) return {}
+    return {
+      blocks: [
+        { type: 'section', text: { type: 'mrkdwn', text: body } },
+        { type: 'actions', elements: buttons.slice(0, 5).map((button) => ({
+          type: 'button',
+          text: { type: 'plain_text', text: button.label.slice(0, 75) },
+          action_id: button.id.slice(0, 255),
+          value: button.id.slice(0, 2000),
+          ...(button.style === 'primary' || button.style === 'danger' ? { style: button.style } : {}),
+        })) },
+      ],
+    }
+  }
+
+  async function postChunked(target: Target, markdown: string, replaceTs: string | null, buttons: ActionButton[] = []): Promise<PostedMessage | null> {
     const text = api.toSlackMarkdown(markdown)
     const chunks: string[] = []
     // A configuration without a usable chunk size used to slice at NaN and send an *empty*
@@ -470,16 +503,19 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
     for (const [i, chunk] of chunks.entries()) {
       const body = chunks.length > 1 ? `(${i + 1}/${chunks.length})\n${chunk}` : chunk
       const ts = replace
+      // The buttons go with the last part, where the question ends.
+      const extra = i === chunks.length - 1 ? blocksFor(body, buttons) : {}
       const postNew = () => api.slackPost<SlackPostResponse>(requireToken(), 'chat.postMessage', {
         channel: target.channel,
         // `thread_ts: ''` is not "no thread": Slack rejects the whole call with `no_text`, so
         // a channel-level post (no thread) could never be sent. Omit the field instead.
         ...(typeof target.threadTs === 'string' && target.threadTs !== '' ? { thread_ts: target.threadTs } : {}),
         text: body,
+        ...extra,
       })
       let sent: SlackPostResponse
       if (ts !== null && first === null) {
-        sent = await api.slackPost<SlackPostResponse>(requireToken(), 'chat.update', { channel: target.channel, ts, text: body })
+        sent = await api.slackPost<SlackPostResponse>(requireToken(), 'chat.update', { channel: target.channel, ts, text: body, ...extra })
         if (!sent.ok) {
           // The message to replace is gone (or never existed). Losing the answer to a failed
           // edit is worse than answering in a new message, which is what the other transports
@@ -647,21 +683,22 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
     remove,
     startTyping,
     get typingUnavailable() { return sessionsStatus === false && assistantStatus === false },
-    // Slack's own interactive components are block actions, which this adapter does not
-    // handle; a request here is answered by a reply in the thread instead.
-    supportsButtons: false,
+    // Block actions over Socket Mode; the app needs Interactivity turned on. Without it a press does
+    // nothing, and the request's text says the person can type the answer instead.
+    supportsButtons: true,
 
-    async connect(handlers: { onMessage: (message: InboundMessage) => void; onStatus?: unknown }) {
+    async connect(handlers: { onMessage: (message: InboundMessage) => void; onStatus?: unknown; onAction?: (action: ActionEvent) => void }) {
       onMessage = handlers.onMessage
+      onAction = handlers.onAction ?? null
       await authenticate()
       await connectInternal()
       startWatchdog()
     },
 
     /** Slack-side rendering: the core hands over Markdown, the transport makes it Slack. */
-    post(target: Target, text: string, options?: { replace?: string | null }): Promise<PostedMessage | null> {
+    post(target: Target, text: string, options?: { replace?: string | null; buttons?: ActionButton[] }): Promise<PostedMessage | null> {
       requireToken()
-      return postChunked(target, text, options?.replace ?? null)
+      return postChunked(target, text, options?.replace ?? null, options?.buttons ?? [])
     },
 
     async fetchHistory(target: Target, options: { currentTs: string; sinceTs: string | null; limit: number; maxChars: number }) {
