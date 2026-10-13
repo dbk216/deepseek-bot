@@ -74,7 +74,7 @@ Each line is traceable to code and to something that checks it.
 | Asks the user to **approve** a destructive command, in the conversation | `index.ts` | approval checks in `test/core.test.mjs`; `approval-gate.json` records one open gap |
 | Confines **reads**, for commands and for the file tools | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.mjs` 10/10; `test/edges.test.mjs` 19/19 |
 | Flags **instruction-like text** in fetched material | `injection.ts` | `test/injection.test.mjs` 31/31 |
-| Runs **one turn at a time per conversation**; a later message waits, and a stop withdraws what is waiting | `index.ts` | `test/failures.test.mjs` 21/21 |
+| Runs **one turn at a time per conversation**; a later message waits, and a stop withdraws what is waiting | `index.ts` | `test/failures.test.mjs` 24/24 |
 | Shows it is **working at once** (typing, or a progress message on Slack) and edits it | `progress.ts`, `index.ts` | `test/progress.test.mjs` 22/22; `test/core.test.mjs` |
 | **Stops** a running turn on request, and on its own timeout | `index.ts` | `test/scenarios/interrupt.json` |
 | Reports **token usage** without starting a turn | `usage.ts` | `test/usage.test.mjs` 19/19 |

@@ -1405,6 +1405,12 @@ export function apply(ctx, config) {
       throw new Error(`deepbot: could not take the session after retries — ${String(lastError?.message ?? lastError)}`)
     }
 
+    // Stopped during the steps above: no agent is asked for at all.
+    if (turnState.cause !== null) {
+      log(`turn in ${turnKey} was stopped before its agent was created (${turnState.cause})`)
+      await Promise.resolve(scope?.[Symbol.asyncDispose]?.()).then(() => {}, () => {})
+      return { text: '', reason: { kind: 'cancelled', cause: turnState.cause }, toolsUsed: [], sessionId }
+    }
     let handle
     activeTurns.add(sessionId)
     try {
@@ -1820,6 +1826,11 @@ export function apply(ctx, config) {
         }
       } catch (e) {
         log('turn failed', String(e?.stack ?? e))
+        // The backstop gave up on a turn that is still running: stop it, or a stop request would find
+        // it registered, stay silent, and wait for a report nobody will make. One turn per conversation
+        // at a time, so what is registered under this key now is this job's turn; if runTurn threw
+        // instead, it has already let go and this finds nothing.
+        cancelRunning(key, 'timed out')
         stopWorking()
         leaveWaiting(key, ticket)   // a ticket left behind would be "withdrawn" by a later stop
         await progress.settle(key)

@@ -39,6 +39,8 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   // conversation while its agent still ran.
   const events = []
   let agentsMade = 0
+  // Holds the preset step open, so a stop can arrive before the agent is even asked for.
+  const resolveDelayMs = Number(config.resolveDelayMs ?? 0)
   async function slowAgent(options) {
     const n = ++agentsMade
     await sleep(100)
@@ -51,7 +53,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
         followup: () => {}, whenIdle: () => stopped,
         cancel: (reason) => { events.push({ at: Date.now(), kind: 'cancelled', n, reason }); stop() },
       },
-      dispose: async () => {},
+      dispose: async () => { events.push({ at: Date.now(), kind: 'disposed', n }) },
     }
   }
   const stubs = {
@@ -70,7 +72,7 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
     // Without this the turn fails before it reaches agents.create, so cancellation and
     // queueing were never exercised — the sweep was testing the missing service instead.
     agentPresets: {
-      resolve: async () => ({ id: 'standard' }),
+      resolve: async () => { if (resolveDelayMs > 0) await sleep(resolveDelayMs); return { id: 'standard' } },
       acquireScope: () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }),
       mount: async () => {},
     },
@@ -204,6 +206,35 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   await sleep(100)
   const typing = t.transport.typing.find((entry) => entry.target.channel === 'C_ALLOWED')
   check('the withdrawn message stops typing at once', typing?.stopped === true, JSON.stringify(t.transport.typing))
+  t.done()
+}
+
+// 3f. A stop while the agent is being created releases that agent. The early return sat before the
+// try/finally, so the handle was never disposed, and the queue starts the next turn at once.
+{
+  const t = boot({ agent: 'slow', config: { runTimeoutMs: 5000 } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: 'stopped while it is created' }))
+  await sleep(50)
+  t.transport.deliver(t.transport.message({ text: '그만' }))
+  await sleep(400)
+  check('a turn stopped during its create disposes the agent', t.events.some((e) => e.kind === 'disposed' && e.n === 1),
+    JSON.stringify(t.events.map((e) => `${e.kind}${e.n}`)))
+  t.done()
+}
+
+// 3g. A stop during the preset step reaches the turn. Registered after those awaits, the turn looked
+// idle there: the stop answered "nothing is running" and the turn went ahead.
+{
+  const t = boot({ agent: 'slow', config: { runTimeoutMs: 5000, resolveDelayMs: 200 } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: 'slow to prepare' }))
+  await sleep(50)
+  t.transport.deliver(t.transport.message({ text: '그만' }))
+  await sleep(500)
+  const said = t.transport.posted.map((p) => p.text)
+  check('the stop finds the turn', !said.some((text) => /없어/.test(text)), JSON.stringify(said))
+  check('and the turn creates no agent', t.created.length === 0, `${t.created.length} create(s)`)
   t.done()
 }
 
