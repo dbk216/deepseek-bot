@@ -63,7 +63,9 @@ export function toTelegramHtml(markdown: string): string {
   const escape = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const kept: string[] = []
   const keep = (html: string) => `\u0000${kept.push(html) - 1}\u0000`
-  let text = markdown
+  // The placeholders are NUL-delimited, so a NUL in the text itself is dropped first: one there made a
+  // placeholder of its own, copying another part or printing "undefined".
+  let text = markdown.replace(/\u0000/g, '')
     .replace(/```[^\n]*\n([\s\S]*?)```/g, (_, code: string) => keep(`<pre>${escape(code.replace(/\n$/, ''))}</pre>`))
     .replace(/`([^`\n]+)`/g, (_, code: string) => keep(`<code>${escape(code)}</code>`))
     .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, label: string, url: string) =>
@@ -71,7 +73,9 @@ export function toTelegramHtml(markdown: string): string {
   text = escape(text)
     .replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
-    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<i>$2</i>')
+    // Italics open on a mark followed by a non-space and close on one after a non-space: a list marker
+    // ("* item") or a product ("2 * 3") is not emphasis.
+    .replace(/(^|[^*\w])\*(?=\S)([^*\n]*?\S)\*(?!\*)/g, '$1<i>$2</i>')
   return text.replace(/\u0000(\d+)\u0000/g, (_, i: string) => kept[Number(i)])
 }
 const MESSAGE_LIMIT = 4096

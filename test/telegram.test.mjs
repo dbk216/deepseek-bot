@@ -15,7 +15,7 @@ import './dist-fresh.mjs'   // fails loudly on a stale dist
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTelegramTransport } from '../dist/transports/telegram.js'
+import { createTelegramTransport, toTelegramHtml } from '../dist/transports/telegram.js'
 
 const results = []
 function check(name, ok, detail = '') {
@@ -318,6 +318,17 @@ function groupMessage(overrides = {}) {
     JSON.stringify(pressed))
   check('and is answered, so the button stops spinning', api2.calls.some((c) => c.method === 'answerCallbackQuery' && c.body?.callback_query_id === 'Q1'))
   check('callback queries are asked for', JSON.stringify(api2.calls.find((c) => c.method === 'getUpdates')?.body?.allowed_updates ?? []).includes('callback_query'))
+}
+
+// 16. Text the renderer did not write itself. Its placeholders for set-aside code were NUL-delimited
+// numbers, so a message already holding one duplicated another part or printed "undefined"; and a list
+// marker opened italics: "* item *one*" came out as "<i> item </i>one*".
+{
+  const dup = toTelegramHtml('`a` and \u00000\u0000')
+  check('a placeholder-shaped text cannot copy another part', (dup.match(/<code>a<\/code>/g) ?? []).length === 1, JSON.stringify(dup))
+  check('nor print undefined', !toTelegramHtml('x \u00007\u0000 y').includes('undefined'))
+  check('a list marker does not open italics', toTelegramHtml('* item *one*') === '* item <i>one</i>', toTelegramHtml('* item *one*'))
+  check('italics still need a closing mark', toTelegramHtml('2 * 3 = 6') === '2 * 3 = 6', toTelegramHtml('2 * 3 = 6'))
 }
 
 const failed = results.filter((r) => !r.ok)
