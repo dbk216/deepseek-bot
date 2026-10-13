@@ -18,7 +18,7 @@ import './scratch-dsh-home.mjs'   // the recall index must not land in the real 
 
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, basename } from 'node:path'
 import { apply } from '../dist/index.js'
 import { recallIndexPath } from '../dist/recallContext.js'
 import { createFakeTransport } from './fake-transport.mjs'
@@ -407,6 +407,17 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   symlinkSync('.env', join(home, 'l20'))
   for (let i = 19; i >= 0; i--) symlinkSync(`l${i + 1}`, join(home, `l${i}`))
   check('a chain of twenty links', t.gate(exec('write', { file_path: join(home, 'l0'), content: 'X=1' }))?.kind === 'deny')
+  // ".." is a step back from where a link really leads, not a word to cancel on paper: through dl ->
+  // a/b, dl/../../.env is the home's .env, in a link's target and in the path given alike. And the
+  // volume ignores case, so the home's own name in other letters is the home. (Second verification pass.)
+  symlinkSync('dl/../../.env', join(home, 'xdots'))
+  check('a link whose target steps back through a linked directory', t.gate(exec('write', { file_path: join(home, 'xdots'), content: 'X=1' }))?.kind === 'deny')
+  check('a path that steps back through a linked directory', t.gate(exec('write', { file_path: `${home}/dl/../../.env`, content: 'X=1' }))?.kind === 'deny')
+  const shouting = join(dirname(home), basename(home).toUpperCase())
+  if (existsSync(shouting)) {
+    check('the home named in other letters', t.gate(exec('write', { file_path: join(shouting, '.env'), content: 'X=1' }))?.kind === 'deny')
+  }
+  check('a new file in a new directory is not refused', t.gate(exec('write', { file_path: join(home, 'new', 'deep', 'notes.md'), content: 'hi' })) === 'delegated')
   rmSync(home, { recursive: true, force: true })
   t.done()
 }

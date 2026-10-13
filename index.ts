@@ -1268,25 +1268,35 @@ export function apply(ctx, config) {
    * there would replace the tokens at the next start. Commands are held off by the sandbox runner.
    */
   /**
-   * Where a write to `path` lands: links followed, dangling ones too. Each hop resolves the link's own
-   * directory first, since a relative target is read from where the link really is; and a chain longer
-   * than this follows is null — refused — rather than let through (the kernel follows 32).
+   * Where a write to `target` lands, worked out as the kernel walks it: one name at a time from the real
+   * directory, a link replaced by its target where it stands, ".." a step back from where the walk
+   * really is. Worked out on paper instead, ".." cancelled the name before it — through dl -> a/b,
+   * dl/../../.env is the home's .env — and a link's target was read from where its name was reached.
+   * A name that does not exist yet is taken as a directory the write would create. A chain of links
+   * longer than this follows is null: refused rather than let through (the kernel follows 32).
    */
-  function landsOn(path: string): string | null {
-    let current = path
-    for (let hop = 0; hop < 40; hop++) {
-      let dir: string
-      // A directory that does not exist is not the home, whose .env is the only one that matters.
-      try { dir = realpathSync(dirname(current)) } catch { return current }
-      current = join(dir, basename(current))
-      let link: string
-      try {
-        if (!lstatSync(current).isSymbolicLink()) return current
-        link = readlinkSync(current)
-      } catch { return current }                    // nothing there yet: the write creates this name
-      current = resolve(dir, link)
+  function landsOn(target: string, base: string): string | null {
+    let current = target.startsWith('/') ? '/' : base
+    let rest = target.split('/').filter((name) => name !== '')
+    let links = 0
+    while (rest.length > 0) {
+      const name = rest.shift() as string
+      if (name === '.') continue
+      if (name === '..') { current = dirname(current); continue }
+      const next = join(current, name)
+      let link: string | null = null
+      try { if (lstatSync(next).isSymbolicLink()) link = readlinkSync(next) } catch { /* not there yet */ }
+      if (link === null) { current = next; continue }
+      if (++links > 40) return null
+      rest = [...link.split('/').filter((part) => part !== ''), ...rest]
+      if (link.startsWith('/')) current = '/'
     }
-    return null
+    return current
+  }
+
+  /** A path's real name, in the letters the volume stores it in; the path as given when it does not exist. */
+  function trueName(path: string): string {
+    try { return realpathSync.native(path) } catch { return path }
   }
 
   function envFileDecision(exec): { kind: string; reason: string } | null {
@@ -1296,14 +1306,15 @@ export function apply(ctx, config) {
     if (typeof target !== 'string' || target === '' || resolvedCwd.value === null) return null
     const home = resolve(resolvedCwd.value)
     const path = resolve(home, target)
-    // By name in any case — the volume is usually case-insensitive, so .ENV is .env — and by the file the
-    // write would land on: a link, or a linked directory, named something else lands on .env all the
-    // same, even when .env does not exist yet and the write would create it.
-    const isEnv = (file: string, dir: string) => dirname(file) === dir && /^\.env(\..*)?$/i.test(basename(file))
-    let realHome = home
-    try { realHome = realpathSync(home) } catch { /* a home that does not resolve is compared as written */ }
-    const landed = landsOn(path)
-    if (!isEnv(path, home) && landed !== null && !isEnv(landed, realHome)) return null
+    // By name in any case — the volume is usually case-insensitive, so .ENV is .env — and by where the
+    // write would land, walked as the kernel walks it, compared by the directory's true name: a link, a
+    // linked directory, a ".." through one, or the home's own name in other letters all reach .env, even
+    // when .env does not exist yet and the write would create it.
+    const envName = (file: string) => /^\.env(\..*)?$/i.test(basename(file))
+    const realHome = trueName(home)
+    const landed = landsOn(target, realHome)
+    const onHome = (file: string) => envName(file) && trueName(dirname(file)) === realHome
+    if (!onHome(path) && landed !== null && !onHome(landed)) return null
     log(`write to the home's .env denied: ${name} ${path}`)
     return { kind: 'deny', reason: 'the .env in this directory is read as credentials, so it cannot be written. Ask the user to change credentials themselves.' }
   }
