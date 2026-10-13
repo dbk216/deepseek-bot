@@ -235,6 +235,11 @@ function boot({ state = {}, config = {}, agent = 'throw' } = {}) {
   const said = t.transport.posted.map((p) => p.text)
   check('the stop finds the turn', !said.some((text) => /없어/.test(text)), JSON.stringify(said))
   check('and the turn creates no agent', t.created.length === 0, `${t.created.length} create(s)`)
+  // Nor maps one: the id was never created, and a mapping made every later message in this thread
+  // resume a session that does not exist.
+  await sleep(100)
+  check('and the conversation is not mapped to a session that was never made', t.read().sessions?.['C_ALLOWED:t1'] === undefined,
+    String(t.read().sessions?.['C_ALLOWED:t1']))
   t.done()
 }
 

@@ -46,7 +46,7 @@
 
 import { execFile, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -579,7 +579,7 @@ export function apply(ctx, config) {
    * the top-level row a profile can patch is disabled. They go in the standing part,
    * so they are sent once per conversation and again only when they change.
    */
-  async function contextPreamble(origin = null, historyText = '', attachmentText = '', sessionKey = null, prompt = '') {
+  async function contextPreamble(origin = null, historyText = '', attachmentText = '', sessionKey = null, prompt = '', sessionId = '') {
     if (!cfg.injectInstructions) return { preamble: '', instructions: 0, memory: 0 }
     const cwd = await sessionCwd()
 
@@ -637,7 +637,10 @@ export function apply(ctx, config) {
 }
 
     const standingText = standing.join('\n\n')
-    const digest = createHash('sha1').update(standingText).digest('hex').slice(0, 16)
+    // Per session, not only per conversation: the digest was recorded when the prompt was built and the
+    // session mapping only when the turn returned, so a conversation whose first turn died made a new
+    // session next time and sent it no standing context — no persona at all.
+    const digest = `${createHash('sha1').update(standingText).digest('hex').slice(0, 16)}@${sessionId}`
     const sentBefore = sessionKey === null ? undefined : state.standing?.[sessionKey]
     const includeStanding = sessionKey === null || sentBefore !== digest
 
@@ -1417,7 +1420,9 @@ export function apply(ctx, config) {
     if (turnState.cause !== null) {
       log(`turn in ${turnKey} was stopped before its agent was created (${turnState.cause})`)
       await Promise.resolve(scope?.[Symbol.asyncDispose]?.()).then(() => {}, () => {})
-      return { text: '', reason: { kind: 'cancelled', cause: turnState.cause }, toolsUsed: [], sessionId }
+      // No session was made, so none is reported: a new id here was mapped to the conversation, and
+      // every later message resumed a session that does not exist.
+      return { text: '', reason: { kind: 'cancelled', cause: turnState.cause }, toolsUsed: [], sessionId: existingSessionId ?? '' }
     }
     let handle
     activeTurns.add(sessionId)
@@ -1500,7 +1505,7 @@ export function apply(ctx, config) {
       }
       await agent.whenIdle()
       const firstSeq = agent.session.seq
-      const { preamble } = await contextPreamble(origin ?? null, historyText, attachmentText, sessionKey, prompt)
+      const { preamble } = await contextPreamble(origin ?? null, historyText, attachmentText, sessionKey, prompt, sessionId)
       // Whose message this is, in the platform's mention form: the persona names people that way
       // (`<@U…>는 케이홉`), which means nothing to a model that cannot see who is speaking. A line of
       // its own, before the marker: the recall indexer keeps only what follows the last
@@ -1862,6 +1867,17 @@ export function apply(ctx, config) {
   const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
   async function deliverDocuments(key: string, target: Origin, answer: string, since: number): Promise<void> {
     if (cfg.uploadDocuments !== true || answer === '') return
+    // No walk for an answer that names no document: the home can be large, and this runs every turn.
+    if (!/\.(pdf|docx|xlsx|pptx|csv)\b/i.test(answer)) return
+    const home = await cwdFor(key)
+    const realHome = realpathSync(home)
+    // The answer has to name the file's path, not merely a word that ends it: two conversations share
+    // the home, and "data.csv" in one answer uploaded the other's dm/data.csv (found by review).
+    const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const named = (path: string) => {
+      const relative = path.slice(home.length + 1)
+      return [relative, `./${relative}`, path].some((form) => new RegExp(`(^|[^\\w./-])${escape(form)}(?![\\w-])`).test(answer))
+    }
     const found: string[] = []
     const walk = (dir: string, depth: number) => {
       if (depth > 4 || found.length >= 5) return
@@ -1874,20 +1890,30 @@ export function apply(ctx, config) {
           continue
         }
         if (!entry.isFile() || !DOCUMENT_EXTENSIONS.some((ext) => entry.name.toLowerCase().endsWith(ext))) continue
-        if (!answer.includes(entry.name)) continue
+        if (!named(path)) continue
         try {
           const stat = statSync(path)
           if (stat.mtimeMs >= since && stat.size <= MAX_UPLOAD_BYTES) found.push(path)
         } catch { /* gone since the listing */ }
+        if (found.length >= 5) return
       }
     }
-    walk(await cwdFor(key), 0)
+    walk(home, 0)
     if (found.length === 0) return
     if (typeof transport.uploadFile !== 'function') {
       log(`documents: ${found.length} made in ${key}, but this platform cannot upload them`)
       return
     }
     for (const path of found) {
+      // Checked again just before the bytes leave: still a plain file with one name, still in the home.
+      // A hard link from elsewhere passes every check above, and the file may have been swapped since.
+      try {
+        const stat = lstatSync(path)
+        if (!stat.isFile() || stat.nlink !== 1 || !realpathSync(path).startsWith(realHome + sep)) {
+          log(`documents: ${basename(path)} not uploaded — not a plain file of this home`)
+          continue
+        }
+      } catch { continue }
       const ok = await transport.uploadFile(target, path).catch(() => false)
       log(`documents: ${ok ? 'uploaded' : 'upload failed for'} ${basename(path)} to ${key}`)
     }

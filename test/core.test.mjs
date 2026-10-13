@@ -15,7 +15,7 @@
  */
 import './dist-fresh.mjs'   // fails loudly on a stale dist
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { apply } from '../dist/index.js'
@@ -55,6 +55,7 @@ function boot({ state = {}, config = {}, agent = 'throw', home = null, answer = 
         // first — a document the turn produced, as far as the adapter can tell.
         if (agent === 'answer') {
           const events = []
+          const failThis = created.length === 1 && answer?.failFirst === true
           return {
             agent: {
               session: { header: { id: options?.sessionId ?? 's1' }, get seq() { return events.length }, eventAt: (i) => events[i] },
@@ -68,7 +69,9 @@ function boot({ state = {}, config = {}, agent = 'throw', home = null, answer = 
                 events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: answer?.text ?? '' }] } } })
                 events.push({ type: 'turn/end', data: { reason: { kind: 'completed' } } })
               },
-              whenIdle: async () => {}, cancel: () => {},
+              // failFirst: the first turn dies after its prompt was sent — the second wait throws.
+              whenIdle: async () => { if (failThis && events.length > 0) throw new Error('fake: the turn died') },
+              cancel: () => {},
             },
             dispose: async () => {},
           }
@@ -807,6 +810,34 @@ for (const remove of [false, true]) {
   t.done()
 }
 
+// 35b. The answer names a path, not a word. Two conversations share the home: "data.csv" in one
+// answer uploaded the other conversation's dm/data.csv and dm/a.csv as well (found by review).
+// And a file that is really somewhere else — a hard link into the home — is not this turn's document.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  const elsewhere = mkdtempSync(join(tmpdir(), 'elsewhere-'))
+  writeFileSync(join(elsewhere, 'secret.csv'), 'not yours')
+  const t = boot({
+    agent: 'answer', home, config: { fake: { upload: true } },
+    answer: {
+      text: 'data.csv 만들었어. leak.csv 도 있어.',
+      files: { 'data.csv': 'mine', 'dm/data.csv': 'theirs', 'dm/a.csv': 'theirs too' },
+    },
+  })
+  await sleep(80)
+  linkSync(join(elsewhere, 'secret.csv'), join(home, 'leak.csv'))
+  // In the future, so the time filter cannot be what keeps it out: only the link check can.
+  const later = new Date(Date.now() + 60_000)
+  utimesSync(join(home, 'leak.csv'), later, later)
+  t.transport.deliver(t.transport.message({ text: '만들어줘' }))
+  await sleep(500)
+  const sent = t.transport.uploads.map((u) => u.filePath.slice(home.length + 1)).sort()
+  check('only the file whose path the answer names is uploaded', JSON.stringify(sent) === '["data.csv"]', JSON.stringify(sent))
+  rmSync(home, { recursive: true, force: true })
+  rmSync(elsewhere, { recursive: true, force: true })
+  t.done()
+}
+
 // 36. A platform without uploads says so in the log and answers as usual.
 {
   const home = mkdtempSync(join(tmpdir(), 'home-'))
@@ -816,6 +847,25 @@ for (const remove of [false, true]) {
   await sleep(500)
   check('no upload is attempted where the transport has none', t.logs.some((l) => /cannot upload/.test(l)) && t.transport.posted.some((p) => /report\.pdf/.test(p.text)),
     t.logs.filter((l) => /upload/.test(l)).join(' | ').slice(0, 100) || '(no upload log)')
+  rmSync(home, { recursive: true, force: true })
+  t.done()
+}
+
+// 37. A conversation whose first turn died still gets its standing context in the next session.
+// The digest was recorded when the prompt was built, the session mapping only when the turn returned,
+// so the next message made a new session and was sent no persona at all (found by review).
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  writeFileSync(join(home, 'SOUL.md'), '# 아리\npersona-marker-0c5\n')
+  const t = boot({ agent: 'answer', home, answer: { text: '응', failFirst: true } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '첫 번째' }))
+  await sleep(400)
+  t.transport.deliver(t.transport.message({ text: '두 번째' }))
+  await sleep(400)
+  const second = textOf(t.followups[1])
+  check('the second session is sent the persona too', t.followups.length === 2 && second.includes('persona-marker-0c5'),
+    `${t.followups.length} followup(s); second: ${second.slice(0, 60)}`)
   rmSync(home, { recursive: true, force: true })
   t.done()
 }

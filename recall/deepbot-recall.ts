@@ -185,9 +185,11 @@ function readSession(file, sessionId, includeInjected) {
   let skippedInjected = 0
   let header = { id: sessionId, createdAt: undefined, cwd: undefined }
   // Which conversation this session belongs to, so recall can stay inside it: the adapter's
-  // "[this conversation]" block names the channel. Read only from before the last marker — what
-  // follows it is what the user typed, and anyone can type something that looks like the block.
+  // "[this conversation]" block names the channel. Read only from the session's first user message,
+  // before its first marker — the adapter's preamble. Anything after a marker, and any later message,
+  // can carry text the user typed, including a block and a marker of their own (found by review).
   let channel = null
+  let placed = false
   for (const line of lines) {
     let event
     try { event = JSON.parse(line) } catch { continue }
@@ -203,8 +205,9 @@ function readSession(file, sessionId, includeInjected) {
       if (!wanted.has(kind)) { skippedInjected++; continue }
     }
     let text = textOf(event)
-    if (role === 'user' && channel === null) {
-      const at = text.lastIndexOf(USER_MESSAGE_MARKER)
+    if (role === 'user' && !placed) {
+      placed = true
+      const at = text.indexOf(USER_MESSAGE_MARKER)
       const named = at >= 0 ? /\[this conversation\]\s*\nchannel=(\S+)/.exec(text.slice(0, at)) : null
       if (named !== null) channel = named[1]
     }
