@@ -283,11 +283,13 @@ function buildIndex(outFile, quiet) {
   if (GIVEN_HOME !== AGENT_HOME && (outFile + sep).startsWith(GIVEN_HOME + sep)) outFile = AGENT_HOME + outFile.slice(GIVEN_HOME.length)
   const inHome = (outFile + sep).startsWith(AGENT_HOME + sep)
   if (!inHome) {
-    // Every ancestor, not only the parent: the parent's real path follows the very link to guard against.
+    // Every ancestor, not only the parent — the parent's real path follows the very link to guard
+    // against — and by device and inode: other letters, or the /System/Volumes/Data firmlink, are the
+    // home all the same, and no realpath spells them back.
+    const identity = (dir) => { try { const s = statSync(dir); return `${s.dev}:${s.ino}` } catch { return null } }
+    const home = identity(AGENT_HOME)
     for (let dir = dirname(outFile); ; dir = dirname(dir)) {
-      let real = null
-      try { real = realpathSync(dir) } catch { /* not there yet */ }
-      if (real !== null && (real + sep).startsWith(AGENT_HOME + sep)) throw new Error(`--out ${outFile} is in the agent home under another name; name it as ${AGENT_HOME}/…`)
+      if (home !== null && identity(dir) === home) throw new Error(`--out ${outFile} is in the agent home under another name; name it as ${AGENT_HOME}/…`)
       if (dir === dirname(dir)) break
     }
   }

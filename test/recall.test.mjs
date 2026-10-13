@@ -150,6 +150,18 @@ rmSync(dir, { recursive: true, force: true })
     execFileSync(process.execPath, [CLI, 'index', '--quiet', '--out', join(realHome, 'memory', 'idx2.jsonl')], { encoding: 'utf8', env: { ...process.env, DSH_HOME: dshHome, DEEPBOT_HOME: linkHome }, stdio: 'pipe' })
   } catch { /* refused */ }
   check('nor one through another spelling of the home', !existsSync(join(outside, 'idx2.jsonl')))
+  // Nor the home in other letters, nor through the /System/Volumes/Data firmlink: the same directory by
+  // device and inode, which no realpath spells back. (Third verification pass.)
+  const tryOut = (out) => {
+    try { execFileSync(process.execPath, [CLI, 'index', '--quiet', '--out', out], { encoding: 'utf8', env: { ...process.env, DSH_HOME: dshHome, DEEPBOT_HOME: linkHome }, stdio: 'pipe' }) }
+    catch { /* refused */ }
+  }
+  tryOut(join(resolved.toUpperCase(), 'memory', 'case.jsonl'))
+  check('nor the home in other letters', !existsSync(join(outside, 'case.jsonl')))
+  if (existsSync(`/System/Volumes/Data${resolved}`)) {
+    tryOut(`/System/Volumes/Data${resolved}/memory/firm.jsonl`)
+    check('nor the home through the firmlink', !existsSync(join(outside, 'firm.jsonl')))
+  }
 }
 
 const failed = results.filter((x) => !x.ok)
