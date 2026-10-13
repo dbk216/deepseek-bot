@@ -29,6 +29,7 @@
     "usage.ts",
     "injection.ts",
     "recallContext.ts",
+    "safeWrite.ts",
     "transports/**/*.ts",
     "types/**/*.ts",
     "tools/**/*.ts",

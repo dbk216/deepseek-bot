@@ -26,9 +26,10 @@
  * Zero dependencies. Node 22+ (needs node:zlib zstd support).
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { zstdDecompressSync } from 'node:zlib'
-import { join, dirname, basename } from 'node:path'
+import { writeInside } from '../safeWrite.js'
+import { join, dirname, basename, sep } from 'node:path'
 import { homedir } from 'node:os'
 
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
@@ -256,9 +257,14 @@ function buildIndex(outFile, quiet) {
     })
   }
   all.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0) || (a.seq ?? 0) - (b.seq ?? 0))
-  mkdirSync(dirname(outFile), { recursive: true })
-  writeFileSync(outFile, all.map((r) => JSON.stringify(r)).join('\n') + (all.length ? '\n' : ''))
-  writeFileSync(
+  // This runs unconfined and writes into the agent's home, which the agent can prepare: never through
+  // a link it left there. An explicit --out elsewhere is the operator's choice and is held to its own
+  // directory instead.
+  const root = (outFile + sep).startsWith(AGENT_HOME + sep) ? AGENT_HOME : dirname(outFile)
+  mkdirSync(root, { recursive: true })
+  writeInside(root, outFile, all.map((r) => JSON.stringify(r)).join('\n') + (all.length ? '\n' : ''))
+  writeInside(
+    root,
     outFile.replace(/\.jsonl$/, '.sessions.json'),
     JSON.stringify({
       generatedAt: Date.now(),

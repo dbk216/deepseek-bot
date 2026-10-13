@@ -7,7 +7,8 @@
  * home so the agent can open it with its own tools, a bounded inline excerpt for
  * text, and the framing that marks all of it as content rather than instructions.
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
+import { writeInside } from '../safeWrite.js'
 import { join } from 'node:path'
 
 export interface AttachmentSource {
@@ -66,7 +67,9 @@ export async function writeAttachments(sources: AttachmentSource[], options: Att
     }
     try {
       const bytes = await source.fetchBytes()
-      writeFileSync(where, bytes)
+      // The name is the uploader's and the directory is in the agent's home: never through a link the
+      // agent left there. Held to the session directory, or to the configured attachments directory.
+      writeInside(where.startsWith(options.cwd + '/') ? options.cwd : options.dir, where, bytes)
       let line = `- ${name} (${source.mimetype ?? '?'}, ${bytes.length} bytes) → ${relative}`
       const mimetype = String(source.mimetype ?? '')
       if (mimetype.startsWith('text/') || mimetype === 'application/json' || mimetype === 'application/x-yaml') {
