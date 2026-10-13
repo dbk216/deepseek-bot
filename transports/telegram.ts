@@ -52,6 +52,27 @@ interface TelegramMessage {
 interface TelegramUpdate { update_id: number; message?: TelegramMessage; edited_message?: TelegramMessage }
 
 const API_BASE = 'https://api.telegram.org'
+
+/**
+ * The model writes Markdown; Telegram showed it as raw marks. This turns the common parts into Telegram's
+ * HTML: fenced and inline code, links, bold, italic, headings. The text is escaped first, so nothing in
+ * it becomes a tag; code and links are set aside before that and restored after, escaped on their own.
+ */
+export function toTelegramHtml(markdown: string): string {
+  const escape = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const kept: string[] = []
+  const keep = (html: string) => `\u0000${kept.push(html) - 1}\u0000`
+  let text = markdown
+    .replace(/```[^\n]*\n([\s\S]*?)```/g, (_, code: string) => keep(`<pre>${escape(code.replace(/\n$/, ''))}</pre>`))
+    .replace(/`([^`\n]+)`/g, (_, code: string) => keep(`<code>${escape(code)}</code>`))
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, label: string, url: string) =>
+      keep(`<a href="${escape(url).replace(/"/g, '&quot;')}">${escape(label)}</a>`))
+  text = escape(text)
+    .replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<i>$2</i>')
+  return text.replace(/\u0000(\d+)\u0000/g, (_, i: string) => kept[Number(i)])
+}
 const MESSAGE_LIMIT = 4096
 
 export interface TelegramTransport extends Transport {
@@ -90,6 +111,22 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
     const payload = await res.json() as { ok: boolean; result?: T; description?: string; error_code?: number }
     if (!payload.ok) throw new Error(`telegram ${method} failed: ${payload.description ?? res.status}`)
     return payload.result as T
+  }
+
+  /**
+   * Send with the Markdown rendered as HTML, or as it was written when Telegram refuses the markup — a
+   * tag a chunk boundary cut in half, say — or when the rendering would not fit a message.
+   */
+  async function rendered<T>(method: string, base: Record<string, unknown>, body: string): Promise<T> {
+    const html = toTelegramHtml(body)
+    if (html.length <= MESSAGE_LIMIT) {
+      try { return await call<T>(method, { ...base, text: html, parse_mode: 'HTML' }) }
+      catch (e) {
+        if (!/parse entities|can't parse|unsupported start tag|can't find end tag/i.test(String((e as Error)?.message ?? e))) throw e
+        log(`telegram refused the markup, sending plain text: ${String((e as Error)?.message ?? e).slice(0, 120)}`)
+      }
+    }
+    return await call<T>(method, { ...base, text: body })
   }
 
   async function authenticate(): Promise<void> {
@@ -309,17 +346,16 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
         let sent: TelegramMessage | null = null
         if (replace !== null && first === null) {
           try {
-            sent = await call<TelegramMessage>('editMessageText', { chat_id: target.channel, message_id: Number(replace), text: body })
+            sent = await rendered<TelegramMessage>('editMessageText', { chat_id: target.channel, message_id: Number(replace) }, body)
           } catch (e) {
             log(`telegram edit failed, sending a new message instead: ${String((e as Error)?.message ?? e)}`)
           }
         }
         if (sent === null) {
-          sent = await call<TelegramMessage>('sendMessage', {
+          sent = await rendered<TelegramMessage>('sendMessage', {
             chat_id: target.channel,
-            text: body,
             ...(target.threadTs !== null ? { reply_to_message_id: Number(target.threadTs) } : {}),
-          })
+          }, body)
         }
         replace = null
         if (i === 0) first = { channel: target.channel, ts: String(sent.message_id) }

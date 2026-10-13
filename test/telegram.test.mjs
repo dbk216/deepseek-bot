@@ -40,7 +40,11 @@ function fakeApi(options = {}) {
       return json({ ok: true, result: [] })
     }
     if (method === 'getFile') return json({ ok: true, result: { file_id: 'F1', file_path: 'documents/notes.txt', file_size: 12 } })
-    if (method === 'sendMessage') return json({ ok: true, result: { message_id: 100 + calls.length, chat: { id: 7 } } })
+    if (method === 'sendMessage') {
+      const body = init?.body ? JSON.parse(String(init.body)) : {}
+      if (options.rejectHtml && body.parse_mode === 'HTML') return json({ ok: false, error_code: 400, description: "Bad Request: can't parse entities" }, false)
+      return json({ ok: true, result: { message_id: 100 + calls.length, chat: { id: 7 } } })
+    }
     if (method === 'editMessageText') {
       if (options.editFails) return json({ ok: false, error_code: 400, description: 'message is too old to edit' }, false)
       return json({ ok: true, result: { message_id: 99, chat: { id: 7 } } })
@@ -264,6 +268,30 @@ function groupMessage(overrides = {}) {
   check('a document is sent with sendDocument', ok === true && requests[0]?.method === 'sendDocument' && requests[0]?.chat === '7', JSON.stringify(requests[0]))
   check('as a reply in the conversation', requests[0]?.reply === '10')
   check('with its own name and the bytes given', requests[0]?.name === 'report.pdf' && requests[0]?.bytes === 'pdf bytes')
+}
+
+// 14. Markdown is rendered: Telegram showed the model's **bold**, `code` and [links](…) as raw marks.
+// HTML parse mode, with the text escaped first so nothing in it becomes a tag; a message Telegram will
+// not parse is sent again as plain text rather than lost.
+{
+  const api = fakeApi()
+  const t = transportFor(api, mkdtempSync(join(tmpdir(), 'tg-')))
+  await t.identity()
+  await t.post({ channel: '7', threadTs: null }, '**굵게** `코드` [링크](https://example.com/a?b=1&c=2) <tag> & \n```\nx < y\n```')
+  const sent = api.calls.find((c) => c.method === 'sendMessage')?.body
+  check('it is sent in HTML parse mode', sent?.parse_mode === 'HTML', JSON.stringify(sent))
+  check('bold, code and links become tags', /<b>굵게<\/b>/.test(sent?.text) && /<code>코드<\/code>/.test(sent?.text)
+    && sent?.text.includes('<a href="https://example.com/a?b=1&amp;c=2">링크</a>'), sent?.text)
+  check('and the text\'s own angle brackets are escaped', sent?.text.includes('&lt;tag&gt; &amp;'), sent?.text)
+  check('a fenced block becomes pre, escaped inside', /<pre>x &lt; y<\/pre>/.test(sent?.text), sent?.text)
+
+  const api2 = fakeApi({ rejectHtml: true })
+  const t2 = transportFor(api2, mkdtempSync(join(tmpdir(), 'tg-')))
+  await t2.identity()
+  const posted = await t2.post({ channel: '7', threadTs: null }, '**굵게**')
+  const attempts = api2.calls.filter((c) => c.method === 'sendMessage')
+  check('a message Telegram will not parse is sent again as plain text', posted !== null && attempts.length === 2 && attempts[1].body.parse_mode === undefined
+    && attempts[1].body.text === '**굵게**', JSON.stringify(attempts.map((a) => a.body)))
 }
 
 const failed = results.filter((r) => !r.ok)
