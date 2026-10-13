@@ -92,8 +92,10 @@ export function inline(text: string, base: string, s: MarkdownStyles): Span[] {
       // Only a bare host may run straight into the sentence ("x.com에서"): with a path, what follows
       // in another script is as likely the rest of the path as a particle, and no link is better
       // than a link to the wrong page. The same for a match that filled the bound: it is a prefix.
-      const next = text.charCodeAt(at + token.length)
-      const cutShort = (next > 0x7f && !/^https?:\/\/[^/?#]+\/?$/.test(token)) || m[0].length - m[0].indexOf('//') - 2 >= 2001
+      // (A letter, digit or mark: punctuation of another script — 。 ” — ends a URL like a full stop.)
+      const next = String.fromCodePoint(text.codePointAt(at + token.length) ?? 0x20)
+      const continues = /[^\x00-\x7f]/.test(next) && /[\p{L}\p{N}\p{M}]/u.test(next)
+      const cutShort = (continues && !/^https?:\/\/[^/?#]+\/?$/.test(token)) || m[0].length - m[0].indexOf('//') - 2 >= 2001
       push(token, cutShort ? base : s.link, cutShort ? undefined : safeUrl(token))
     }
     else push(SHORTCODES[token.slice(1, -1)], base)

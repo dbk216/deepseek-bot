@@ -143,10 +143,13 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
   const removed = sgr(theme.danger, mode)
   const added = sgr(theme.ok, mode)
   // Only what changed: the lines around a change are in the file (and the core sends the changed
-  // part alone). When a side was cut, the other side's unmatched lines prove nothing — its copy of
-  // them can lie past the cut, and a line the two sides share may be a blank line or a brace, so no
-  // line anchors anything. A removal is therefore withheld when the new side was cut (the text may
-  // still be in the file), and an addition when the old side was (it may have been there already).
+  // part alone). When a side was cut, the comparison was made against a text that stops early, and
+  // proves little:
+  //  - a line of the whole side with no partner may have its partner past the cut — so a removal is
+  //    withheld when the new side was cut, and an addition when the old side was;
+  //  - a line of the cut side may have been paired with the wrong blank line or brace, leaving a
+  //    kept line between them looking changed — so of the cut side only a line whose text is
+  //    nowhere on the whole side is shown. That one is certain.
   let uncompared = false
   let withheld = 0
   const linesOf = (text: string | null) => (text === null ? [] : text.split('\n'))
@@ -155,7 +158,11 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
     // Too long to compare line by line: said, never guessed at.
     if (ops === null) { uncompared = true; return [] }
     const changed = ops.filter((l) => l.op !== ' ')
-    const sure = changed.filter((l) => !(l.op === '-' && d.newCut === true) && !(l.op === '+' && d.oldCut === true))
+    const wholeOld = d.newCut === true && d.oldCut !== true ? new Set(linesOf(d.old)) : null
+    const wholeNew = d.oldCut === true && d.newCut !== true ? new Set(linesOf(d.new)) : null
+    const sure = changed.filter((l) => (l.op === '-'
+      ? d.newCut !== true && (wholeNew === null || !wholeNew.has(l.text))
+      : d.oldCut !== true && (wholeOld === null || !wholeOld.has(l.text))))
     withheld += changed.length - sure.length
     return sure
   })
@@ -175,7 +182,7 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
       const note = uncompared ? '… 변경이 커서 줄 단위로 비교하지 않음'
         : !cut ? ''
           : changes.length > 0 ? '… 큰 변경이라 앞부분만 표시 (잘림)'
-            : withheld > 0 ? '… 큰 변경: 잘린 경계의 줄이라 표시하지 않음 (잘림)'
+            : withheld > 0 ? '… 큰 변경: 잘려서 확실히 말할 수 있는 줄이 없음 (잘림)'
               : '… 큰 변경: 표시할 수 있는 앞부분에 차이 없음 (잘림)'
       if (note !== '') out.push({ spans: [pad('    '), { text: note, style }], soft: false })
       if (outcome !== null) {

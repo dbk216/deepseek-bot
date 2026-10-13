@@ -358,6 +358,8 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   check('markdown: a path continuing outside ASCII is not linked short, and (x)(y) stays one URL', JSON.stringify(wrong) === JSON.stringify(['https://a/(x)(y)']), JSON.stringify(wrong))
   const paths = md('https://namu.wiki/w/LG전자 와 https://example.com/docs/를 참고, https://x.com에서', 200)[0].spans.filter((sp) => sp.link !== undefined).map((sp) => sp.link)
   check('markdown: only a bare host may run into Korean and still be a link', JSON.stringify(paths) === JSON.stringify(['https://x.com']), JSON.stringify(paths))
+  const punctuated = md('문서는 https://example.com/docs。 그리고 “https://example.com/a/b” 참고', 200)[0].spans.filter((sp) => sp.link !== undefined).map((sp) => sp.link)
+  check('markdown: a path followed by punctuation of another script is still a link', JSON.stringify(punctuated) === JSON.stringify(['https://example.com/docs', 'https://example.com/a/b']), JSON.stringify(punctuated))
   const overlong = md(`https://${'a'.repeat(2000)}.${'b'.repeat(40)} 끝`, 200)[0].spans.filter((sp) => sp.link !== undefined)
   check('markdown: a URL longer than the bound is not linked to its first part', overlong.length === 0, `${overlong.length} link(s), ${overlong[0]?.link?.length ?? 0} chars`)
   const repeated = timed('(https://a.b/c)'.repeat(40_000))

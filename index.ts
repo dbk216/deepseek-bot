@@ -1177,19 +1177,16 @@ export function apply(ctx, config) {
     // Only a change too large in itself is cut: at whole lines, within a budget of lines (the card
     // compares line by line) and of characters. Which side was cut is said, because it makes the
     // other side's unmatched lines uncertain. A side with no lines left is null.
-    const linesOf = (text: unknown): string[] => {
-      if (typeof text !== 'string' || text === '') return []
-      const lines = text.split('\n')
-      if (lines[lines.length - 1] === '') lines.pop()   // a final newline is not a line of its own
-      return lines
-    }
+    const linesOf = (text: unknown): string[] => (typeof text === 'string' && text !== '' ? text.split('\n') : [])
     const within = (lines: string[]) => {
       const kept: string[] = []
       let size = 0
       for (const line of lines) {
-        if (kept.length >= 400 || size + line.length + 1 > 8000) break
+        // The separating newline counts from the second line on: one line as long as the budget is whole.
+        const next = size + line.length + (kept.length === 0 ? 0 : 1)
+        if (kept.length >= 400 || next > 8000) break
         kept.push(line)
-        size += line.length + 1
+        size = next
       }
       if (kept.length === 0 && lines.length > 0) return { lines: [clip(lines[0], 8000)], cut: true }
       return { lines: kept, cut: kept.length < lines.length }
@@ -1198,6 +1195,14 @@ export function apply(ctx, config) {
       ? card.diffs.slice(0, 3).map((d: any) => {
           const a = linesOf(d?.oldText)
           const b = linesOf(d?.newText)
+          // A final newline is not a line of its own: the empty piece after it is dropped — unless
+          // the other side has text and no final newline, where it is the change.
+          const emptyA = a.length === 0
+          const emptyB = b.length === 0
+          const newlineA = !emptyA && a[a.length - 1] === ''
+          const newlineB = !emptyB && b[b.length - 1] === ''
+          if (newlineA && (newlineB || emptyB)) a.pop()
+          if (newlineB && (newlineA || emptyA)) b.pop()
           let start = 0
           while (start < a.length && start < b.length && a[start] === b[start]) start++
           let endA = a.length

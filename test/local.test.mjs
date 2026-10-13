@@ -547,6 +547,24 @@ function boot({ state = {}, config = {} } = {}) {
   check('tools: 450 lines above 120 that stay show additions only, cut and marked', grown?.diff?.[0]?.old === null && grown.diff[0].newCut === true && !drawn(grown).some((row) => /^\s+- /.test(row)) && drawn(grown).some((row) => row.includes('+ gone0()')), JSON.stringify(grown === undefined ? [] : drawn(grown).filter((row) => /^\s+- /.test(row)).slice(0, 3)))
   const shrunk = sent('c9')
   check('tools: 450 lines deleted above 120 that stay show removals only', shrunk?.diff?.[0]?.new === null && shrunk.diff[0].oldCut === true && !drawn(shrunk).some((row) => /^\s+\+ /.test(row)) && drawn(shrunk).some((row) => row.includes('- gone0()')), JSON.stringify(shrunk === undefined ? [] : drawn(shrunk).filter((row) => /^\s+\+ /.test(row)).slice(0, 3)))
+  // One side cut, the other whole and not empty: the comparison is made against a cut text, so a
+  // blank line or a brace can be paired with the wrong one and a kept line fall between. Only a line
+  // whose text is nowhere on the whole side is certain.
+  const rows450 = Array.from({ length: 450 }, (_, i) => `row${i}()`).join('\n')
+  sendEdit('c11', `head()\n}\n\nconst x = load()\n${rows450}\n}\n\ntail_old()\n`, 'head()\nconst x = load()\n}\n\ntail_new()\n')
+  sendEdit('c12', 'head()\nconst x = load()\n}\n\ntail_old()\n', `head()\n}\n\nconst x = load()\n${rows450}\n}\n\ntail_new()\n`)
+  // A single line as long as the budget is whole; and a change of the final newline alone is a change.
+  sendEdit('c13', `${'a'.repeat(8000)}\nsame\n`, 'b\nsame\n')
+  sendEdit('c14', 'a\nb', 'a\nb\n')
+  await sleep(80)
+  const oldCutCard = sent('c11')
+  check('tools: with the old side cut, a kept line is not shown removed', oldCutCard?.diff?.[0]?.oldCut === true && oldCutCard.diff[0].newCut === undefined && !drawn(oldCutCard).some((row) => row.includes('- const x = load()')) && drawn(oldCutCard).some((row) => row.includes('- row0()')), JSON.stringify(oldCutCard === undefined ? [] : drawn(oldCutCard).slice(0, 5)))
+  const newCutCard = sent('c12')
+  check('tools: with the new side cut, a kept line is not shown added', newCutCard?.diff?.[0]?.newCut === true && newCutCard.diff[0].oldCut === undefined && !drawn(newCutCard).some((row) => row.includes('+ const x = load()')) && drawn(newCutCard).some((row) => row.includes('+ row0()')), JSON.stringify(newCutCard === undefined ? [] : drawn(newCutCard).slice(0, 5)))
+  const longLine = sent('c13')?.diff?.[0]
+  check('tools: one line exactly as long as the budget is sent whole, not marked cut', longLine?.old?.length === 8000 && longLine.oldCut === undefined && longLine.new === 'b', JSON.stringify({ old: longLine?.old?.length, oldCut: longLine?.oldCut, new: longLine?.new }))
+  const eol = sent('c14')
+  check('tools: a change of the final newline alone still shows a row', eol !== undefined && drawn(eol).length > 1, JSON.stringify(eol?.diff))
   check('tools: a presenter that answers with a promise is not waited for: the first argument is the title', later.find((f) => f.callId === 'c4')?.title === '/w/x')
   check('tools: another session\'s tool call is not shown in this conversation', !later.some((f) => f.callId === 'c5'))
   check('stream: a terminal turn posts no progress message (the steps are already on screen)', !c.frames.some((f) => f.type === 'post' && /작업 중/.test(f.text)))
