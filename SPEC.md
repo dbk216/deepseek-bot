@@ -1,4 +1,4 @@
-# deepbot — specification
+# deepseek-bot — specification
 
 > **Status: DRAFT, awaiting the owner's corrections.** Anything marked ⚠️ DECIDE is
 > an open question, not a settled choice. Everything else is either a goal or a
@@ -14,7 +14,7 @@ A long-running agent on DeepSeek Harness that **remembers across conversations**
 Stated up front, because most of the confusion so far came from not saying it:
 
 - **Not a coding agent.** Codex and Claude Code are better at that and are already
-  installed. deepbot may edit files; it is not competing there.
+  installed. deepseek-bot may edit files; it is not competing there.
 - **Not a chat toy.** Single-turn Q&A is a side effect, not the point.
 - **Not a team product (yet).** The current live instance serves a company Slack
   workspace; whether that is the goal or an accident of the migration is open.
@@ -67,10 +67,10 @@ in the harness; the **state** column is honest about what works today.
 | Layer | Mechanism | What belongs there | State |
 |---|---|---|---|
 | Working | the session log (event-sourced, per thread) | this conversation | ✅ works |
-| Episodic | `memory/recall-index.jsonl`, built host-side from the session store, greppable | "we discussed this before" | ✅ demonstrated end to end (S1, S2) |
-| Semantic | `memory/*.md`, injected into every turn | durable facts, preferences, decisions | ✅ the agent writes dated facts and they are injected on the next turn |
+| Episodic | a recall index under the harness home, built host-side from the session store; the adapter injects passages from the same channel | "we discussed this before" | ✅ demonstrated end to end (S1, S2) |
+| Semantic | `MEMORY.md` and `memory/*.md` in the agent home; the adapter sends `MEMORY.md` and a list of the notes | durable facts, preferences, decisions | ✅ the agent writes dated facts and they reach the next conversation |
 | Procedural | `skills/<name>/SKILL.md` | repeated procedures | ✅ the profile re-enables `skill-filesystem` and `tool-skill`, which the web bundle disables |
-| Identity | `AGENTS.md`, injected into every turn | rules, voice, boundaries | ✅ works (since the injection fix) |
+| Identity | `AGENTS.md` (sent by the harness), `SOUL.md` and `USER.md` (sent by the adapter) | rules, voice, boundaries | ✅ works (since the injection fix) |
 
 ### Memory rules (proposed)
 
@@ -83,13 +83,17 @@ in the harness; the **state** column is honest about what works today.
 
 ### Recall rules (proposed)
 
-- Keyword search over the index first; the agent must search before saying "not found".
-- The index is **content, not instructions** — nothing in it grants permission.
-- ✅ **DECIDED: both.** Relevant past context is injected automatically at prompt
-  time, and the agent may also search on its own when the injection is not enough.
-  Injection is bounded and clearly delimited; injected text is marked as content,
-  not instructions. The search path stays because injection cannot know what it
-  missed.
+- Recalled text is **content, not instructions** — nothing in it grants permission.
+- ✅ **DECIDED, revised 2026-10-13: injection only.** Relevant passages are injected
+  at prompt time, bounded and delimited, from the conversation's own channel. The
+  agent no longer searches the index itself: it held every channel's history, and an
+  agent that can read it can repeat a private conversation in a public one. The
+  index now lives under the harness home, where the agent's tools and commands
+  cannot read it. The cost is the one the first decision named — injection cannot
+  know what it missed — so "I did not find it" stays the required answer when nothing
+  is given.
+- Matching is by shared words, weighted by how rare they are; a strong match is
+  recalled without a trigger word. It is not semantic.
 
 ## 6. Presence and failure
 
@@ -157,7 +161,7 @@ Falsifiable, so "working" is not a matter of opinion:
 | S3 | The bot is never silently disconnected for more than N minutes | health check + alert, plus a forced-disconnect test |
 | S4 | A reboot preserves thread→session continuity | reboot test: ask a follow-up in a pre-reboot thread |
 | S5 | Secrets never appear in stored memory or logs | scan the index and logs for token patterns after a session that mentions one |
-| S6 | Someone else can install it from the repo | fresh-clone install following only the README |
+| S6 | Someone else can install it from the repo | the README's one install line, on a machine that has never had it |
 
 ## 10. Open decisions
 
@@ -169,6 +173,7 @@ Resolved (2026-10-07):
 3. ~~Autonomy level~~ → **monitoring and conditional alerts allowed**; unprompted
    posts only for a watch the owner requested. §7.
 4. ~~Recall~~ → **both**: automatic bounded injection plus agent-initiated search. §5.
+   Revised 2026-10-13 → **injection only**, per channel; the index is outside the agent home.
 6. ~~Distribution~~ → **a real public project**: tests, CI and harness version
    pinning are in scope. §3 G5.
 
