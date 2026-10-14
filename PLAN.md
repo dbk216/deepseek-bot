@@ -48,6 +48,13 @@ is built before the thing it stands on. The detailed history of each milestone i
   dsh-jobs disposes an agent's jobs with it, so "I'll tell you when it finishes" cannot be kept — on
   any platform. A continuable subagent can be messaged only while its parent's turn runs, for the
   same reason. Keeping an agent while it owns work is a lifecycle change, not made.
+- **`dsh gateway`, what hermes' gateway has and this does not yet:** a restart that waits for running
+  turns instead of cutting them (they are reported as lost); health per platform — `connected` in the
+  health file is one flag for every platform, so `status` cannot say which one is down, and
+  `lastError` one field: a clear names the error it clears, so two platforms failing with the same
+  text (`fetch failed`) can clear each other's until the next attempt writes it again; pairing a new
+  person by a code in a direct message instead of listing ids; a home channel for notices; and the
+  installer asking through `dsh gateway setup` instead of its own prompts, which it still duplicates.
 
 Decided against:
 
@@ -58,6 +65,15 @@ Decided against:
 
 ## Unverified
 
+- `dsh gateway` against the real services: the suite runs it with fakes for launchctl, plutil and
+  the platforms. Not yet run for real: `setup` writing a live profile and restarting a live gateway,
+  `stop` and `start` on the installed jobs, and the token checks against Slack, Telegram and Discord
+  — the Slack same-app check reads `bots.info`, whose answer shape is from Slack's method reference
+  and is skipped when refused. `status` was run read-only on a live deployment.
+- The Slack app manifest (`dsh gateway manifest slack`): not yet used to create an app; its scopes
+  are the ones `docs/setup.md` lists, which a test pins.
+- `allowedUsers` on a live platform: the user ids it compares are the ones each transport reports
+  (Slack `event.user`, Telegram `from.id`, Discord `author.id`), checked through the fake transport.
 - Discord and Telegram typing, uploads and approval buttons, and Telegram's HTML rendering: mocked
   APIs only, no live server or bot.
 - Slack approval buttons in a real workspace: they need Interactivity turned on in the app's

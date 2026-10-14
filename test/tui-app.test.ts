@@ -813,6 +813,26 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.turnEnded()
 }
 
+// 60b. Another conversation (/new, /resume) starts clean: nothing waits from the old one, no tool of its runs.
+{
+  const t = setup({ cols: 80, rows: 30 })
+  t.app.turnStarted()
+  t.app.toolCall({ name: 'bash', callId: 'x1', title: 'sleep 9' })
+  t.key('left behind\r')
+  t.clock.advance(20)
+  check('clear: the old conversation\'s queue shows before', t.term.screen.text().includes('1 queued'))
+  t.app.clear()
+  t.clock.advance(20)
+  check('clear: after, nothing is queued and no old tool is named', !t.term.screen.text().includes('queued') && !t.term.screen.text().includes('running bash'))
+  t.app.turnStarted()
+  t.clock.advance(20)
+  // Checked while the first turn runs: its end would reset the tool anyway, and hide a clear() that did not.
+  check('clear: the new conversation\'s first turn is working, not running the old one\'s tool', t.term.screen.text().includes('working…') && !t.term.screen.text().includes('running bash'))
+  t.app.turnEnded()
+  t.clock.advance(20)
+  check('clear: and its end does not bring the old message in', !t.term.screen.text().includes('left behind'))
+}
+
 // 61. Without colour there is no band and nothing sweeps: the same words, plain.
 {
   const t = setup({ cols: 60, rows: 24, env: { NO_COLOR: '1' } })

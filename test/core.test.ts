@@ -1128,6 +1128,9 @@ for (const remove of [false, true]) {
   check('language zh: a stop with nothing running is answered in Chinese', zh.transport.posted.some((p) => p.text === '当前没有正在进行的工作。'), JSON.stringify(zh.transport.posted.map((p) => p.text)))
   zh.done()
 
+  let empty = 'started'
+  try { boot({ config: { language: null } }).done() } catch (e) { empty = String((e as Error).message) }
+  check('an empty language (language: with nothing after it) is English, not a refusal', empty === 'started', empty)
   let refused = ''
   try { boot({ config: { language: 'fr' } }) } catch (e) { refused = String((e as Error).message) }
   check('a language it has no words for is a config error, not a silent English', /language: must be 'en', 'ko' or 'zh' \(got: fr\)/.test(refused), refused.split('\n')[1] ?? refused)

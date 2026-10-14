@@ -209,6 +209,94 @@ function boot({ state = {}, config = {} }: { state?: Record<string, unknown>; co
   t.done()
 }
 
+// 11. allowedUsers: only the people listed start a turn or press a button; the terminal always may.
+// On Telegram a private chat always reaches the bot, so without this anyone who found it could run it.
+{
+  const t = boot({ config: { allowedUsers: ['U_OK'], targetChannels: ['C_ALLOWED', 'tui'] } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ user: 'U_STRANGER', text: 'run something' }))
+  await sleep(200)
+  check('allowedUsers: someone not listed starts no turn', t.transport.historyCalls.length === 0, `${t.transport.historyCalls.length} turn(s)`)
+  check('allowedUsers: and is told nothing', t.transport.posted.length === 0, JSON.stringify(t.transport.posted))
+  check('allowedUsers: the refusal is logged', t.logs.some((l) => /U_STRANGER is not in allowedUsers/.test(l)))
+  t.transport.deliver(t.transport.message({ user: 'U_OK' }))
+  await sleep(200)
+  check('allowedUsers: someone listed does start a turn', t.transport.historyCalls.length === 1, `${t.transport.historyCalls.length} turn(s)`)
+  t.transport.deliver(t.transport.message({ user: 'local', target: { channel: 'tui', threadTs: 't2' } }))
+  await sleep(200)
+  check('allowedUsers: the terminal\'s user always may, in the terminal', t.transport.historyCalls.length === 2, `${t.transport.historyCalls.length} turn(s)`)
+  // The name alone is not the terminal: 'local' in another channel is just an id that is not listed.
+  t.transport.deliver(t.transport.message({ user: 'local', target: { channel: 'C_ALLOWED', threadTs: 't3' } }))
+  await sleep(200)
+  check('allowedUsers: the terminal\'s user name in another channel is not the terminal', t.transport.historyCalls.length === 2, `${t.transport.historyCalls.length} turn(s)`)
+  // A button for no pending request: the listed person is told it was handled; a stranger is not answered at all.
+  const before = t.transport.posted.length
+  t.transport.press('approval:allow:C_ALLOWED:t9#deadbeef', 'U_STRANGER')
+  await sleep(100)
+  check('allowedUsers: a stranger\'s button press is ignored before anything is posted', t.transport.posted.length === before && t.logs.some((l) => /button ignored: U_STRANGER/.test(l)))
+  t.transport.press('approval:allow:C_ALLOWED:t9#deadbeef', 'U_OK')
+  await sleep(100)
+  check('allowedUsers: the same press by someone listed reaches the approval code (control)', t.transport.posted.length === before + 1, JSON.stringify(t.transport.posted.slice(before)))
+  t.done()
+}
+{
+  const t = boot()
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ user: 'U_STRANGER' }))
+  await sleep(200)
+  check('allowedUsers: unset, anyone in an allowed channel starts a turn, as before', t.transport.historyCalls.length === 1, `${t.transport.historyCalls.length} turn(s)`)
+  t.done()
+}
+{
+  let error = ''
+  try { boot({ config: { allowedUsers: 'U_OK' } }) } catch (e) { error = String(e?.message ?? e) }
+  check('allowedUsers: not a list is a config error', /allowedUsers: a list of user ids/.test(error), error)
+  // A Telegram or Discord id written unquoted is a YAML number: the error says to quote it.
+  let bare = ''
+  try { boot({ config: { allowedUsers: [123456789] } }) } catch (e) { bare = String(e?.message ?? e) }
+  check('allowedUsers: an unquoted numeric id is a config error that says to quote it', /quote each id/.test(bare), bare)
+}
+
+// 12. A platform that fails to start says so in the health file. It was only in the log, so with another
+// platform connected `dsh gateway setup` read that one's "connected" as success.
+// The platforms share lastError, so a start that works clears only the error a failed one wrote, and a
+// platform's clear names the error it clears.
+async function failingOnce(otherError: string | null) {
+  const dir = mkdtempSync(join(tmpdir(), 'deepbot-health-'))
+  const healthFile = join(dir, 'health.json')
+  const base = createFakeTransport()
+  let tries = 0
+  let host = null
+  let connected = false
+  const flaky = { ...base, connect: async (h) => { if (tries++ === 0) throw new Error('getMe: 401 Unauthorized'); await base.connect(h); connected = true } }
+  const t = boot({ config: { transportFactory: (given) => { host = given; return flaky }, healthFile } })
+  const read = () => { try { return JSON.parse(readFileSync(healthFile, 'utf8')) } catch { return null } }
+  // Waited for, with a deadline, not a fixed time: the first retry is 1 s out, and a loaded machine is slower.
+  const until = async (done: () => boolean) => { for (const deadline = Date.now() + 8000; !done() && Date.now() < deadline;) await sleep(25) }
+  await until(() => String(read()?.lastError ?? '').includes('401'))
+  const failed = read()
+  if (otherError !== null) host.onHealth({ lastError: otherError })      // another platform's, after it
+  await until(() => connected)
+  await sleep(50)                                                        // the clear follows the connect in start()
+  return { failed, recovered: read(), host, read, done: () => { t.done(); rmSync(dir, { recursive: true, force: true }) } }
+}
+{
+  const r = await failingOnce(null)
+  check('a platform that fails to start puts its error in the health file', String(r.failed?.lastError ?? '').includes('401 Unauthorized') && r.failed?.connected === false, JSON.stringify(r.failed))
+  check('and the start that works after it clears it', r.recovered?.lastError === null, JSON.stringify(r.recovered))
+  r.host.onHealth({ lastError: 'slack socket closed' })
+  r.host.onHealth({ lastError: null, ifLastError: 'network down' })
+  check('a clear that names another error leaves this one', r.read()?.lastError === 'slack socket closed', JSON.stringify(r.read()))
+  r.host.onHealth({ lastError: null, ifLastError: 'slack socket closed' })
+  check('a clear that names this error clears it', r.read()?.lastError === null && !('ifLastError' in (r.read() ?? {})), JSON.stringify(r.read()))
+  r.done()
+}
+{
+  const r = await failingOnce('slack socket closed')
+  check('a start that works leaves an error another platform wrote since', r.recovered?.lastError === 'slack socket closed', JSON.stringify(r.recovered))
+  r.done()
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)
