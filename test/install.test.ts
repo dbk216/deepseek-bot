@@ -130,7 +130,9 @@ const build = script.indexOf('build_checkout "$DEEPBOT_DIR"')
     } catch (e) { return String(e.stdout ?? '') }
   }
   check('init.sh: called by the installer after its build, it does not build again', dry(true, true).includes('built   dist/ (by the installer)'))
-  check('init.sh: with no build yet, or run on its own, it builds', !dry(true, false).includes('(by the installer)') && !dry(false, true).includes('(by the installer)'))
+  // It reached its build step and took the build branch (a crash would print neither line).
+  const builds = (out: string) => !out.includes('(by the installer)') && /install dev dependencies|would run/.test(out)
+  check('init.sh: with no build yet, or run on its own, it builds', builds(dry(true, false)) && builds(dry(false, true)))
   check('install.sh calls it as the installer', /DEEPBOT_INSTALLER=1 [^\n]*init\.sh/.test(script))
 }
 check('install.sh builds before the installers copy from the build',
@@ -254,6 +256,12 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   // A provider nested deeper in the default model's config was taken for the model's own.
   writeFileSync(join(dir, 'nested.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n      og2:\n        apiKeyEnv: OG2_KEY\n- id: agent-default-model\n  config:\n    provider: og\n    fallback:\n      provider: og2\n`)
   check('provider: a provider nested in the default model\'s config is not the model\'s', withHelpers(`profile_key "${join(dir, 'nested.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'nested.yml')}"`).out)
+  // The harness keeps the last row of an id (a config block replaces the whole config): the last default model,
+  // and the last llm-pi-ai's routes.
+  writeFileSync(join(dir, 'two-rows.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n      custom:\n        apiKeyEnv: CUSTOM_API_KEY\n- id: agent-default-model\n  config:\n    provider: og\n- id: agent-default-model\n  config:\n    provider: custom\n`)
+  check('provider: of two default-model rows, the last is the model', withHelpers(`profile_key "${join(dir, 'two-rows.yml')}"`).out === 'CUSTOM_API_KEY', withHelpers(`profile_key "${join(dir, 'two-rows.yml')}"`).out)
+  writeFileSync(join(dir, 'two-routes-rows.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_NEW_KEY\n- id: agent-default-model\n  config:\n    provider: og\n`)
+  check('provider: of two llm-pi-ai rows, the last one\'s routes count', withHelpers(`profile_key "${join(dir, 'two-routes-rows.yml')}"`).out === 'OG_NEW_KEY', withHelpers(`profile_key "${join(dir, 'two-routes-rows.yml')}"`).out)
   writeFileSync(join(dir, 'quoted-id.yml'), `- id: 'llm-pi-ai'\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n- id: "agent-default-model"\n  config:\n    provider: og\n`)
   check('provider: quoted ids are read', withHelpers(`profile_key "${join(dir, 'quoted-id.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'quoted-id.yml')}"`).out)
   writeFileSync(join(dir, 'insert-after.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n      speech:\n        apiKeyEnv: OPENAI_API_KEY\n- id: agent-default-model\n  config:\n    provider: og\n- insert:\n    - id: tts\n      config:\n        provider: speech\n`)

@@ -149,20 +149,23 @@ profile_key() {
     function row(s, name) { return s ~ ("^- id:[[:space:]]*[\"\047]?" name "[\"\047]?[[:space:]]*(#.*)?$") }
     /^[[:space:]]*(#.*)?$/ { next }
     FNR == NR {
-      # Every top-level "- " starts another row; only the default model row'"'"'s own provider counts, not one nested deeper.
-      if ($0 ~ /^- /) { dm = row($0, "agent-default-model"); cfg = -1 }
+      # Every top-level "- " starts another row. The last default-model row is the model (a config block
+      # replaces the whole config), and only its own provider counts, not one nested deeper.
+      if ($0 ~ /^- /) { dm = row($0, "agent-default-model"); cfg = -1; if (dm) { want = ""; taken = 0 } }
       else if (dm && cfg < 0 && $0 ~ /^[[:space:]]+config:[[:space:]]*(#.*)?$/) cfg = indent($0)
-      else if (dm && cfg >= 0 && want == "" && indent($0) == cfg + 2 && $0 ~ /^[[:space:]]+provider:/) { v = $0; sub(/^[[:space:]]+provider:/, "", v); want = bare(v) }
+      else if (dm && cfg >= 0 && !taken && indent($0) == cfg + 2 && $0 ~ /^[[:space:]]+provider:/) { v = $0; sub(/^[[:space:]]+provider:/, "", v); want = bare(v); taken = 1 }
       next
     }
-    /^- / { pi = row($0, "llm-pi-ai"); prov = -1; route = ""; next }
+    # The last llm-pi-ai row'"'"'s routes, likewise.
+    /^- / { pi = row($0, "llm-pi-ai"); prov = -1; route = ""; if (pi) key = ""; next }
     pi && /^[[:space:]]+providers:[[:space:]]*(#.*)?$/ { prov = indent($0); next }
     # A line at the routes'"'"' indent names the next route, or, if it is not a plain key, ends the one before.
     pi && prov >= 0 && indent($0) == prov + 2 {
       if ($0 ~ /^[[:space:]]+["\047]?[A-Za-z0-9_.-]+["\047]?:[[:space:]]*(#.*)?$/) { r = $0; sub(/:[[:space:]]*(#.*)?$/, "", r); route = bare(r) } else route = ""
       next
     }
-    pi && route != "" && route == want && $0 ~ /^[[:space:]]+apiKeyEnv:/ { v = $0; sub(/^[[:space:]]+apiKeyEnv:/, "", v); print bare(v); exit }
+    pi && route != "" && route == want && $0 ~ /^[[:space:]]+apiKeyEnv:/ { v = $0; sub(/^[[:space:]]+apiKeyEnv:/, "", v); key = bare(v); next }
+    END { print key }
   ' "$1" "$1" 2>/dev/null || true)"
   printf '%s\n' "${found:-DEEPSEEK_API_KEY}"
 }
