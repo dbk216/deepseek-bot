@@ -49,10 +49,11 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
-- **In the terminal, a stop, the usage word or an approval's answer waited behind the running turn.**
-  The core answers them at once, without a turn; queued above the input, they were shown as the next
-  turn's message, and the next real message as its own start in their place. The gateway now names
-  those words in `ready`, and the terminal says them at once (an approval's only while one is asked).
+- **In the terminal, a stop or the usage word waited behind the running turn.** The core answers them
+  at once, without a turn; queued above the input, the usage word was shown as the next turn's message,
+  and the next real message's turn started under it. The gateway now names those words in `ready`, the
+  terminal says them at once, and a typed stop puts what waited back in the box, as esc does. (An
+  approval's yes or no is answered with its buttons in the terminal.)
 - **A model moved to another route was not told.** After `/model` (or a tenant's or the deployment's
   model changing), the model took the turns above for its own. The first turn on another route now
   opens with a `[model changed]` line naming both; an effort step is not a change of model.

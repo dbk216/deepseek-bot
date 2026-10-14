@@ -569,7 +569,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await c.waitFor((f) => f.type === 'ready')
-  check('instant: ready names the words answered without a turn, and an approval\'s', JSON.stringify(ready?.instant) === JSON.stringify(['그만', 'stop', '사용량']) && JSON.stringify(ready?.approval) === JSON.stringify(['허용', '거부']), JSON.stringify([ready?.instant, ready?.approval]))
+  check('instant: ready names the stop words and the other words answered without a turn', JSON.stringify(ready?.stop) === JSON.stringify(['그만', 'stop']) && JSON.stringify(ready?.instant) === JSON.stringify(['사용량']) && ready?.approval === undefined, JSON.stringify([ready?.stop, ready?.instant, ready?.approval]))
   await c.close()
   await t.done()
 }

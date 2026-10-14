@@ -1036,23 +1036,31 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('picker: esc still closes it, and leaves the text', t.app.picker === null && t.app.editor.text === 'aXb' && picked.length === 0)
 }
 
-// 74. Words the gateway answers without a turn (stop, usage, and an approval's yes or no while one is asked)
-// are not queued behind the running turn: they waited above the input as the next turn's message, and the
-// next real message was shown as its own turn's start in their place.
+// 74. Words the core answers at once, without a turn (a stop, the usage word), are not queued behind the
+// running turn. Queued, the usage word waited as the next turn's message, and when the turn ended the next
+// real message's turn started under it. A stop also withdraws what waits, so that goes back to the box, as
+// with esc. (An approval's yes or no is answered with its buttons here, which send no text.)
 {
   const t = setup()
-  t.app.setInstantWords(['그만', '사용량'], ['허용', '거부'])
+  t.app.setAnsweredAtOnce(['그만'], ['사용량'])
   t.app.turnStarted()
   t.clock.advance(20)
   t.key('사용량!\r'); t.clock.advance(20)
-  check('instant: a usage word while a turn runs is said at once, not queued', t.sent.includes('사용량!') && !/queued/.test(t.term.screen.text()) && t.term.screen.text().includes('› 사용량!'), t.term.screen.text().split('\n').filter((l) => /사용량|queued/.test(l)).join(' | '))
   t.key('다음 질문\r'); t.clock.advance(20)
-  check('instant: a real message still waits behind the turn', /queued/.test(t.term.screen.text()))
-  t.key('허용\r'); t.clock.advance(20)
-  check('instant: an approval word with no approval asked waits too (it starts a turn)', /\b2 queued\b/.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => /queued/.test(l)).join(' | '))
-  t.app.offer('ts-a', [{ id: 'yes', label: 'Allow' }, { id: 'no', label: 'Deny' }])
-  t.key('거부\r'); t.clock.advance(20)
-  check('instant: while an approval is asked, its words are said at once', t.term.screen.text().includes('› 거부'))
+  check('instant: a usage word while a turn runs is said at once; a real message waits', t.sent.includes('사용량!') && /\b1 queued\b/.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => /사용량|queued/.test(l)).join(' | '))
+  // The real message's turn is queued in the gateway (its typing comes), then the running one ends.
+  t.app.turnStarted()
+  t.app.turnEnded()
+  t.clock.advance(20)
+  const users = t.term.screen.text().split('\n').filter((l) => /^ ?› /.test(l)).map((l) => l.trim())
+  check('instant: the turn that starts next is the real message\'s', users.at(-1) === '› 다음 질문' && users.includes('› 사용량!'), JSON.stringify(users))
+  t.app.turnEnded()
+
+  const s = setup()
+  s.app.setAnsweredAtOnce(['그만'], ['사용량'])
+  s.app.turnStarted()
+  s.key('하나 더\r'); s.key('그만\r'); s.clock.advance(20)
+  check('instant: a typed stop is said at once, and what waited goes back to the box', s.sent.includes('그만') && s.app.editor.text === '하나 더' && !/queued/.test(s.term.screen.text()), JSON.stringify(s.app.editor.text))
 }
 
 const failed = results.filter((r) => !r.ok)

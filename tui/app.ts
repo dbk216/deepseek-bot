@@ -157,9 +157,9 @@ export class App {
   private exchanges = 0
   /** Messages sent while a turn runs: shown above the input until their turn starts. */
   private pending: string[] = []
-  /** Words the core answers without a turn, and those that answer an approval while one is asked. */
+  /** Words the core answers at once, without a turn: the stop words, and the others (the usage word). */
+  private stopWords: string[] = []
   private instantWords: string[] = []
-  private approvalWords: string[] = []
   /** The transcript ends in a blank line: the next step needs none of its own. */
   private gapped = true
   /** Candidates for what is being typed (/commands, @files), and the one picked. */
@@ -397,24 +397,32 @@ export class App {
    * answers it after the running turn, and it joins the transcript when its turn starts.
    */
   private said(text: string): void {
-    if (this.status.running && !this.answeredAtOnce(text)) { this.pending.push(text); this.terminal.requestRender(true); return }
+    if (this.status.running) {
+      const atOnce = this.answeredAtOnce(text)
+      if (atOnce === null) { this.pending.push(text); this.terminal.requestRender(true); return }
+      // A stop withdraws what waits, in the gateway: it comes back to the box, as with esc.
+      if (atOnce === 'stop' && this.pending.length > 0) {
+        const back = this.pending.splice(0).join('\n')
+        this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
+      }
+    }
     this.shown(text)
   }
 
-  /** What the gateway says it answers without a turn: stop, usage, and an approval's yes or no. */
-  setInstantWords(instant: string[], approval: string[]): void {
+  /** What the gateway says it answers at once, without a turn. */
+  setAnsweredAtOnce(stop: string[], instant: string[]): void {
+    this.stopWords = stop.map((w) => w.toLowerCase())
     this.instantWords = instant.map((w) => w.toLowerCase())
-    this.approvalWords = approval.map((w) => w.toLowerCase())
   }
 
   /**
    * A word the core answers at once, matched as the core matches it: the whole message, any case, trailing
    * punctuation aside. Queued, it waited above the input as the next turn's message.
    */
-  private answeredAtOnce(text: string): boolean {
+  private answeredAtOnce(text: string): 'stop' | 'instant' | null {
     const said = text.trim().toLowerCase().replace(/[.!?~,\s。！？，～、]+$/u, '')
-    if (said === '') return false
-    return this.instantWords.includes(said) || (this.choice !== null && this.approvalWords.includes(said))
+    if (said === '') return null
+    return this.stopWords.includes(said) ? 'stop' : this.instantWords.includes(said) ? 'instant' : null
   }
 
   private shown(text: string): void {

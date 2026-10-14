@@ -275,9 +275,10 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
           tenant: host.tenantOf?.(`${LOCAL_CHANNEL}:${conversation}`) ?? effective, model: host.model?.(`${LOCAL_CHANNEL}:${conversation}`) ?? '',
           effort: host.effortOf?.(`${LOCAL_CHANNEL}:${conversation}`) ?? null,
           busy: host.busy?.(`${LOCAL_CHANNEL}:${conversation}`) ?? 0,
-          // So the terminal does not queue them behind a running turn: the core answers them at once.
-          instant: [...words(cfg.cancelWords), ...words(cfg.usageWords)],
-          approval: [...words(cfg.approveWords), ...words(cfg.denyWords)],
+          // So the terminal does not queue them behind a running turn: the core answers them at once, whatever
+          // it is doing. (An approval's yes or no only while one is asked, which the terminal cannot know.)
+          stop: words(cfg.cancelWords),
+          instant: words(cfg.usageWords),
         })
         const missed = kept.get(conversation)
         if (missed !== undefined) { kept.delete(conversation); for (const f of missed) send(client, f) }
