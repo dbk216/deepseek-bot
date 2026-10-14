@@ -99,6 +99,40 @@ provider_rows() {   # provider_rows deepseek | opengateway | custom <keyRef> <ba
   esac
 }
 
+# ── Credentials ─────────────────────────────────────────────────────────────
+# The harness resolves a key from the launch environment, then its own store (~/.dsh/.credentials.yaml,
+# where the DeepSeek Harness app saves keys, under `refs`), then <cwd>/.env, then ~/.dsh/.env. A key a
+# harness user already has is theirs: it is used where it is, never asked for again, and the app's store
+# is never written. (<cwd> is the agent home for the gateway, whose launcher sets any .env there aside.)
+
+key_source() {   # key_source <NAME>: env, store or dotenv — where it is set — or nothing. Names only.
+  local name="$1" home="${DSH_HOME:-$HOME/.dsh}"
+  if [ -n "${!name:-}" ]; then echo env; return 0; fi
+  if [ -f "$home/.credentials.yaml" ] && awk -v k="$name" '
+      /^refs:[[:space:]]*$/ { inrefs = 1; next }
+      /^[^[:space:]#]/      { inrefs = 0 }
+      inrefs && $0 ~ ("^[[:space:]]+" k ":") { found = 1 }
+      END { exit !found }' "$home/.credentials.yaml" 2>/dev/null; then echo store; return 0; fi
+  if grep -q "^$name=" "$home/.env" 2>/dev/null; then echo dotenv; return 0; fi
+  return 0
+}
+
+has_key() { [ -n "$(key_source "$1")" ]; }
+
+put_key() {     # put_key <name> <question>: asked only when the harness cannot already resolve it
+  local value='' home="${DSH_HOME:-$HOME/.dsh}"
+  case "$(key_source "$1")" in
+    store) note "$1 is in DeepSeek Harness's own store (~/.dsh/.credentials.yaml) — used as it is"; return 0 ;;
+    dotenv) note "$1 already set"; return 0 ;;
+    env)
+      # The gateway runs under launchd, which does not see this shell: the value goes where it will.
+      printf '%s=%s\n' "$1" "${!1}" >>"$home/.env"
+      note "$1 taken from this shell's environment into $home/.env, for the gateway"; return 0 ;;
+  esac
+  ask_secret value "$2"
+  if [ -n "$value" ]; then printf '%s=%s\n' "$1" "$value" >>"$home/.env"; note "$1 saved"; else note "$1 skipped — add it to $home/.env later"; fi
+}
+
 provider_key() {   # provider_key <provider> [keyRef]: the credential the provider's route reads
   case "$1" in opengateway) echo OG_API_KEY ;; custom) echo "$2" ;; *) echo DEEPSEEK_API_KEY ;; esac
 }
@@ -277,15 +311,8 @@ fi
 DEEPBOT_INSTALLER=1 DSH_BIN="$DSH_BIN" "$DEEPBOT_DIR/init.sh" --home "$DEEPBOT_HOME" --profile "$DEEPBOT_PROFILE" | sed 's/^/    /'
 
 step "platform and credentials"
-note "tokens go to $DSH_HOME/.env (mode 600); the harness reads them, this code never stores them"
+note "a key the harness already has (its store, ~/.dsh/.env, or this shell) is used as it is; a new one goes to $DSH_HOME/.env (mode 600)"
 mkdir -p "$DSH_HOME"; touch "$DSH_HOME/.env"; chmod 600 "$DSH_HOME/.env"
-has_key() { grep -q "^$1=" "$DSH_HOME/.env" 2>/dev/null; }
-put_key() {     # put_key <name> <question> — only when it is not there yet
-  local value=''
-  if has_key "$1"; then note "$1 already set"; return; fi
-  ask_secret value "$2"
-  if [ -n "$value" ]; then printf '%s=%s\n' "$1" "$value" >>"$DSH_HOME/.env"; note "$1 saved"; else note "$1 skipped — add it to $DSH_HOME/.env later"; fi
-}
 case "$platform" in
   slack)    put_key SLACK_BOT_TOKEN "Slack bot token (xoxb-…):"; put_key SLACK_APP_TOKEN "Slack app-level token (xapp-…):" ;;
   telegram) put_key TELEGRAM_BOT_TOKEN "Telegram bot token:" ;;

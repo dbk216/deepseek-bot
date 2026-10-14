@@ -55,8 +55,14 @@ existing DeepSeek install keeps working unchanged. OpenGateway and a custom endp
 
 Web search goes through DeepSeek's API whatever answers the chat (dsh-base's `web-search-deepseek`
 row), so with another provider the installer also offers `DEEPSEEK_API_KEY`, which you may skip; the
-`web_search` tool then fails when called. Keys go to `~/.dsh/.env`. A rerun keeps the profile and
-asks only for a key its route names and `.env` lacks. To change the route later, edit the
+`web_search` tool then fails when called.
+
+A key the harness can already resolve is not asked for. The installer looks, by name only, where the
+harness looks: the launch environment, the DeepSeek Harness app's own store (`~/.dsh/.credentials.yaml`,
+where the app saves keys), then `~/.dsh/.env`. A key in the store is used as it is and the store is
+never written; one only in your shell is copied to `~/.dsh/.env`, because the gateway runs under
+launchd without your shell's environment; a new one goes to `~/.dsh/.env`. A rerun keeps the profile and
+asks only for a key its route names that none of those has. To change the route later, edit the
 `llm-pi-ai` and `agent-default-model` rows of the profile, and restart the gateway; `/model` in `dsh`
 switches one conversation between the models the routes list.
 

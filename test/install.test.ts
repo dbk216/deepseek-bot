@@ -215,6 +215,28 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   }
 }
 
+// Keys the harness already resolves are used, not asked for again: its order is the launch environment, the
+// app's own store (~/.dsh/.credentials.yaml, under `refs`), then ~/.dsh/.env. Names only — no value is read out.
+{
+  const dsh = join(dir, 'chain', '.dsh')
+  mkdirSync(dsh, { recursive: true })
+  writeFileSync(join(dsh, '.credentials.yaml'), 'version: 1\n\nrefs:\n  OG_API_KEY: og-stored-value\n\nrecords:\n  llm-pi-ai/x:\n    kind: grant\n    payload:\n      SLACK_BOT_TOKEN: not-a-ref\n')
+  writeFileSync(join(dsh, '.env'), 'DEEPSEEK_API_KEY=dk-dotenv-value\n')
+  const src = (name, env = {}) => withHelpers(`DSH_HOME="${dsh}"; key_source ${name}`, { DSH_HOME: dsh, ...env }).out
+  check('credentials: a key in the app\'s store is found there', src('OG_API_KEY') === 'store', src('OG_API_KEY'))
+  check('credentials: one only under a record, not a ref, is not taken for a key', src('SLACK_BOT_TOKEN') === '', src('SLACK_BOT_TOKEN'))
+  check('credentials: one in ~/.dsh/.env is found there', src('DEEPSEEK_API_KEY') === 'dotenv')
+  check('credentials: the launch environment comes first', src('OG_API_KEY', { OG_API_KEY: 'from-env' }) === 'env')
+  check('credentials: one set nowhere is not found', src('TELEGRAM_BOT_TOKEN') === '')
+  const stored = withHelpers(`DSH_HOME="${dsh}"; put_key OG_API_KEY "OpenGateway API key:"`, { DSH_HOME: dsh })
+  check('credentials: put_key does not ask for a key the store has, says where it is, and writes nothing', stored.code === 0 && /OG_API_KEY/.test(stored.out) && /credentials\.yaml/.test(stored.out)
+    && !readFileSync(join(dsh, '.env'), 'utf8').includes('OG_API_KEY') && !stored.out.includes('og-stored-value'), stored.out)
+  const fromEnv = withHelpers(`DSH_HOME="${dsh}"; put_key CUSTOM_API_KEY "key:"`, { DSH_HOME: dsh, CUSTOM_API_KEY: 'from-the-shell' })
+  check('credentials: one only in this shell is kept for the gateway (launchd does not see the shell) without being asked or echoed',
+    fromEnv.code === 0 && readFileSync(join(dsh, '.env'), 'utf8').includes('CUSTOM_API_KEY=from-the-shell') && !fromEnv.out.includes('from-the-shell'), fromEnv.out)
+  check('credentials: nothing is written to the app\'s store', readFileSync(join(dsh, '.credentials.yaml'), 'utf8') === 'version: 1\n\nrefs:\n  OG_API_KEY: og-stored-value\n\nrecords:\n  llm-pi-ai/x:\n    kind: grant\n    payload:\n      SLACK_BOT_TOKEN: not-a-ref\n')
+}
+
 rmSync(dir, { recursive: true, force: true })
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
