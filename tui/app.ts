@@ -460,6 +460,11 @@ export class App {
     this.closeAnswer()
     this.posted.clear()
     this.turnBlock = null
+    // Nothing of the old conversation's turn: what waited behind it, its running tool, its exchanges.
+    this.pending = []
+    this.runningTool = null
+    this.exchanges = 0
+    this.gapped = true
     this.choice = null
     this.transcript.clear()
     this.transcript.push(this.banner)

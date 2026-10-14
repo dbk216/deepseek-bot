@@ -400,7 +400,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
     listModels: async (provider) => provider === 'deepseek-official'
       ? [{ provider, id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }]
       : [{ provider, id: 'deepseek/deepseek-v4.1-flash-ultrafast', name: 'Ultrafast' }],
-    resolveModelInfo: async (provider, model) => (model === 'deepseek/deepseek-v4.1-flash-ultrafast' ? { reasoning: { efforts: [{ id: 'high', name: 'High' }, { id: 'low', name: 'Low' }] } } : {}),
+    resolveModelInfo: async (provider, model) => (model === 'deepseek/deepseek-v4.1-flash-ultrafast' ? { reasoning: { efforts: [{ id: 'high', name: 'High' }, { id: 'low', name: 'Low' }], defaultEffort: 'low' } } : {}),
   }
   const t = boot({ services: { llm, agentDefaultModel: { currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }) } } })
   await sleep(100)
@@ -415,6 +415,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   c.send({ type: 'model', provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', effort: 'high' })
   const chosen = await c.waitFor((f) => f.type === 'model')
   check('model: a listed model is taken for this conversation, with an effort it supports', chosen?.current?.provider === 'opengateway' && chosen.current.model === 'deepseek/deepseek-v4.1-flash-ultrafast' && chosen.current.effort === 'high' && chosen.current.efforts.join() === 'high,low', JSON.stringify(chosen))
+  check('model: kept for this conversation in the state file', JSON.stringify(JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`]) === JSON.stringify({ provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'high' }))
   c.send({ type: 'message', text: 'hi' })
   for (let i = 0; i < 100 && t.created.length === 0; i++) await sleep(10)
   check('model: the next turn runs on it, effort included', JSON.stringify(t.created[0]?.agentOptions) === JSON.stringify({ provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'high' }), JSON.stringify(t.created[0]?.agentOptions))
@@ -424,17 +425,48 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   c.send({ type: 'model', provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', effort: 'max' })
   const effort = await c.waitFor((f) => f.type === 'error' && f.code === 'model' && /max/.test(f.message))
   check('model: an effort the model does not take is refused, with the ones it does', effort !== null && /high, low/.test(effort.message), JSON.stringify(effort))
+  // Chosen with no effort: the model's own default, said and stored, so what runs is what is shown.
+  c.send({ type: 'model', provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast' })
+  const bare = await c.waitFor((f) => f.type === 'model' && f.current.effort === 'low')
+  check('model: chosen without an effort, it takes the model\'s default effort, explicitly', bare !== null && JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`]?.reasoningEffort === 'low', JSON.stringify(bare))
   c.send({ type: 'model', provider: null })
   const back = await c.waitFor((f) => f.type === 'model' && f.current.provider === 'deepseek-official')
   check('model: default goes back to the deployment\'s', back !== null && back.current.model === 'deepseek-v4-flash')
-  check('model: kept per conversation in the state file, and cleared again', JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`] === undefined)
+  check('model: and cleared again', JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`] === undefined)
+  await c.close()
+  await t.done()
+}
+
+{
+  // A /model answer belongs to the conversation that asked: switched away before it came, it is not sent
+  // (it used to land on the new conversation, after its ready, and say it ran on the old one's model).
+  const slow = {
+    listProviders: () => [{ id: 'p' }],
+    listModels: async (p) => { await sleep(150); return [{ provider: p, id: 'm2', name: 'M2' }] },
+    resolveModelInfo: async () => ({}),
+  }
+  const t = boot({ services: { llm: slow, agentDefaultModel: { currentSelection: () => ({ provider: 'p', model: 'm1' }) } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  const first = await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'model', provider: 'p', model: 'm2' })
+  c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-b' })
+  await c.waitFor((f) => f.type === 'ready' && f.conversation === 'conv-b')
+  await sleep(400)
+  const after = c.frames.slice(c.frames.findIndex((f) => f.type === 'ready' && f.conversation === 'conv-b'))
+  check('model: an answer for the conversation switched away from is not sent to the new one', !after.some((f) => f.type === 'model'), JSON.stringify(after.map((f) => f.type)))
+  check('model: the choice still holds for the conversation that asked', JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${first.conversation}`]?.model === 'm2')
   await c.close()
   await t.done()
 }
 
 {
   // The deployment's reasoning effort reaches the turn: it used to be read and dropped.
-  const t = boot({ services: { agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'medium' }) } } })
+  const efforts = { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }] } }
+  const llm = { listProviders: () => [{ id: 'og' }], listModels: async (p) => [{ provider: p, id: 'deepseek/deepseek-v4.1-flash-ultrafast', name: 'Ultrafast' }], resolveModelInfo: async () => efforts }
+  const t = boot({ services: { llm, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'medium' }) } } })
   await sleep(100)
   const c = client(join(t.stateDir, 'tui.sock'))
   await c.opened
@@ -443,6 +475,24 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   c.send({ type: 'message', text: 'hi' })
   for (let i = 0; i < 100 && t.created.length === 0; i++) await sleep(10)
   check('effort: the deployment\'s reasoning effort is passed with its model', JSON.stringify(t.created[0]?.agentOptions) === JSON.stringify({ provider: 'og', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'medium' }), JSON.stringify(t.created[0]?.agentOptions))
+  await c.close()
+  await t.done()
+}
+
+{
+  // A deployment effort its model does not take is left out, not sent: the harness refuses a call with one
+  // (UNSUPPORTED_REASONING_EFFORT), and every turn would fail — the template's own by-hand route did this.
+  const llm = { listProviders: () => [{ id: 'gw' }], listModels: async (p) => [{ provider: p, id: 'vendor/model-name', name: 'Model' }], resolveModelInfo: async () => ({}) }
+  const t = boot({ services: { llm, agentDefaultModel: { currentSelection: () => ({ provider: 'gw', model: 'vendor/model-name', reasoningEffort: 'medium' }) } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'message', text: 'hi' })
+  for (let i = 0; i < 100 && t.created.length === 0; i++) await sleep(10)
+  check('effort: one the model does not take is not sent', JSON.stringify(t.created[0]?.agentOptions) === JSON.stringify({ provider: 'gw', model: 'vendor/model-name' }), JSON.stringify(t.created[0]?.agentOptions))
+  check('effort: and that is logged', t.logs.some((l) => /vendor\/model-name takes no reasoning effort "medium"/.test(l)), t.logs.filter((l) => /effort/.test(l)).join(' | ').slice(0, 160))
   await c.close()
   await t.done()
 }

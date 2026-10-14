@@ -51,6 +51,8 @@ interface LocalHost {
   sessionFor?: (key: string) => string | null
   /** The model a conversation's next turn uses (with no key, the deployment's), for the terminal's info line. */
   model?: (key?: string) => string
+  /** A conversation's effort as it stands, without asking the provider (for `ready`). */
+  effortOf?: (key: string) => string | null
   /** A conversation's model and effort, and the efforts that model takes. */
   modelChoice?: (key: string) => Promise<ModelChoice>
   /** Every model the registered providers advertise. */
@@ -237,7 +239,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         send(client, {
           type: 'ready', version: PROTOCOL_VERSION, language, conversation, workspace,
           tenant: host.tenantOf?.(`${LOCAL_CHANNEL}:${conversation}`) ?? effective, model: host.model?.(`${LOCAL_CHANNEL}:${conversation}`) ?? '',
-          effort: (await host.modelChoice?.(`${LOCAL_CHANNEL}:${conversation}`).catch(() => null))?.effort ?? null,
+          effort: host.effortOf?.(`${LOCAL_CHANNEL}:${conversation}`) ?? null,
           busy: host.busy?.(`${LOCAL_CHANNEL}:${conversation}`) ?? 0,
         })
         const missed = kept.get(conversation)
@@ -308,25 +310,33 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
       }
       case 'models': {
         if (client.conversation === null) return refuse(client, 'no-hello', 'say hello first')
-        const key = `${LOCAL_CHANNEL}:${client.conversation}`
+        const asked = client.conversation
+        const key = `${LOCAL_CHANNEL}:${asked}`
         const items = await (host.listModels?.() ?? Promise.resolve([])).catch(() => [])
         const current = await host.modelChoice?.(key).catch(() => null)
+        // An answer for a conversation the terminal has since left is not sent: it would land on the new one.
+        if (client.conversation !== asked) return
         if (items.length === 0 || current == null) return refuse(client, 'models-unavailable', say.noModels)
         send(client, { type: 'models', current, items })
         return
       }
       case 'model': {
         if (client.conversation === null) return refuse(client, 'no-hello', 'say hello first')
-        const key = `${LOCAL_CHANNEL}:${client.conversation}`
+        const asked = client.conversation
+        const key = `${LOCAL_CHANNEL}:${asked}`
         if (host.setModel === undefined || host.modelChoice === undefined) return refuse(client, 'models-unavailable', say.noModels)
         const clear = frame.provider === null
         if (!clear && (typeof frame.provider !== 'string' || typeof frame.model !== 'string' || (frame.effort != null && typeof frame.effort !== 'string'))) return refuse(client, 'bad-frame', 'a model is a provider and a model id')
         const wanted = clear ? null : { provider: frame.provider as string, model: frame.model as string, effort: typeof frame.effort === 'string' ? frame.effort : null }
-        const problem = await host.setModel(key, wanted)
+        let problem: Awaited<ReturnType<NonNullable<LocalHost['setModel']>>>
+        try { problem = await host.setModel(key, wanted) } catch (e) { return refuse(client, 'model', String((e as Error)?.message ?? e).slice(0, 200)) }
+        const current = await host.modelChoice(key)
+        // The choice holds for the conversation that made it; the answer goes only to a terminal still there.
+        if (client.conversation !== asked) return
         if (problem !== null && wanted !== null) {
           return refuse(client, 'model', problem.code === 'unknown-model' ? say.unknownModel(`${wanted.provider}/${wanted.model}`) : say.noSuchEffort(`${wanted.provider}/${wanted.model}`, String(wanted.effort), problem.efforts))
         }
-        send(client, { type: 'model', current: await host.modelChoice(key) })
+        send(client, { type: 'model', current })
         return
       }
       case 'sessions': {

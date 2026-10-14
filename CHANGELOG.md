@@ -26,7 +26,9 @@ the caveat about version numbers is at the bottom.
 
 - **The deployment's reasoning effort reaches a turn.** `agent-default-model`'s `reasoningEffort` was
   read and dropped: only the provider and model were passed to the session. It is passed now, for the
-  deployment's own model (a tenant's or a conversation's model carries its own).
+  deployment's own model and only when that model declares the effort — the harness refuses a call
+  with one it does not, so it is left out and logged instead (a tenant's or a conversation's model
+  carries its own).
 - **A service that fails to install fails the install.** On an account with no
   `~/Library/LaunchAgents`, all four installers failed to write their plist and `install.sh` still
   said "done" and exited 0. The installers make the directory; `install.sh` says which service failed,

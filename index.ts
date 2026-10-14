@@ -284,7 +284,8 @@ export function apply(ctx, config) {
     problems.push('targetChannels: at least one channel ID is required (this guard prevents answering everywhere)')
   }
   if (!['mention', 'all'].includes(cfg.replyMode)) problems.push(`replyMode: must be 'mention' or 'all' (got: ${String(cfg.replyMode)})`)
-  if (languageOf(cfg.language) === 'en' && !/^(en|eng|english)(?:$|[-_.@])/i.test(String(cfg.language).trim())) {
+  // Unset or empty (`language:` with nothing after it) is the default; anything else must be one of the three.
+  if (cfg.language != null && String(cfg.language).trim() !== '' && languageOf(cfg.language) === 'en' && !/^(en|eng|english)(?:$|[-_.@])/i.test(String(cfg.language).trim())) {
     problems.push(`language: must be 'en', 'ko' or 'zh' (got: ${String(cfg.language)})`)
   }
   if (problems.length > 0) throw new Error(`deepbot config error:\n  - ${problems.join('\n  - ')}`)
@@ -1779,7 +1780,7 @@ export function apply(ctx, config) {
     // The same selection is used for create and resume: the conversation's own (/model), else its
     // tenant's, else the deployment's — with the reasoning effort that goes with it.
     const selection = defaultModel.currentSelection()
-    const agentOptions = modelFor(sessionKey)
+    const agentOptions = await turnModel(sessionKey)
     if (agentOptions.provider !== selection.provider || agentOptions.model !== selection.model) {
       log(`${state.models?.[sessionKey] !== undefined ? 'conversation' : `tenant ${tenantOf(sessionKey)}`}: model ${agentOptions.provider}/${agentOptions.model} instead of the deployment default ${selection.provider}/${selection.model}`)
     }
@@ -2099,9 +2100,28 @@ export function apply(ctx, config) {
     return out
   }
 
-  /** The efforts a model takes, [] when it has none or they cannot be read. */
-  async function effortsOf(provider: string, model: string): Promise<string[]> {
-    try { return ((await llm()?.resolveModelInfo(provider, model))?.reasoning?.efforts ?? []).map((e) => e.id) } catch { return [] }
+  /** The efforts a model takes and its default one; none when it has none, or they cannot be read. */
+  async function modelInfo(provider: string, model: string): Promise<{ efforts: string[]; defaultEffort: string | null }> {
+    try {
+      const reasoning = (await llm()?.resolveModelInfo(provider, model))?.reasoning
+      return { efforts: (reasoning?.efforts ?? []).map((e) => e.id), defaultEffort: reasoning?.defaultEffort ?? null }
+    } catch { return { efforts: [], defaultEffort: null } }
+  }
+  const effortsOf = async (provider: string, model: string) => (await modelInfo(provider, model)).efforts
+
+  const effortRefusals = new Set<string>()
+  /**
+   * The route a turn runs on. A conversation's own choice was checked when it was made; the deployment's
+   * or a tenant's effort is sent only when its model takes it — the harness refuses a call with an effort
+   * the model does not declare, so every turn would fail (the template's by-hand route set one).
+   */
+  async function turnModel(key: string): Promise<{ provider: string; model: string; reasoningEffort?: string }> {
+    const route = modelFor(key)
+    if (route.reasoningEffort === undefined || state.models?.[key] !== undefined) return route
+    if ((await effortsOf(route.provider, route.model)).includes(route.reasoningEffort)) return route
+    const said = `${route.provider}/${route.model}:${route.reasoningEffort}`
+    if (!effortRefusals.has(said)) { effortRefusals.add(said); log(`models: ${route.provider}/${route.model} takes no reasoning effort "${route.reasoningEffort}" — sent without one`) }
+    return { provider: route.provider, model: route.model }
   }
 
   /**
@@ -2112,11 +2132,14 @@ export function apply(ctx, config) {
     if (choice === null) { if (state.models) delete state.models[key]; saveStateNow(); return null }
     const known = await listModels()
     if (!known.some((m) => m.provider === choice.provider && m.id === choice.model)) return { code: 'unknown-model' }
-    const efforts = await effortsOf(choice.provider, choice.model)
+    const { efforts, defaultEffort } = await modelInfo(choice.provider, choice.model)
     if (choice.effort != null && !efforts.includes(choice.effort)) return { code: 'effort', efforts }
-    state.models = { ...(state.models ?? {}), [key]: { provider: choice.provider, model: choice.model, ...(choice.effort != null ? { reasoningEffort: choice.effort } : {}) } }
+    // No effort named: the model's own default, stored, so what runs is what the terminal shows. Left
+    // unnamed, the harness keeps the effort the session last ran with on the same route.
+    const effort = choice.effort ?? (defaultEffort !== null && efforts.includes(defaultEffort) ? defaultEffort : null)
+    state.models = { ...(state.models ?? {}), [key]: { provider: choice.provider, model: choice.model, ...(effort !== null ? { reasoningEffort: effort } : {}) } }
     saveStateNow()
-    log(`models: ${key} now runs on ${choice.provider}/${choice.model}${choice.effort != null ? ` (${choice.effort})` : ''}`)
+    log(`models: ${key} now runs on ${choice.provider}/${choice.model}${effort !== null ? ` (${effort})` : ''}`)
     return null
   }
 
@@ -2126,6 +2149,7 @@ export function apply(ctx, config) {
     listConversations: (channel: string) => listConversations(channel),
     conversationHistory: (channel: string, conversation: string) => conversationHistory(channel, conversation),
     model: (key?: string) => { try { return key === undefined ? String(ctx.get('agentDefaultModel')?.currentSelection?.()?.model ?? '') : modelFor(key).model ?? '' } catch { return '' } },
+    effortOf: (key: string) => modelFor(key).reasoningEffort ?? null,
     modelChoice: async (key: string) => { const m = modelFor(key); return { provider: m.provider ?? '', model: m.model ?? '', effort: m.reasoningEffort ?? null, efforts: await effortsOf(m.provider, m.model) } },
     listModels: () => listModels(),
     setModel: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => setModel(key, choice),
