@@ -13,11 +13,19 @@ import './dist-fresh.ts'   // fails loudly on a stale dist
 
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const DSH_HOME = mkdtempSync(join(tmpdir(), 'deepbot-dshhome-'))
 process.env.DSH_HOME = DSH_HOME
+
+// Where the local transport listens for a state directory: <stateDir>/tui.sock, or on Windows the
+// named pipe hashed from that path.
+const listenPath = (stateDir) => process.platform === 'win32'
+  ? `\\\\.\\pipe\\deepbot-tui-${createHash('sha1').update(join(stateDir, 'tui.sock')).digest('hex').slice(0, 12)}`
+  : join(stateDir, 'tui.sock')
 
 const { App } = await import('../dist/tui/app.js')
 const { Connection, discover } = await import('../dist/tui/client.js')
@@ -149,12 +157,16 @@ async function until(predicate, ms = 3000) {
   const fake = join(bin, 'dsh'), seen = join(bin, 'seen')
   writeFileSync(fake, `#!/bin/sh\nprintf '%s\\n' "$@" > '${seen}'\nexit 3\n`)
   chmodSync(fake, 0o755)
-  const main = new URL('../dist/tui/main.js', import.meta.url).pathname
+  const main = fileURLToPath(new URL('../dist/tui/main.js', import.meta.url))
   const forwarded = spawnSync(process.execPath, [main, '--profile', 'agent', '--port', '19500'], { encoding: 'utf8', env: { ...process.env, DSH_BIN: fake } })
   let got = ''
   try { got = readFileSync(seen, 'utf8') } catch { /* not run */ }
-  check('forward: the harness CLI gets the arguments as they were given', got === '--profile\nagent\n--port\n19500\n', JSON.stringify(got))
-  check('forward: and its exit status is dsh\'s', forwarded.status === 3, `status ${forwarded.status} ${forwarded.stderr.trim()}`)
+  // The fake is a #!/bin/sh script, which Windows cannot exec; forwarding to dsh there is not done yet.
+  if (process.platform === 'win32') console.log('  TODO  forward: unverified on Windows (the harness CLI is a .cmd shim spawnSync cannot run without a shell)')
+  else {
+    check('forward: the harness CLI gets the arguments as they were given', got === '--profile\nagent\n--port\n19500\n', JSON.stringify(got))
+    check('forward: and its exit status is dsh\'s', forwarded.status === 3, `status ${forwarded.status} ${forwarded.stderr.trim()}`)
+  }
   const missing = spawnSync(process.execPath, [main, 'gateway'], { encoding: 'utf8', env: { ...process.env, DSH_BIN: join(bin, 'nothing-here') } })
   check('forward: a harness CLI that is not there is said, with how to point at it', missing.status === 127 && missing.stderr.includes('DSH_BIN'), `status ${missing.status} ${missing.stderr.trim()}`)
   rmSync(bin, { recursive: true, force: true })
@@ -219,7 +231,7 @@ async function until(predicate, ms = 3000) {
     onExit: () => {},
   })
   connection = new Connection({
-    socketPath: join(stateDir, 'tui.sock'),
+    socketPath: listenPath(stateDir),
     onFrame: (f) => bind(app, f),
     onState: (state, detail) => {
       if (state === 'connecting') app.setStatus({ connected: false, link: '연결 중…' })
@@ -298,7 +310,7 @@ async function until(predicate, ms = 3000) {
     intercept: (text) => commands.intercept(text),
     backend: { send: (text) => connection.send({ type: 'message', text }), cancel: () => {}, action: () => {} },
   })
-  connection = new Connection({ socketPath: join(stateDir, 'tui.sock'), onFrame: (f) => bind(app, f, commands), onState: () => {}, onRollback: (m) => commands.rolledBack(m) })
+  connection = new Connection({ socketPath: listenPath(stateDir), onFrame: (f) => bind(app, f, commands), onState: () => {}, onRollback: (m) => commands.rolledBack(m) })
   commands = createCommands(app, connection)
   app.start()
   connection.start()

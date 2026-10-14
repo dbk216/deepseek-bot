@@ -1,3 +1,6 @@
 # GitHub's language bar counts TypeScript only; everything else is left out of detection.
 * linguist-detectable=false
 *.ts linguist-detectable=true
+# LF on every checkout: a Windows clone with core.autocrlf turned the profile template into CRLF,
+# which readProfile refuses, and the shell scripts would not run under bash.
+* text=auto eol=lf

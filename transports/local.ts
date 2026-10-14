@@ -6,7 +6,8 @@
  * workspace, recall, approvals and the turn queue without any of it knowing a terminal exists.
  *
  * Only the owner can connect: the socket is created 0600 in the deployment's state directory (or a
- * per-user temporary directory when that path is too long for a socket). A reply that finds no
+ * per-user temporary directory when that path is too long for a socket; a named pipe on Windows,
+ * where only the owner and administrators may open it read-write). A reply that finds no
  * terminal is kept, within a bound, until its conversation reconnects.
  */
 import { createHash, randomUUID } from 'node:crypto'
@@ -458,10 +459,12 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
   /** Where to listen: the state directory, or a short per-user path when that is too long. */
   function chooseSocketPath(): string {
     const wanted = typeof cfg.tuiSocket === 'string' && cfg.tuiSocket !== '' ? cfg.tuiSocket : join(host.stateDir, 'tui.sock')
+    const hash = createHash('sha1').update(wanted).digest('hex').slice(0, 12)
+    // Windows listens only on named pipes; a file path is EACCES. Same hash, so one state dir is one pipe.
+    if (process.platform === 'win32') return wanted.startsWith('\\\\.\\pipe\\') ? wanted : `\\\\.\\pipe\\deepbot-tui-${hash}`
     if (Buffer.byteLength(wanted) <= MAX_SOCKET_PATH) return wanted
     // Shorter, and still the owner's own: beside the discovery files. A shared temporary directory
     // (Linux's /tmp) would let another user take a predictable name first.
-    const hash = createHash('sha1').update(wanted).digest('hex').slice(0, 12)
     const short = [join(discoveryDir(), `${hash}.sock`), join(tmpdir(), `deepbot-tui-${hash}.sock`)].find((p) => Buffer.byteLength(p) <= MAX_SOCKET_PATH) ?? join(tmpdir(), `dbt-${hash}.sock`)
     log(`local: socket path ${wanted} is too long for a unix socket (${Buffer.byteLength(wanted)} bytes); using ${short}`)
     return short
@@ -495,14 +498,16 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
       handlers = h
       if (server !== null) return
       const path = chooseSocketPath()
-      mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+      const pipe = process.platform === 'win32'
+      if (!pipe) mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
       await clearStale(path)
       const s = createServer(attach)
       await new Promise<void>((resolve, reject) => {
         s.once('error', reject)
         s.listen(path, () => { s.off('error', reject); resolve() })
       })
-      chmodSync(path, 0o600)
+      // A pipe has no mode (chmod is EBUSY); its default ACL lets only the owner and admins open it read-write.
+      if (!pipe) chmodSync(path, 0o600)
       s.on('error', (e) => log(`local: server error: ${e.message}`))
       server = s
       socketPath = path

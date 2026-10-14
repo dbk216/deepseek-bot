@@ -13,12 +13,19 @@ import './dist-fresh.ts'   // fails loudly on a stale dist
 
 import { connect } from 'node:net'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 
 // Discovery files go under DSH_HOME; never the real one.
 const DSH_HOME = mkdtempSync(join(tmpdir(), 'deepbot-dshhome-'))
 process.env.DSH_HOME = DSH_HOME
+
+// Where the local transport listens for a state directory: <stateDir>/tui.sock, or on Windows the
+// named pipe hashed from that path.
+const listenPath = (stateDir) => process.platform === 'win32'
+  ? `\\\\.\\pipe\\deepbot-tui-${createHash('sha1').update(join(stateDir, 'tui.sock')).digest('hex').slice(0, 12)}`
+  : join(stateDir, 'tui.sock')
 
 const { apply } = await import('../dist/index.js')
 const { createLocalTransport, LOCAL_CHANNEL } = await import('../dist/transports/local.js')
@@ -77,9 +84,10 @@ function hostFor(stateDir, cfg = {}) {
   const inbound = []
   const actions = []
   await local.connect({ onMessage: (m) => inbound.push(m), onAction: (a) => actions.push(a), onStatus: () => {} })
-  const socketPath = join(stateDir, 'tui.sock')
+  const socketPath = listenPath(stateDir)
   check('local: listens on <stateDir>/tui.sock', existsSync(socketPath) && local.hasSocket() && local.ready())
-  check('local: the socket is owner-only (0600)', (statSync(socketPath).mode & 0o777) === 0o600, (statSync(socketPath).mode & 0o777).toString(8))
+  // A Windows pipe has no mode bits; its default ACL is what keeps other users out.
+  if (process.platform !== 'win32') check('local: the socket is owner-only (0600)', (statSync(socketPath).mode & 0o777) === 0o600, (statSync(socketPath).mode & 0o777).toString(8))
   const discovery = join(DSH_HOME, 'run', 'deepbot-tui', 'default.json')
   const found = existsSync(discovery) ? JSON.parse(readFileSync(discovery, 'utf8')) : null
   check('local: writes a discovery file naming the socket', found?.socket === socketPath && found?.pid === process.pid)
@@ -177,7 +185,9 @@ function hostFor(stateDir, cfg = {}) {
   const long = createLocalTransport(h2)
   await long.connect({ onMessage: () => {}, onStatus: () => {} })
   const where = JSON.parse(readFileSync(join(DSH_HOME, 'run', 'deepbot-tui', 'default.json'), 'utf8')).socket
-  check('long path: falls back to a short per-user path and says so', long.hasSocket() && Buffer.byteLength(where) <= 103 && logs.some((l) => l.includes('too long')), where)
+  // A Windows pipe name has no such limit: the long state directory gets its pipe like any other.
+  if (process.platform === 'win32') check('long path: a pipe, whatever the length', long.hasSocket() && where === listenPath(deep), where)
+  else check('long path: falls back to a short per-user path and says so', long.hasSocket() && Buffer.byteLength(where) <= 103 && logs.some((l) => l.includes('too long')), where)
   await long.close()
   rmSync(stateDir, { recursive: true, force: true })
 }
@@ -286,7 +296,7 @@ function hostFor(stateDir, cfg = {}) {
     transportFactory: (host) => createCompositeTransport([slack, createLocalTransport(host)]),
   })
   await sleep(300)
-  const c = client(join(stateDir, 'tui.sock'))
+  const c = client(listenPath(stateDir))
   let up = true
   await c.opened.catch(() => { up = false })
   if (up) c.send({ type: 'hello', version: PROTOCOL_VERSION })
@@ -294,7 +304,7 @@ function hostFor(stateDir, cfg = {}) {
   check('slack down: and the failure is still retried, not hidden', logs.some((l) => /startup failed .*invalid_auth/.test(l)), logs.filter((l) => /startup/.test(l)).join(' | ').slice(0, 160))
   check('slack down: Slack is not connected while it cannot say who it is', slackConnects === 0, `${slackConnects} connect(s)`)
   // A turn the restart lost in the terminal is reported there, while Slack is still down.
-  const lost = client(join(stateDir, 'tui.sock'))
+  const lost = client(listenPath(stateDir))
   await lost.opened
   lost.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-lost' })
   check('slack down: a terminal turn lost in the restart is still reported', (await lost.waitFor((f) => f.type === 'post' && /A restart cut off/.test(f.text))) !== null)
@@ -372,7 +382,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
 {
   const t = boot()
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await c.waitFor((f) => f.type === 'ready')
@@ -407,7 +417,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   }
   const t = boot({ services: { llm, agentDefaultModel: { currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }) } } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await c.waitFor((f) => f.type === 'ready')
@@ -454,11 +464,11 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   }
   const t = boot({ services: { llm, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm', reasoningEffort: 'low' }) } } })
   await sleep(100)
-  const a = client(join(t.stateDir, 'tui.sock'))
+  const a = client(listenPath(t.stateDir))
   await a.opened
   a.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await a.waitFor((f) => f.type === 'ready')
-  const b = client(join(t.stateDir, 'tui.sock'))
+  const b = client(listenPath(t.stateDir))
   await b.opened
   b.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: ready.conversation })
   await b.waitFor((f) => f.type === 'ready')
@@ -507,7 +517,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   const llm = { listProviders: () => [{ id: 'og' }], listModels: async (p) => [{ provider: p, id: 'm', name: 'M' }], resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }) }
   const t = boot({ services: { llm, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm', reasoningEffort: 'high' }) } } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await c.waitFor((f) => f.type === 'ready')
@@ -523,7 +533,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   const old = Date.now() - 400 * 24 * 3600 * 1000
   const t = boot({ state: { models: { 'tui:never-used': { provider: 'p', model: 'm', at: old } } } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   await c.waitFor((f) => f.type === 'ready')
@@ -545,7 +555,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   }
   const t = boot({ services: { llm: slow, agentDefaultModel: { currentSelection: () => ({ provider: 'p', model: 'm1' }) } } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const first = await c.waitFor((f) => f.type === 'ready')
@@ -566,7 +576,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   const llm = { listProviders: () => [{ id: 'og' }], listModels: async (p) => [{ provider: p, id: 'deepseek/deepseek-v4.1-flash-ultrafast', name: 'Ultrafast' }], resolveModelInfo: async () => efforts }
   const t = boot({ services: { llm, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'medium' }) } } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   await c.waitFor((f) => f.type === 'ready')
@@ -583,7 +593,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   const llm = { listProviders: () => [{ id: 'gw' }], listModels: async (p) => [{ provider: p, id: 'vendor/model-name', name: 'Model' }], resolveModelInfo: async () => ({}) }
   const t = boot({ services: { llm, agentDefaultModel: { currentSelection: () => ({ provider: 'gw', model: 'vendor/model-name', reasoningEffort: 'medium' }) } } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   await c.waitFor((f) => f.type === 'ready')
@@ -599,7 +609,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   // Approvals: buttons where the conversation can show them, words where it cannot.
   const t = boot({ state: { sessions: { 'tui:conv-1': 'tui-aaaa', 'C_ALLOWED:t1': 'slack-bbbb' } } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-1' })
   await c.waitFor((f) => f.type === 'ready')
@@ -669,7 +679,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   })
   await sleep(100)
   const emit = (name, ...args) => { for (const h of listeners[name] ?? []) h(...args) }
-  const c = client(join(stateDir, 'tui.sock'))
+  const c = client(listenPath(stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   await c.waitFor((f) => f.type === 'ready')
@@ -825,7 +835,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   let unload = () => {}
   apply({ get: (n) => stubs[n], effect: (fn) => { unload = fn() }, on: () => () => {}, logger: { info: () => {} } }, { platform: 'local', targetChannels: [LOCAL_CHANNEL], stateDir })
   await sleep(150)
-  const c = client(join(stateDir, 'tui.sock'))
+  const c = client(listenPath(stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'older' })
   await c.waitFor((f) => f.type === 'ready')
@@ -880,7 +890,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   let unload = () => {}
   apply({ get: (n) => stubs[n], effect: (fn) => { unload = fn() }, on: (name, h) => { (listeners[name] ??= []).push(h); return () => {} }, logger: { info: () => {} } }, { platform: 'local', targetChannels: [LOCAL_CHANNEL], stateDir })
   await sleep(150)
-  const c = client(join(stateDir, 'tui.sock'))
+  const c = client(listenPath(stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'c1' })
   const panel = await c.waitFor((f) => f.type === 'panel', 3000)
@@ -949,7 +959,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   apply({ get: (n) => stubs[n], effect: (fn) => { unload = fn() }, on: (name, h, opts) => { (listeners[name] ??= []).push(h); options[name] = opts; return () => {} }, logger: { info: () => {} } },
     { platform: 'local', targetChannels: [LOCAL_CHANNEL], stateDir, progressAfterMs: 50 })
   await sleep(150)
-  const c = client(join(stateDir, 'tui.sock'))
+  const c = client(listenPath(stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await c.waitFor((f) => f.type === 'ready')
@@ -1036,13 +1046,13 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   apply({ get: (n) => stubs[n], effect: (fn) => { unload = fn() }, on: () => () => {}, logger: { info: () => {} } },
     { platform: 'local', targetChannels: [LOCAL_CHANNEL], stateDir, workingIndicator: false, autoIndex: false })
   await sleep(150)
-  const a = client(join(stateDir, 'tui.sock'))
+  const a = client(listenPath(stateDir))
   await a.opened
   a.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await a.waitFor((f) => f.type === 'ready')
   a.send({ type: 'message', text: '느린 일' })
   for (let i = 0; i < 100 && made === 0; i++) await sleep(10)
-  const b = client(join(stateDir, 'tui.sock'))
+  const b = client(listenPath(stateDir))
   await b.opened
   b.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: ready.conversation })
   const midTurn = await b.waitFor((f) => f.type === 'ready')
@@ -1090,15 +1100,15 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   }
   let unload = boot()
   await sleep(150)
-  const a = client(join(stateDir, 'tui.sock'))
+  const a = client(listenPath(stateDir))
   await a.opened
   a.send({ type: 'hello', version: PROTOCOL_VERSION, tenant: 'acme' })
   const acmeReady = await a.waitFor((f) => f.type === 'ready')
-  check('tenant: the first hello may choose a tenant', acmeReady?.tenant === 'acme' && acmeReady.workspace.endsWith('/tenants/acme') && acmeReady.model === 'fake-model', JSON.stringify(acmeReady))
+  check('tenant: the first hello may choose a tenant', acmeReady?.tenant === 'acme' && acmeReady.workspace.endsWith(join(sep, 'tenants', 'acme')) && acmeReady.model === 'fake-model', JSON.stringify(acmeReady))
   const acme = acmeReady.conversation
   a.send({ type: 'message', text: 'acme 일' })
   for (let i = 0; i < 100 && created.length === 0; i++) await sleep(10)
-  const b = client(join(stateDir, 'tui.sock'))
+  const b = client(listenPath(stateDir))
   await b.opened
   b.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: acme })
   const midTurn = await b.waitFor((f) => f.type === 'ready')
@@ -1119,21 +1129,21 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   await sleep(100)
   unload = boot()
   await sleep(150)
-  const c = client(join(stateDir, 'tui.sock'))
+  const c = client(listenPath(stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: acme })
   const resumed = await c.waitFor((f) => f.type === 'ready')
-  check('tenant: after a restart, a plain resume is back in its tenant', resumed?.tenant === 'acme' && resumed.workspace.endsWith('/tenants/acme') && resumed.busy === 0, JSON.stringify(resumed))
+  check('tenant: after a restart, a plain resume is back in its tenant', resumed?.tenant === 'acme' && resumed.workspace.endsWith(join(sep, 'tenants', 'acme')) && resumed.busy === 0, JSON.stringify(resumed))
   c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: acme, tenant: 'globex' })
   const moved = await c.waitFor((f) => f.type === 'error' && f.code === 'tenant-mismatch')
   check('tenant: asking to move it to another tenant is refused, marked as the answer to that hello', moved?.hello === true, JSON.stringify(moved))
 
   // A tenant chosen by one terminal, not yet recorded, is not erased by another's plain hello.
-  const d = client(join(stateDir, 'tui.sock'))
+  const d = client(listenPath(stateDir))
   await d.opened
   d.send({ type: 'hello', version: PROTOCOL_VERSION, tenant: 'globex' })
   const chosen = await d.waitFor((f) => f.type === 'ready')
-  const e2 = client(join(stateDir, 'tui.sock'))
+  const e2 = client(listenPath(stateDir))
   await e2.opened
   e2.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: chosen.conversation })
   const joined = await e2.waitFor((f) => f.type === 'ready')
@@ -1191,7 +1201,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   apply({ get: (n) => stubs[n], effect: (fn) => { unload = fn() }, on: () => () => {}, logger: { info: () => {} } },
     { platform: 'local', targetChannels: [LOCAL_CHANNEL], stateDir, tenantIsolation: true, autoIndex: false })
   await sleep(150)
-  const c = client(join(stateDir, 'tui.sock'))
+  const c = client(listenPath(stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION, tenant: 'acme' })
   await c.waitFor((f) => f.type === 'ready')
@@ -1226,21 +1236,21 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   apply({ get: (n) => stubs[n], effect: (fn) => { unload = fn() }, on: () => () => {}, logger: { info: () => {} } },
     { platform: 'local', targetChannels: [LOCAL_CHANNEL], stateDir, tenantIsolation: true, tenantDefault: '한국어 팀', autoIndex: false, language: 'ko' })
   await sleep(150)
-  const c = client(join(stateDir, 'tui.sock'))
+  const c = client(listenPath(stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await c.waitFor((f) => f.type === 'ready')
-  check('default tenant: a terminal that asks for none is in the configured default, Korean name and all', ready?.tenant === '한국어 팀' && ready.workspace.endsWith('/tenants/한국어 팀'), JSON.stringify(ready))
+  check('default tenant: a terminal that asks for none is in the configured default, Korean name and all', ready?.tenant === '한국어 팀' && ready.workspace.endsWith(join(sep, 'tenants', '한국어 팀')), JSON.stringify(ready))
   check('language: ready names the deployment\'s language, for the terminal to speak', ready?.language === 'ko', String(ready?.language))
   c.send({ type: 'message', text: '안녕' })
   for (let i = 0; i < 100 && created.length === 0; i++) await sleep(10)
-  check('default tenant: its turn runs there', String(created[0]?.meta?.cwd ?? '').endsWith('/tenants/한국어 팀'), String(created[0]?.meta?.cwd))
+  check('default tenant: its turn runs there', String(created[0]?.meta?.cwd ?? '').endsWith(join(sep, 'tenants', '한국어 팀')), String(created[0]?.meta?.cwd))
   await sleep(700)
   check('default tenant: and that is what is recorded for the conversation', JSON.parse(readFileSync(join(stateDir, 'sessions.json'), 'utf8')).tenantOf?.[`tui:${ready.conversation}`] === '한국어 팀')
   await c.close()
   // A terminal sends back the tenant the gateway named: a reconnect and /new must be let in with it.
   const frames = []
-  const conn = new Connection({ socketPath: join(stateDir, 'tui.sock'), conversation: ready.conversation, onFrame: (f) => frames.push(f), onState: () => {} })
+  const conn = new Connection({ socketPath: listenPath(stateDir), conversation: ready.conversation, onFrame: (f) => frames.push(f), onState: () => {} })
   conn.start()
   const readies = async (n) => { for (let i = 0; i < 200 && frames.filter((f) => f.type === 'ready').length < n; i++) await sleep(10); return frames.filter((f) => f.type === 'ready').length >= n }
   await readies(1)
@@ -1250,7 +1260,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   check('default tenant: and /new in it is too', await readies(3) && !frames.some((f) => f.type === 'error'), JSON.stringify(frames.filter((f) => f.type === 'error')))
   conn.close()
   // A name that is a path is no tenant: 'x/../y' would be another tenant's workspace under a second name.
-  const d = client(join(stateDir, 'tui.sock'))
+  const d = client(listenPath(stateDir))
   await d.opened
   d.send({ type: 'hello', version: PROTOCOL_VERSION, tenant: 'x/../acme' })
   const pathRefusal = await d.waitFor((f) => f.type === 'error' || f.type === 'ready')
@@ -1338,7 +1348,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   let unload = () => {}
   apply({ get: (n) => stubs[n], effect: (fn) => { unload = fn() }, on: () => () => {}, logger: { info: () => {} } }, { platform: 'local', targetChannels: [LOCAL_CHANNEL], stateDir, progressAfterMs: 50 })
   await sleep(150)
-  const c = client(join(stateDir, 'tui.sock'))
+  const c = client(listenPath(stateDir))
   let connected = true
   await c.opened.catch(() => { connected = false })
   check('tui-only: platform "local" boots without any Slack credentials', connected)
@@ -1352,7 +1362,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   }
   unload()
   await sleep(50)
-  check('tui-only: unloading the plugin removes the socket', !existsSync(join(stateDir, 'tui.sock')))
+  check('tui-only: unloading the plugin removes the socket', !existsSync(listenPath(stateDir)))
   rmSync(stateDir, { recursive: true, force: true })
 }
 

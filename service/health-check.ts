@@ -25,6 +25,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 const args = process.argv.slice(2)
 
@@ -34,8 +35,8 @@ const args = process.argv.slice(2)
 if (!args.includes('--status') && !args.includes('--no-rotate')) {
   // Next to this script (the runtime copy that install-health.sh makes), or the repository's own, two
   // levels up from the build in dist/service/.
-  const beside = new URL('./rotate-logs.sh', import.meta.url).pathname
-  const script = existsSync(beside) ? beside : new URL('../../service/rotate-logs.sh', import.meta.url).pathname
+  const beside = fileURLToPath(new URL('./rotate-logs.sh', import.meta.url))
+  const script = existsSync(beside) ? beside : fileURLToPath(new URL('../../service/rotate-logs.sh', import.meta.url))
   // The plugin's log, and the service logs that moved out of the agent's home — the gateway's own
   // stdout grows with every start and nothing else empties it.
   for (const dir of [null, join(homedir(), '.dsh', 'service', 'logs')]) {
