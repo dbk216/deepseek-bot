@@ -562,6 +562,19 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
 }
 
 {
+  // The words the core answers without a turn reach the terminal, so it does not queue them behind one.
+  const t = boot({ config: { cancelWords: ['그만', 'stop'], usageWords: ['사용량'], approveWords: ['허용'], denyWords: ['거부'] } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  const ready = await c.waitFor((f) => f.type === 'ready')
+  check('instant: ready names the words answered without a turn, and an approval\'s', JSON.stringify(ready?.instant) === JSON.stringify(['그만', 'stop', '사용량']) && JSON.stringify(ready?.approval) === JSON.stringify(['허용', '거부']), JSON.stringify([ready?.instant, ready?.approval]))
+  await c.close()
+  await t.done()
+}
+
+{
   // Chosen with no effort, on the route it already runs on, by a model that declares efforts but no default
   // (the live OpenGateway route): it keeps the effort it runs with, instead of storing none while the
   // harness goes on reusing it and the terminal says "the model's default".

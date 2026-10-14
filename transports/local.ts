@@ -205,6 +205,8 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
     return out
   }
 
+  const words = (list: unknown): string[] => (Array.isArray(list) ? list.filter((w): w is string => typeof w === 'string' && w.trim() !== '') : [])
+
   /** To every terminal on the conversation now, and nothing kept for later. */
   function toConversation(conversation: string, frame: ServerFrame): void {
     for (const c of clients) if (c.conversation === conversation) send(c, frame)
@@ -273,6 +275,9 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
           tenant: host.tenantOf?.(`${LOCAL_CHANNEL}:${conversation}`) ?? effective, model: host.model?.(`${LOCAL_CHANNEL}:${conversation}`) ?? '',
           effort: host.effortOf?.(`${LOCAL_CHANNEL}:${conversation}`) ?? null,
           busy: host.busy?.(`${LOCAL_CHANNEL}:${conversation}`) ?? 0,
+          // So the terminal does not queue them behind a running turn: the core answers them at once.
+          instant: [...words(cfg.cancelWords), ...words(cfg.usageWords)],
+          approval: [...words(cfg.approveWords), ...words(cfg.denyWords)],
         })
         const missed = kept.get(conversation)
         if (missed !== undefined) { kept.delete(conversation); for (const f of missed) send(client, f) }

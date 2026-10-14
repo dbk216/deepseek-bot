@@ -157,6 +157,9 @@ export class App {
   private exchanges = 0
   /** Messages sent while a turn runs: shown above the input until their turn starts. */
   private pending: string[] = []
+  /** Words the core answers without a turn, and those that answer an approval while one is asked. */
+  private instantWords: string[] = []
+  private approvalWords: string[] = []
   /** The transcript ends in a blank line: the next step needs none of its own. */
   private gapped = true
   /** Candidates for what is being typed (/commands, @files), and the one picked. */
@@ -394,8 +397,24 @@ export class App {
    * answers it after the running turn, and it joins the transcript when its turn starts.
    */
   private said(text: string): void {
-    if (this.status.running) { this.pending.push(text); this.terminal.requestRender(true); return }
+    if (this.status.running && !this.answeredAtOnce(text)) { this.pending.push(text); this.terminal.requestRender(true); return }
     this.shown(text)
+  }
+
+  /** What the gateway says it answers without a turn: stop, usage, and an approval's yes or no. */
+  setInstantWords(instant: string[], approval: string[]): void {
+    this.instantWords = instant.map((w) => w.toLowerCase())
+    this.approvalWords = approval.map((w) => w.toLowerCase())
+  }
+
+  /**
+   * A word the core answers at once, matched as the core matches it: the whole message, any case, trailing
+   * punctuation aside. Queued, it waited above the input as the next turn's message.
+   */
+  private answeredAtOnce(text: string): boolean {
+    const said = text.trim().toLowerCase().replace(/[.!?~,\s。！？，～、]+$/u, '')
+    if (said === '') return false
+    return this.instantWords.includes(said) || (this.choice !== null && this.approvalWords.includes(said))
   }
 
   private shown(text: string): void {

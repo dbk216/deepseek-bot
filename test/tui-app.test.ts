@@ -1036,6 +1036,25 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('picker: esc still closes it, and leaves the text', t.app.picker === null && t.app.editor.text === 'aXb' && picked.length === 0)
 }
 
+// 74. Words the gateway answers without a turn (stop, usage, and an approval's yes or no while one is asked)
+// are not queued behind the running turn: they waited above the input as the next turn's message, and the
+// next real message was shown as its own turn's start in their place.
+{
+  const t = setup()
+  t.app.setInstantWords(['그만', '사용량'], ['허용', '거부'])
+  t.app.turnStarted()
+  t.clock.advance(20)
+  t.key('사용량!\r'); t.clock.advance(20)
+  check('instant: a usage word while a turn runs is said at once, not queued', t.sent.includes('사용량!') && !/queued/.test(t.term.screen.text()) && t.term.screen.text().includes('› 사용량!'), t.term.screen.text().split('\n').filter((l) => /사용량|queued/.test(l)).join(' | '))
+  t.key('다음 질문\r'); t.clock.advance(20)
+  check('instant: a real message still waits behind the turn', /queued/.test(t.term.screen.text()))
+  t.key('허용\r'); t.clock.advance(20)
+  check('instant: an approval word with no approval asked waits too (it starts a turn)', /\b2 queued\b/.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => /queued/.test(l)).join(' | '))
+  t.app.offer('ts-a', [{ id: 'yes', label: 'Allow' }, { id: 'no', label: 'Deny' }])
+  t.key('거부\r'); t.clock.advance(20)
+  check('instant: while an approval is asked, its words are said at once', t.term.screen.text().includes('› 거부'))
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)
