@@ -18,6 +18,12 @@ the caveat about version numbers is at the bottom.
 
 ### Changed
 
+- **A service that fails to install fails the install.** On an account with no
+  `~/Library/LaunchAgents`, all four installers failed to write their plist and `install.sh` still
+  said "done" and exited 0. The installers make the directory; `install.sh` says which service failed,
+  counts the gateway too (its failure was swallowed), and ends with an error when any did. Its output
+  now holds back only lines that carry a credential (`token=`, a Slack token, a bearer header, an API
+  key), not every line with the word "token", which had cut the web UI's sentence in half.
 - **The terminal shows a turn's parts apart.** What the person said is on a band; answers start at
   a `●`; a tool call's `●` blinks while it runs and turns green or red with its result, and stops
   blinking when the turn ends without one; thinking is sky blue, its label swept by a light while it

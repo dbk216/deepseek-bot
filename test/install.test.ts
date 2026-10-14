@@ -9,7 +9,7 @@
  * Run: node test/install.test.ts
  */
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -141,6 +141,33 @@ for (const [installer, built, copy, source] of [
   writeFileSync(join(runtime, copy), 'the copy already deployed\n')
   const stale = copyStep()
   check(`${installer}: a build older than ${source} is refused, and the deployed copy is left as it was`, stale.code !== 0 && stale.out.includes('older than') && stale.out.includes('pnpm run build') && readFileSync(join(runtime, copy), 'utf8') === 'the copy already deployed\n', stale.out)
+}
+
+// The services. A fresh account may have no ~/Library/LaunchAgents: every installer used to write its plist
+// into it unmade, fail, and leave install.sh to say "done".
+for (const installer of ['service/install-service.sh', 'service/install-health.sh', 'watch/install-watch.sh', 'recall/install-refresh.sh']) {
+  const text = readFileSync(new URL(`../${installer}`, import.meta.url), 'utf8')
+  const made = text.indexOf('mkdir -p "$(dirname "$PLIST")"')
+  const written = text.indexOf('cat > "$PLIST"')
+  check(`${installer}: makes the LaunchAgents directory before writing the plist`, made !== -1 && written !== -1 && made < written)
+}
+{
+  const bin = join(dir, 'fake-installers')
+  mkdirSync(bin, { recursive: true })
+  const script = (name, body) => { writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`); chmodSync(join(bin, name), 0o755); return join(bin, name) }
+  const failing = script('fails.sh', `echo "plist written"\necho "web UI token=abc123secret"\necho " The web UI is at http://127.0.0.1:19500 — its auth token is printed"\nexit 3`)
+  const passing = script('passes.sh', 'echo fine')
+  const run = (line) => withHelpers(`SERVICES_FAILED=0; ${line}; echo "failed=$SERVICES_FAILED"`)
+  const shown = run(`service_install "gateway service" "${failing}" show`)
+  check('services: a failing installer is said to have failed, and counted', shown.out.includes('gateway service: fails.sh failed') && shown.out.endsWith('failed=1'), shown.out)
+  check('services: its output is shown, the line with a credential in it is not', shown.out.includes('plist written') && !shown.out.includes('abc123secret'), shown.out)
+  check('services: a line that only mentions a token is kept, so the sentence is whole', shown.out.includes('its auth token is printed'), shown.out)
+  const quiet = run(`service_install "watch runner" "${passing}"`)
+  check('services: one that works is said to be installed, and not counted', quiet.out.includes('watch runner installed') && quiet.out.endsWith('failed=0') && !quiet.out.includes('fine'), quiet.out)
+  const summary = withHelpers('SERVICES_FAILED=2; services_done')
+  check('services: with any of them failed, the install ends in failure and says how many', summary.code !== 0 && summary.out.includes('2 service'), summary.out)
+  check('services: with none failed, it ends well', withHelpers('SERVICES_FAILED=0; services_done').code === 0)
+  check('services: install.sh stops at a failed service instead of saying done', /services_done \|\| return 1\n\nstep "done"/.test(readFileSync(INSTALL, 'utf8')))
 }
 
 rmSync(dir, { recursive: true, force: true })

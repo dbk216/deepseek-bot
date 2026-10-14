@@ -107,6 +107,33 @@ check_dsh_home() {
   }
 }
 
+step() { printf '%s==>%s %s\n' "${blue:-}" "${off:-}" "$*"; }
+note() { printf '    %s%s%s\n' "${dim:-}" "$*" "${off:-}"; }
+die()  { printf '%serror:%s %s\n' "${red:-}" "${off:-}" "$*" >&2; exit 1; }
+
+# A line that may carry a credential: the web UI's ?token=, a Slack token, a bearer header, an API key.
+# Only those are held back — a sentence that merely says "token" is not one, and used to be cut in half.
+without_secrets() { grep -v -i -E 'token=|token:|xox[a-z]-|xapp-|bearer |sk-[a-z0-9]' || true; }
+
+SERVICES_FAILED=0
+service_install() {   # service_install <what> <installer> [show]: one service; a failure is said and counted
+  local status=0
+  if [ "${3:-}" = show ]; then
+    "$2" 2>&1 | without_secrets | sed 's/^/    /' || status=${PIPESTATUS[0]}
+  else
+    "$2" >/dev/null 2>&1 || status=$?
+  fi
+  if [ "$status" -eq 0 ]; then note "$1 installed"
+  else note "$1: $(basename "$2") failed — run it by hand to see why"; SERVICES_FAILED=$((SERVICES_FAILED + 1)); fi
+}
+
+services_done() {     # the end of the services step: a failed one fails the install
+  [ "$SERVICES_FAILED" -eq 0 ] && return 0
+  step "done, but $SERVICES_FAILED service(s) did not install"
+  note "the bot is not running as a service until they do; rerun the line above after fixing what they said"
+  return 1
+}
+
 main() {
 
 DEEPBOT_DIR="${DEEPBOT_DIR:-$HOME/.deepbot}"
@@ -132,10 +159,6 @@ ${blue}
          ▀▀▀▀▀▀
 ${off}
 BANNER
-
-step() { printf '%s==>%s %s\n' "$blue" "$off" "$*"; }
-note() { printf '    %s%s%s\n' "$dim" "$*" "$off"; }
-die()  { printf '%serror:%s %s\n' "$red" "$off" "$*" >&2; exit 1; }
 
 # Prompts read the terminal, not stdin: under `curl … | bash` stdin is this script.
 TTY=''
@@ -241,10 +264,11 @@ fi
 
 step "services"
 export DEEPBOT_REPO="$DEEPBOT_DIR" DEEPBOT_NODE="$(command -v node)"
-"$DEEPBOT_DIR/service/install-service.sh" 2>&1 | sed 's/^/    /' | grep -v -i 'token' || true
-"$DEEPBOT_DIR/service/install-health.sh" >/dev/null 2>&1 && note "health probe installed" || note "health probe: install-health.sh failed — run it by hand to see why"
-"$DEEPBOT_DIR/watch/install-watch.sh" >/dev/null 2>&1 && note "watch runner installed" || note "watch runner: install-watch.sh failed — run it by hand to see why"
-"$DEEPBOT_DIR/recall/install-refresh.sh" >/dev/null 2>&1 && note "recall index job installed" || note "recall index job: install-refresh.sh failed — run it by hand to see why"
+service_install "gateway service" "$DEEPBOT_DIR/service/install-service.sh" show
+service_install "health probe" "$DEEPBOT_DIR/service/install-health.sh"
+service_install "watch runner" "$DEEPBOT_DIR/watch/install-watch.sh"
+service_install "recall index job" "$DEEPBOT_DIR/recall/install-refresh.sh"
+services_done || return 1
 
 step "done"
 node "$DSH_HOME/service/health-check.mjs" --status 2>/dev/null | sed 's/^/    /' || true

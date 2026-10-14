@@ -61,6 +61,8 @@ DEEPBOT_HOME="$AGENT_HOME" "$NODE" "$SCRIPT_DIR/../dist/recall/deepbot-recall.js
 
 # launchd has no cron-style interval for agents, so the job runs the indexer and
 # re-schedules itself by exiting; StartInterval keeps it periodic.
+# A fresh account may have no LaunchAgents directory yet.
+mkdir -p "$(dirname "$PLIST")"
 cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

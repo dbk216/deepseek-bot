@@ -63,6 +63,8 @@ echo "=== installing the deepbot watch runner ==="
 [ -x "$NODE" ] || { echo "❌ node not found: $NODE"; exit 1; }
 copy_runtime || exit 1
 
+# A fresh account may have no LaunchAgents directory yet.
+mkdir -p "$(dirname "$PLIST")"
 cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
