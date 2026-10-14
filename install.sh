@@ -146,17 +146,49 @@ profile_key() {
   found="$(awk '
     function bare(s) { sub(/[[:space:]]*#.*$/, "", s); gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); gsub(/^["\047]|["\047]$/, "", s); return s }
     function indent(s) { match(s, /^[[:space:]]*/); return RLENGTH }
+    function row(s, name) { return s ~ ("^- id:[[:space:]]*[\"\047]?" name "[\"\047]?[[:space:]]*(#.*)?$") }
+    /^[[:space:]]*(#.*)?$/ { next }
     FNR == NR {
-      if ($0 ~ /^- /) dm = ($0 ~ /^- id: agent-default-model[[:space:]]*(#.*)?$/)
-      else if (dm && $0 ~ /^[[:space:]]+provider:/) { v = $0; sub(/^[[:space:]]+provider:/, "", v); want = bare(v) }
+      # Every top-level "- " starts another row; only the default model row'"'"'s own provider counts, not one nested deeper.
+      if ($0 ~ /^- /) { dm = row($0, "agent-default-model"); cfg = -1 }
+      else if (dm && cfg < 0 && $0 ~ /^[[:space:]]+config:[[:space:]]*(#.*)?$/) cfg = indent($0)
+      else if (dm && cfg >= 0 && want == "" && indent($0) == cfg + 2 && $0 ~ /^[[:space:]]+provider:/) { v = $0; sub(/^[[:space:]]+provider:/, "", v); want = bare(v) }
       next
     }
-    /^- / { pi = ($0 ~ /^- id: llm-pi-ai[[:space:]]*(#.*)?$/); prov = -1; route = ""; next }
+    /^- / { pi = row($0, "llm-pi-ai"); prov = -1; route = ""; next }
     pi && /^[[:space:]]+providers:[[:space:]]*(#.*)?$/ { prov = indent($0); next }
-    pi && prov >= 0 && indent($0) == prov + 2 && $0 ~ /^[[:space:]]+["\047]?[A-Za-z0-9_.-]+["\047]?:[[:space:]]*(#.*)?$/ { r = $0; sub(/:[[:space:]]*(#.*)?$/, "", r); route = bare(r); next }
+    # A line at the routes'"'"' indent names the next route, or, if it is not a plain key, ends the one before.
+    pi && prov >= 0 && indent($0) == prov + 2 {
+      if ($0 ~ /^[[:space:]]+["\047]?[A-Za-z0-9_.-]+["\047]?:[[:space:]]*(#.*)?$/) { r = $0; sub(/:[[:space:]]*(#.*)?$/, "", r); route = bare(r) } else route = ""
+      next
+    }
     pi && route != "" && route == want && $0 ~ /^[[:space:]]+apiKeyEnv:/ { v = $0; sub(/^[[:space:]]+apiKeyEnv:/, "", v); print bare(v); exit }
   ' "$1" "$1" 2>/dev/null || true)"
   printf '%s\n' "${found:-DEEPSEEK_API_KEY}"
+}
+
+# Install the checkout's dependencies and build it. pnpm when it is there, from the lockfile the checkout
+# pins (npm does not read it); npm otherwise, without writing a package-lock.json of its own. Neither runs
+# install scripts: the checkout's own prepare would build it a second time. pnpm writes its errors, and its
+# prompts, to stdout: its output is kept and shown when it fails (it is told not to ask before removing a
+# node_modules from another pnpm), and npm is tried after it.
+build_checkout() {   # build_checkout <checkout>
+  local log
+  log="$(mktemp)"
+  if command -v pnpm >/dev/null; then
+    if (cd "$1" && pnpm install --frozen-lockfile --ignore-scripts --config.confirmModulesPurge=false) >"$log" 2>&1; then
+      (cd "$1" && npm run --silent build) >"$log" 2>&1 || { sed 's/^/      /' "$log" | tail -n 30 >&2; rm -f "$log"; die "the build failed (its output above)"; }
+      rm -f "$log"
+      return 0
+    fi
+    note "pnpm could not install; trying npm. pnpm said:"
+    tail -n 20 "$log" | sed 's/^/      /'
+  fi
+  if ! (cd "$1" && npm install --no-package-lock --ignore-scripts --no-audit --no-fund --loglevel=error) >"$log" 2>&1; then
+    sed 's/^/      /' "$log" | tail -n 30 >&2; rm -f "$log"; die "npm could not install the dependencies (its output above)"
+  fi
+  (cd "$1" && npm run --silent build) >"$log" 2>&1 || { sed 's/^/      /' "$log" | tail -n 30 >&2; rm -f "$log"; die "the build failed (its output above)"; }
+  rm -f "$log"
 }
 
 set_profile_language() {   # set_profile_language <patch> <en|ko|zh>
@@ -281,13 +313,7 @@ else
 fi
 
 step "building"
-# pnpm when it is there: the checkout pins its versions in pnpm-lock.yaml, which npm does not read. npm
-# otherwise, without writing a package-lock.json of its own into the checkout.
-if command -v pnpm >/dev/null; then
-  ( cd "$DEEPBOT_DIR" && pnpm install --frozen-lockfile --silent >/dev/null && npm run --silent build )
-else
-  ( cd "$DEEPBOT_DIR" && npm install --no-package-lock --no-audit --no-fund --loglevel=error >/dev/null && npm run --silent build )
-fi
+build_checkout "$DEEPBOT_DIR"
 [ -f "$DEEPBOT_DIR/dist/index.js" ] || die "the build produced no dist/index.js"
 note "dist/ ready"
 

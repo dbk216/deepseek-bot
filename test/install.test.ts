@@ -87,13 +87,52 @@ check('a DSH_HOME elsewhere is refused before anything is written', withHelpers(
 // stale file, is a probe that does not match the checkout. Each installer is sourced from a copy of the
 // repository's layout, so "no build" is real and the copy lands in scratch directories.
 const script = readFileSync(INSTALL, 'utf8')
-const build = script.indexOf('npm run --silent build')
-// npm does not read pnpm-lock.yaml and wrote a package-lock.json into the checkout; and init.sh built
-// again what install.sh had just built. Read from the scripts: neither is run by this suite.
-check('install.sh installs with the lockfile when pnpm is there, and leaves no package-lock.json otherwise',
-  /pnpm install --frozen-lockfile/.test(script) && /npm install --no-package-lock/.test(script))
-const initScript = readFileSync(join(dirname(INSTALL), 'init.sh'), 'utf8')
-check('init.sh does not build again what install.sh built', /if \[ "\$\{DEEPBOT_INSTALLER:-\}" = 1 \] && \[ -f "\$REPO_DIR\/dist\/index\.js" \]; then/.test(initScript) && /DEEPBOT_INSTALLER=1 [^\n]*init\.sh/.test(script))
+const build = script.indexOf('build_checkout "$DEEPBOT_DIR"')
+// The build, with stand-ins for pnpm and npm. npm does not read pnpm-lock.yaml and wrote a package-lock.json
+// into the checkout; pnpm writes its errors and its prompts to stdout, which the installer threw away, so a
+// failed install ended in nothing; and the checkout's prepare script built it a second time.
+{
+  const bin = join(dir, 'fake-pm')
+  const checkout = join(dir, 'fake-checkout')
+  const calls = join(dir, 'pm-calls')
+  const build = (pnpm: string | null, npm: string) => {
+    rmSync(bin, { recursive: true, force: true }); mkdirSync(bin, { recursive: true })
+    rmSync(calls, { force: true }); rmSync(join(checkout, 'dist'), { recursive: true, force: true }); mkdirSync(checkout, { recursive: true })
+    const stub = (name, body) => { writeFileSync(join(bin, name), `#!/bin/bash\necho "${name} $*" >> '${calls}'\n${body}\n`); chmodSync(join(bin, name), 0o755) }
+    if (pnpm !== null) stub('pnpm', pnpm)
+    stub('npm', `if [ "$1" = run ]; then mkdir -p dist && touch dist/index.js; exit 0; fi\n${npm}`)
+    const r = withHelpers(`build_checkout '${checkout}' 2>&1`, { PATH: `${bin}:/usr/bin:/bin` })
+    return { ...r, calls: existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [] }
+  }
+  const pnpmWorks = build('exit 0', 'exit 0')
+  check('build: with pnpm, it installs from the lockfile, runs no install scripts, asks nothing, and builds once',
+    pnpmWorks.code === 0 && JSON.stringify(pnpmWorks.calls) === JSON.stringify(['pnpm install --frozen-lockfile --ignore-scripts --config.confirmModulesPurge=false', 'npm run --silent build']), JSON.stringify(pnpmWorks.calls))
+  const stale = build('echo " ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with frozen-lockfile"; exit 1', 'exit 0')
+  check('build: a pnpm that fails is shown, on stdout as pnpm writes it, and npm is tried',
+    stale.code === 0 && stale.out.includes('ERR_PNPM_OUTDATED_LOCKFILE') && stale.calls[1]?.startsWith('npm install --no-package-lock --ignore-scripts'), stale.out)
+  const npmOnly = build(null, 'exit 0')
+  check('build: without pnpm, npm installs with no package-lock.json and no install scripts, then builds once',
+    npmOnly.code === 0 && npmOnly.calls.length === 2 && npmOnly.calls[0].startsWith('npm install --no-package-lock --ignore-scripts') && npmOnly.calls[1] === 'npm run --silent build', JSON.stringify(npmOnly.calls))
+  const broken = build(null, 'echo "npm ERR! boom-4f5"; exit 1')
+  check('build: an npm that fails stops the install, and says what npm said', broken.code !== 0 && broken.out.includes('npm ERR! boom-4f5') && !broken.calls.includes('npm run --silent build'), broken.out)
+}
+// init.sh built again what install.sh had just built. A dry run of a copy of it, so nothing is written.
+{
+  const copy = join(dir, 'init-copy')
+  mkdirSync(join(copy, 'repo'), { recursive: true })
+  copyFileSync(join(dirname(INSTALL), 'init.sh'), join(copy, 'repo', 'init.sh'))
+  const dry = (installer: boolean, built: boolean) => {
+    rmSync(join(copy, 'repo', 'dist'), { recursive: true, force: true })
+    if (built) { mkdirSync(join(copy, 'repo', 'dist'), { recursive: true }); writeFileSync(join(copy, 'repo', 'dist', 'index.js'), '') }
+    try {
+      return execFileSync('/bin/bash', [join(copy, 'repo', 'init.sh'), '--dry-run', '--home', join(copy, 'home', 'agent'), '--profile', 'probe'],
+        { encoding: 'utf8', env: { ...process.env, HOME: join(copy, 'home'), DSH_HOME: join(copy, 'home', '.dsh'), ...(installer ? { DEEPBOT_INSTALLER: '1' } : {}) }, stdio: 'pipe' })
+    } catch (e) { return String(e.stdout ?? '') }
+  }
+  check('init.sh: called by the installer after its build, it does not build again', dry(true, true).includes('built   dist/ (by the installer)'))
+  check('init.sh: with no build yet, or run on its own, it builds', !dry(true, false).includes('(by the installer)') && !dry(false, true).includes('(by the installer)'))
+  check('install.sh calls it as the installer', /DEEPBOT_INSTALLER=1 [^\n]*init\.sh/.test(script))
+}
 check('install.sh builds before the installers copy from the build',
   build !== -1 && build < script.indexOf('/service/install-health.sh"') && build < script.indexOf('/watch/install-watch.sh"'))
 const repo = join(dir, 'repo')
@@ -205,6 +244,18 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   // `- insert:` with a provider of its own): both used to fall back to DEEPSEEK_API_KEY or another route's key.
   writeFileSync(join(dir, 'quoted.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      'og':\n        apiKeyEnv: OG_API_KEY\n- id: agent-default-model\n  config:\n    provider: "og"\n`)
   check('provider: a quoted route key and a quoted provider are read', withHelpers(`profile_key "${join(dir, 'quoted.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'quoted.yml')}"`).out)
+  // Only `- id:` reset the route search: a `- name:` row with routes of its own between them gave its key.
+  // (llm-pi-ai's own og route names no key here, so the first key found cannot be its own by accident.)
+  writeFileSync(join(dir, 'name-between.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        baseUrl: x\n- name: tts\n  config:\n    providers:\n      og:\n        apiKeyEnv: TTS_KEY\n- id: agent-default-model\n  config:\n    provider: og\n`)
+  check('provider: routes in a row that is not llm-pi-ai are not its routes', withHelpers(`profile_key "${join(dir, 'name-between.yml')}"`).out === 'DEEPSEEK_API_KEY', withHelpers(`profile_key "${join(dir, 'name-between.yml')}"`).out)
+  // A route with no key followed by one written with an anchor: the anchored one's key was taken for it.
+  writeFileSync(join(dir, 'anchor.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        baseUrl: x\n      og2: &o2\n        apiKeyEnv: OG2_KEY\n- id: agent-default-model\n  config:\n    provider: og\n`)
+  check('provider: another route\'s key is not taken for a route with none', withHelpers(`profile_key "${join(dir, 'anchor.yml')}"`).out === 'DEEPSEEK_API_KEY', withHelpers(`profile_key "${join(dir, 'anchor.yml')}"`).out)
+  // A provider nested deeper in the default model's config was taken for the model's own.
+  writeFileSync(join(dir, 'nested.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n      og2:\n        apiKeyEnv: OG2_KEY\n- id: agent-default-model\n  config:\n    provider: og\n    fallback:\n      provider: og2\n`)
+  check('provider: a provider nested in the default model\'s config is not the model\'s', withHelpers(`profile_key "${join(dir, 'nested.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'nested.yml')}"`).out)
+  writeFileSync(join(dir, 'quoted-id.yml'), `- id: 'llm-pi-ai'\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n- id: "agent-default-model"\n  config:\n    provider: og\n`)
+  check('provider: quoted ids are read', withHelpers(`profile_key "${join(dir, 'quoted-id.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'quoted-id.yml')}"`).out)
   writeFileSync(join(dir, 'insert-after.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n      speech:\n        apiKeyEnv: OPENAI_API_KEY\n- id: agent-default-model\n  config:\n    provider: og\n- insert:\n    - id: tts\n      config:\n        provider: speech\n`)
   check('provider: a provider in a row after the default model is not taken for its own', withHelpers(`profile_key "${join(dir, 'insert-after.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'insert-after.yml')}"`).out)
   writeFileSync(join(dir, 'with-og.yml'), `- id: deepbot\n  config:\n    platform: slack\n${og.out}\n`)
