@@ -432,6 +432,10 @@ export function apply(ctx, config) {
       delete conversations[key]
       dropped++
     }
+    // A /model choice in a conversation that never ran a turn has no session or touch to go with: its own time.
+    for (const [key, choice] of Object.entries(state.models ?? {}) as Array<[string, { at?: number }]>) {
+      if (state.sessions[key] === undefined && state.touched?.[key] === undefined && Number(choice?.at ?? 0) < retentionCutoff) delete state.models[key]
+    }
     // Usage snapshots are keyed by session, so they can only be pruned against the sessions the
     // surviving conversations still point at.
     const live = new Set(Object.values(conversations).map((c) => c.lastSessionId).filter((id): id is string => typeof id === 'string'))
@@ -2114,11 +2118,15 @@ export function apply(ctx, config) {
     return out
   }
 
+  /** What a route's efforts were the last time they were read, so a display need not ask the provider. */
+  const knownEfforts = new Map<string, string[]>()
   /** The efforts a model takes and its default one; none when it has none, or they cannot be read. */
   async function modelInfo(provider: string, model: string): Promise<{ efforts: string[]; defaultEffort: string | null }> {
     try {
       const reasoning = (await llm()?.resolveModelInfo(provider, model))?.reasoning
-      return { efforts: (reasoning?.efforts ?? []).map((e) => e.id), defaultEffort: reasoning?.defaultEffort ?? null }
+      const info = { efforts: (reasoning?.efforts ?? []).map((e) => e.id), defaultEffort: reasoning?.defaultEffort ?? null }
+      knownEfforts.set(`${provider}/${model}`, info.efforts)
+      return info
     } catch { return { efforts: [], defaultEffort: null } }
   }
   const effortsOf = async (provider: string, model: string) => (await modelInfo(provider, model)).efforts
@@ -2129,6 +2137,15 @@ export function apply(ctx, config) {
    * or a tenant's effort is sent only when its model takes it — the harness refuses a call with an effort
    * the model does not declare, so every turn would fail (the template's by-hand route set one).
    */
+  /** The effort to show for a conversation: none for a deployment's or tenant's effort its model is known not to take. */
+  function shownEffort(key: string): string | null {
+    const route = modelFor(key)
+    if (route.reasoningEffort === undefined) return null
+    if (state.models?.[key] !== undefined) return route.reasoningEffort
+    const known = knownEfforts.get(`${route.provider}/${route.model}`)
+    return known !== undefined && !known.includes(route.reasoningEffort) ? null : route.reasoningEffort
+  }
+
   async function turnModel(key: string): Promise<{ provider: string; model: string; reasoningEffort?: string }> {
     const route = modelFor(key)
     if (route.reasoningEffort === undefined || state.models?.[key] !== undefined) return route
@@ -2148,12 +2165,15 @@ export function apply(ctx, config) {
     if (!known.some((m) => m.provider === choice.provider && m.id === choice.model)) return { code: 'unknown-model' }
     const { efforts, defaultEffort } = await modelInfo(choice.provider, choice.model)
     if (choice.effort != null && !efforts.includes(choice.effort)) return { code: 'effort', efforts }
-    // No effort named: the model's own default, stored, so what runs is what the terminal shows. Left
-    // unnamed, the harness keeps the effort the session last ran with on the same route.
-    const effort = choice.effort ?? (defaultEffort !== null && efforts.includes(defaultEffort) ? defaultEffort : null)
-    state.models = { ...(state.models ?? {}), [key]: { provider: choice.provider, model: choice.model, ...(effort !== null ? { reasoningEffort: effort } : {}) } }
-    // Counted as activity, so a choice in a conversation that never runs a turn is pruned with it.
-    state.touched = { ...(state.touched ?? {}), [key]: Date.now() }
+    // No effort named: stored explicitly, so what runs is what the terminal shows — left unnamed, the
+    // harness keeps the effort the session last ran with on the same route. The model's declared default;
+    // else, on the route it is already on, the effort it runs with now; else none (a new route's own default).
+    const current = modelFor(key)
+    const kept = current.provider === choice.provider && current.model === choice.model && current.reasoningEffort !== undefined && efforts.includes(current.reasoningEffort) ? current.reasoningEffort : null
+    const effort = choice.effort ?? (defaultEffort !== null && efforts.includes(defaultEffort) ? defaultEffort : kept)
+    // `at`: when it was chosen, so a choice in a conversation that never runs a turn is pruned in time,
+    // without counting as activity (which would move the conversation up /sessions).
+    state.models = { ...(state.models ?? {}), [key]: { provider: choice.provider, model: choice.model, ...(effort !== null ? { reasoningEffort: effort } : {}), at: Date.now() } }
     saveStateNow()
     log(`models: ${key} now runs on ${choice.provider}/${choice.model}${effort !== null ? ` (${effort})` : ''}`)
     return null
@@ -2165,8 +2185,8 @@ export function apply(ctx, config) {
     listConversations: (channel: string) => listConversations(channel),
     conversationHistory: (channel: string, conversation: string) => conversationHistory(channel, conversation),
     model: (key?: string) => { try { return key === undefined ? String(ctx.get('agentDefaultModel')?.currentSelection?.()?.model ?? '') : modelFor(key).model ?? '' } catch { return '' } },
-    effortOf: (key: string) => modelFor(key).reasoningEffort ?? null,
-    modelChoice: async (key: string) => { const m = modelFor(key); return { provider: m.provider ?? '', model: m.model ?? '', effort: m.reasoningEffort ?? null, efforts: await effortsOf(m.provider, m.model) } },
+    effortOf: (key: string) => shownEffort(key),
+    modelChoice: async (key: string) => { const m = modelFor(key); const efforts = await effortsOf(m.provider, m.model); return { provider: m.provider ?? '', model: m.model ?? '', effort: shownEffort(key), efforts } },
     listModels: () => listModels(),
     setModel: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => setModel(key, choice),
     // The tenant a conversation is recorded in (null: the home), or undefined when none is recorded.

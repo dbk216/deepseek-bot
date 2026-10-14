@@ -825,9 +825,12 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.clock.advance(20)
   check('clear: after, nothing is queued and no old tool is named', !t.term.screen.text().includes('queued') && !t.term.screen.text().includes('running bash'))
   t.app.turnStarted()
+  t.clock.advance(20)
+  // Checked while the first turn runs: its end would reset the tool anyway, and hide a clear() that did not.
+  check('clear: the new conversation\'s first turn is working, not running the old one\'s tool', t.term.screen.text().includes('working…') && !t.term.screen.text().includes('running bash'))
   t.app.turnEnded()
   t.clock.advance(20)
-  check('clear: the new conversation\'s first turn does not bring the old message in', !t.term.screen.text().includes('left behind'))
+  check('clear: and its end does not bring the old message in', !t.term.screen.text().includes('left behind'))
 }
 
 // 61. Without colour there is no band and nothing sweeps: the same words, plain.

@@ -415,8 +415,10 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   c.send({ type: 'model', provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', effort: 'high' })
   const chosen = await c.waitFor((f) => f.type === 'model')
   check('model: a listed model is taken for this conversation, with an effort it supports', chosen?.current?.provider === 'opengateway' && chosen.current.model === 'deepseek/deepseek-v4.1-flash-ultrafast' && chosen.current.effort === 'high' && chosen.current.efforts.join() === 'high,low', JSON.stringify(chosen))
-  check('model: kept for this conversation in the state file', JSON.stringify(JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`]) === JSON.stringify({ provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'high' }))
-  check('model: and the conversation counts as touched, so the choice is pruned with it', Number(JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).touched?.[`tui:${ready.conversation}`]) > 0)
+  const stored = JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8'))
+  const entry = stored.models?.[`tui:${ready.conversation}`]
+  check('model: kept for this conversation in the state file, with when it was chosen', entry?.provider === 'opengateway' && entry.model === 'deepseek/deepseek-v4.1-flash-ultrafast' && entry.reasoningEffort === 'high' && entry.at > 0, JSON.stringify(entry))
+  check('model: choosing is not activity: the conversation does not move up /sessions', stored.touched?.[`tui:${ready.conversation}`] === undefined)
   c.send({ type: 'message', text: 'hi' })
   for (let i = 0; i < 100 && t.created.length === 0; i++) await sleep(10)
   check('model: the next turn runs on it, effort included', JSON.stringify(t.created[0]?.agentOptions) === JSON.stringify({ provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'high' }), JSON.stringify(t.created[0]?.agentOptions))
@@ -434,6 +436,41 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   const back = await c.waitFor((f) => f.type === 'model' && f.current.provider === 'deepseek-official')
   check('model: default goes back to the deployment\'s', back !== null && back.current.model === 'deepseek-v4-flash')
   check('model: and cleared again', JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`] === undefined)
+  await c.close()
+  await t.done()
+}
+
+{
+  // Chosen with no effort, on the route it already runs on, by a model that declares efforts but no default
+  // (the live OpenGateway route): it keeps the effort it runs with, instead of storing none while the
+  // harness goes on reusing it and the terminal says "the model's default".
+  const llm = { listProviders: () => [{ id: 'og' }], listModels: async (p) => [{ provider: p, id: 'm', name: 'M' }], resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }) }
+  const t = boot({ services: { llm, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm', reasoningEffort: 'high' }) } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  const ready = await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'model', provider: 'og', model: 'm' })
+  const kept = await c.waitFor((f) => f.type === 'model')
+  check('model: on the same route with no effort named, it keeps the effort it runs with', kept?.current?.effort === 'high' && JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`]?.reasoningEffort === 'high', JSON.stringify(kept?.current))
+  await c.close()
+  await t.done()
+}
+
+{
+  // A /model choice in a conversation that never ran a turn goes once it is older than the retention.
+  const old = Date.now() - 400 * 24 * 3600 * 1000
+  const t = boot({ state: { models: { 'tui:never-used': { provider: 'p', model: 'm', at: old } } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'message', text: 'hi' })
+  for (let i = 0; i < 100 && t.created.length === 0; i++) await sleep(10)
+  await sleep(300)
+  check('model: an old choice with no conversation behind it is pruned', JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.['tui:never-used'] === undefined)
   await c.close()
   await t.done()
 }

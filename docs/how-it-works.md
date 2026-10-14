@@ -539,7 +539,7 @@ What appears besides the conversation:
   same session, resumed on the new route — and `/model default` gives it the deployment's back. A
   model no provider lists, or an effort the model does not take, is refused. The choice is kept per
   conversation in the state file; Slack and the other conversations keep theirs. The list is every
-  model a registered route advertises, including a route with no key in `~/.dsh/.env` — a conversation
+  model a registered route advertises, including a route whose key is in neither `~/.dsh/.env` nor the app's store (`~/.dsh/.credentials.yaml`) — a conversation
   moved to one fails its turns until `/model default`. Reminders the harness delivers on its own
   schedule are not known to follow a conversation's choice (unverified). The deployment's own
   reasoning effort (`agent-default-model`) now reaches a turn too; it was dropped before. The status
