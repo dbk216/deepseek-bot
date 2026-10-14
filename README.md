@@ -36,6 +36,11 @@
           Check that window before this deploy.
 ```
 
+> **Sponsors**
+> These are our sponsors. They help keep deepseek-bot going as a personal side project.
+> | [<img alt="OpenGateway" src="docs/opengateway-logo.svg" width="156px" />](https://opengateway.ai/) | **[OpenGateway](https://opengateway.ai/)** sponsors deepseek-bot. An OpenAI-compatible gateway that puts many model providers behind one API. Thank you for backing open source. |
+> | :-----| :----- |
+
 ## Install
 
 ```bash
@@ -48,7 +53,7 @@ macOS with Node.js 22+, the DeepSeek Harness app, a DeepSeek API key and a bot t
 you choose; it asks for the rest on the terminal. Creating the Slack, Telegram or Discord bot is in
 [docs/setup.md](docs/setup.md).
 
-<img src="docs/opengateway.svg" width="16" height="16" alt="OG"> **Fast on [OpenGateway](https://opengateway.ai).** It serves `deepseek/deepseek-v4.1-flash-ultrafast`
+<img src="docs/opengateway-logo.svg" height="16" alt="OpenGateway"> **Fast on [OpenGateway](https://opengateway.ai).** It serves `deepseek/deepseek-v4.1-flash-ultrafast`
 on an OpenAI-compatible endpoint (`https://apis.opengateway.ai/v1`), which it lists at 12× the speed and
 1/30 the price of a Fable-class model. This bot is developed against it; the model route in
 [profile/cordis.patch.yml](profile/cordis.patch.yml) shows where the endpoint and the model go.
