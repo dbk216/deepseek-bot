@@ -662,9 +662,9 @@ export function apply(ctx, config) {
       at = up
     }
   }
-  function keepInstructionRoot(guard: string, dir: string): boolean {
+  function keepInstructionRoot(guard: string, dir: string, strict = false): boolean {
     if (!rootAbove(dir)) return true
-    try { markInstructionRoot(guard, dir); rootFailures.delete(dir); return true } catch (e) {
+    try { markInstructionRoot(guard, dir, strict); rootFailures.delete(dir); return true } catch (e) {
       if (!rootFailures.has(dir)) { rootFailures.add(dir); log(`instructions: could not keep ${dir} the instruction root — ${String((e as Error)?.message ?? e)}`) }
       return false
     }
@@ -700,7 +700,7 @@ export function apply(ctx, config) {
     }
     // A tenant runs in its own directory, never one a link moved elsewhere, and is never handed the home's
     // AGENTS.md or anything above it: refused, rather than run under them.
-    if (!resolvesInside(guard, dir) || !keepInstructionRoot(guard, dir)) {
+    if (!resolvesInside(guard, dir) || !keepInstructionRoot(guard, dir, true)) {
       const why = `tenant ${tenant}: refused — its directory ${dir} is not its own, or cannot be kept the instruction root, and the home's instructions would reach it`
       log(why)
       throw new Error(`deepbot: ${why}`)

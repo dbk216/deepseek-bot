@@ -86,12 +86,15 @@ profile() {
       escaped="$(printf '%s' "$name" | sed 's/[][\.*^$+?(){}|]/\\&/g; s/"/./g')"
       printf '(deny file-write* (regex #"^%s/\\.env(\\..*)?$"))\n' "$escaped"
     done
-    # And its .git, when there is one (the adapter keeps one as the instruction root when a directory above
-    # has a .git): removed or moved aside, the harness's loader, which looks again on every step, would
-    # climb past the workspace to the home's instructions. What is in it stays writable: git init works.
+    # And its .git, when a directory above has one and the adapter keeps one here as the instruction root:
+    # removed or moved aside, the harness's loader, which looks again on every step, would climb past the
+    # workspace to the instructions above. What is in it stays writable (git init works); the workspace's
+    # own mode stays too, since an unreadable directory makes skill discovery climb. With nothing above,
+    # its .git is no marker, and a repository there can remove its own.
     for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
-      if [ -d "$name/.git" ] && [ ! -L "$name/.git" ]; then
+      if [ -d "$name/.git" ] && [ ! -L "$name/.git" ] && root_above "$name"; then
         printf '(deny file-write* (literal %s))\n' "$(sbpl "$name/.git")"
+        printf '(deny file-write-mode (literal %s))\n' "$(sbpl "$name")"
       fi
     done
   else
@@ -211,6 +214,17 @@ profile() {
 }
 
 sbpl() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+
+# Whether a directory above $1 has a .git: the harness's loader would climb to it.
+root_above() {
+  local at
+  at="$(dirname "$1")"
+  while :; do
+    if [ -e "$at/.git" ]; then return 0; fi
+    if [ "$at" = "/" ]; then return 1; fi
+    at="$(dirname "$at")"
+  done
+}
 
 if [ "$print_only" -eq 1 ]; then
   profile

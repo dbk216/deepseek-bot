@@ -19,7 +19,7 @@ if (process.platform !== 'darwin') {
   process.exit(0)
 }
 import { fileURLToPath } from 'node:url'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -254,6 +254,8 @@ for (const resolved of [false, true]) {
 // the harness's loader, which looks for it again on every step, would climb to the home's instructions.
 {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'runner-root-')))
+  // A .git above the workspaces: the case where the adapter keeps one in the workspace as the root.
+  mkdirSync(join(base, '.git'))
   const env = { ...process.env, HOME: base }
   const inWs = (ws, cmd) => { try { execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--bind', ws, ws, '--', '/bin/sh', '-c', cmd], { env, stdio: 'pipe' }); return true } catch { return false } }
   const marked = join(base, 'marked')
@@ -266,7 +268,13 @@ for (const resolved of [false, true]) {
   const plain = join(base, 'plain')
   mkdirSync(plain)
   check('a workspace with no .git can make one', inWs(plain, `mkdir '${join(plain, '.git')}'`) && existsSync(join(plain, '.git')))
+  check('nor can it make its own directory unreadable to the adapter', !inWs(marked, `chmod 000 '${marked}'`) || (() => { const ok = (statSync(marked).mode & 0o777) !== 0; chmodSync(marked, 0o755); return ok })())
   rmSync(base, { recursive: true, force: true })
+  // With no .git above, the workspace's own .git is not a marker: a home that is a repository can remove it.
+  const solo = realpathSync(mkdtempSync(join(tmpdir(), 'runner-solo-')))
+  mkdirSync(join(solo, '.git', 'objects'), { recursive: true })
+  check('with no .git above, a repository workspace can remove its .git', inWs(solo, `rm -rf '${join(solo, '.git')}'`) && !existsSync(join(solo, '.git')))
+  rmSync(solo, { recursive: true, force: true })
 }
 
 // A harness home that is itself a link (~/.dsh -> elsewhere). The deny on the link's name blocked reading

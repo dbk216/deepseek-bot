@@ -1285,6 +1285,17 @@ for (const remove of [false, true]) {
   await turn(t, 'C_ALLOWED', 'a1', '넷')
   check('root: a removed one is back on the next turn', isRoot(home))
   check('root: a link to nothing is replaced by one', isRoot(join(home, 'tenants', 'acme')) && !lstatSync(join(home, 'tenants', 'acme', '.git')).isSymbolicLink())
+  // A tenant's .git must be the directory itself: a file or a link it planted is a root to the loader but
+  // not one the sandbox keeps in place, so it is replaced. (A tenant is never a worktree.)
+  rmSync(join(home, 'tenants', 'acme', '.git'), { recursive: true, force: true })
+  writeFileSync(join(home, 'tenants', 'acme', '.git'), 'gitdir: /nowhere\n')
+  await turn(t, 'C_ALLOWED', 'a1', '다섯')
+  check('root: a .git file a tenant planted is replaced by the marker', isRoot(join(home, 'tenants', 'acme')) && !lstatSync(join(home, 'tenants', 'acme', '.git')).isFile())
+  rmSync(join(home, 'tenants', 'acme', '.git'), { recursive: true, force: true })
+  mkdirSync(join(above, 'decoy'))
+  symlinkSync(join(above, 'decoy'), join(home, 'tenants', 'acme', '.git'))
+  await turn(t, 'C_ALLOWED', 'a1', '여섯')
+  check('root: and so is a link to a directory', isRoot(join(home, 'tenants', 'acme')) && !lstatSync(join(home, 'tenants', 'acme', '.git')).isSymbolicLink())
   // The tenant made its directory unwritable and removed its marker: its turn is refused, not run under the home's instructions.
   rmSync(join(home, 'tenants', 'acme', '.git'), { recursive: true, force: true })
   chmodSync(join(home, 'tenants', 'acme'), 0o555)

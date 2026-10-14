@@ -55,16 +55,24 @@ export function mkdirInside(root: string, dir: string): void {
  * the way down. Without one, a home under a repository (a dotfiles home) was handed that repository's
  * files, and a tenant directory under a home with one was handed the home's. git passes over an empty
  * `.git`: it is not a repository to it. One already there — a repository, a worktree's gitlink, a link
- * to a directory — is a root as it is and left alone; a link to nothing is not, and is replaced.
+ * to a directory — is a root as it is and left alone; a link to nothing is not, and is replaced. Strict,
+ * for a tenant's directory, only a .git directory is kept: a file or a link it planted is replaced.
  */
-export function markInstructionRoot(root: string, dir: string): void {
+export function markInstructionRoot(root: string, dir: string, strict = false): void {
   // Inside the guard first: a directory linked outside is refused even when a .git is there.
   const realRoot = realpathSync(root)
   const realDir = realpathSync(dir)
   if (!inside(realRoot, realDir)) throw new Error(`refusing to mark ${dir}: it resolves outside ${realRoot}`)
   const marker = join(realDir, '.git')
-  try { statSync(marker); return } catch { /* none, or a link to nothing */ }
-  try { if (lstatSync(marker).isSymbolicLink()) rmSync(marker) } catch { /* nothing there */ }
+  let entry = null
+  try { entry = lstatSync(marker) } catch { /* nothing there */ }
+  if (entry !== null) {
+    if (entry.isDirectory()) return
+    // Not strict (the home): a worktree's gitlink file, or a link to a directory, is a root as it is.
+    // Strict (a tenant, never a worktree): only the directory, which the sandbox keeps in place, will do.
+    if (!strict) { try { statSync(marker); return } catch { /* a link to nothing */ } }
+    rmSync(marker)
+  }
   mkdirSync(marker)
   // The directory could have been swapped for a link between the check and the mkdir: what was made
   // outside is taken back, and the mark refused.

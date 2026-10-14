@@ -678,9 +678,11 @@ to the nearest `.git`, and every file on the way. When a directory above the hom
 has a `.git` (a home under a dotfiles repository, a home the agent ran `git init` in), the adapter keeps
 an empty `.git` in that directory, checked on every turn because the agent can remove it, so neither is
 handed the files above it. With none above, it makes none: the loader stops there already, and a `.git`
-would be one more place to climb to, and would turn on `.gitignore` rules for the grep tool. The sandbox
-runner refuses a command that removes or moves the workspace's `.git` (what is in it stays writable),
-and a tenant whose directory is not its own, or cannot be kept the root, is refused its turn. git passes
+would be one more place to climb to, and would turn on `.gitignore` rules for the grep tool. In a
+tenant's directory only a `.git` directory counts; a file or a link it planted is replaced. When a
+directory above has a `.git`, the sandbox runner refuses a command that removes or moves the
+workspace's `.git` or changes the workspace's own mode (what is in `.git` stays writable), and a tenant
+whose directory is not its own, or cannot be kept the root, is refused its turn. git passes
 over an empty `.git`; one already there (a repository, a worktree's gitlink) is left as it is. The
 `.deepbot-root` file older setups wrote was never read by the harness and can be deleted.
 
