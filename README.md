@@ -39,7 +39,7 @@ own API is the default and needs nothing else; OpenGateway or another OpenAI-com
 option the installer offers. The bot starts with the terminal, `dsh`.
 
 `dsh gateway setup` connects a messenger: pick one with ↑↓ and Enter, and it opens the page where each
-token is made, checks each token as you paste it, and restarts the bot. Without a terminal it takes the
+token is made, checks each token as you paste it, and offers to restart the bot. Without a terminal it takes the
 tokens from the environment instead, so an agent can do it for you ([docs/setup.md](docs/setup.md));
 `dsh gateway status` says whether it is up.
 

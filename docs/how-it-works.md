@@ -490,7 +490,7 @@ terminal gets the persona, the workspace's notes, recall, approvals and the turn
 goes through the same core. The conversation lives in the gateway; the terminal is only the screen,
 so quitting loses nothing.
 
-**Serve it.** `dsh gateway setup local` does this and restarts the gateway. By hand: put `local` in
+**Serve it.** A new install serves it already; `dsh gateway setup` turns it on or off. By hand: put `local` in
 the deepbot row's `platform` — alone, or in a list — and allow its channel. `config` replaces the
 whole row, so restate what you keep:
 

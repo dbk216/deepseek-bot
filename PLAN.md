@@ -57,8 +57,7 @@ is built before the thing it stands on. The detailed history of each milestone i
   health file is one flag for every platform, so `status` cannot say which one is down, and
   `lastError` one field: a clear names the error it clears, so two platforms failing with the same
   text (`fetch failed`) can clear each other's until the next attempt writes it again; pairing a new
-  person by a code in a direct message instead of listing ids; a home channel for notices; and the
-  installer asking through `dsh gateway setup` instead of its own prompts, which it still duplicates.
+  person by a code in a direct message instead of listing ids; and a home channel for notices.
 
 Decided against:
 

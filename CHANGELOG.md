@@ -14,7 +14,8 @@ the caveat about version numbers is at the bottom.
   a terminal shows each messenger with where it stands, and is chosen with ↑↓ and Enter: it opens the
   browser where a token is made (Slack's create-from-manifest page, filled in; @BotFather; Discord's
   Developer Portal), checks each token as it is pasted (shown as `*`) and asks again when it is wrong,
-  asks who may talk to it, and restarts the gateway once at Done. Discord's step reads the
+  asks who may talk to it, and offers one restart at Done; a token already saved is offered again
+  instead of asked for. Discord's step reads the
   application from the token: it warns while the Message Content intent is off, opens an invite link
   with the permissions the bot needs, and offers "only me" as the application's owner. Without a
   terminal `setup` asks nothing, as before: a platform, tokens from the environment, flags. The

@@ -143,7 +143,10 @@ curl -s -o /dev/null -w "   http://127.0.0.1:$PORT -> HTTP %{http_code}\n" --max
 
 # What the plugin says of itself: connected once its platforms are — the terminal alone, as soon as it is up.
 # The log's "Socket Mode connected" is Slack's alone, and a new install serves the terminal first.
-if grep -q '"connected": true' "$HOME/.dsh/slack-state/health.json" 2>/dev/null; then
+# The running process's own: a health file left by one that was killed would say connected too.
+running_pid="$(launchctl print "gui/$UID_N/$LABEL" 2>/dev/null | awk '/^\tpid = /{print $3}')"
+if [ -n "$running_pid" ] && grep -q "\"pid\": $running_pid," "$HOME/.dsh/slack-state/health.json" 2>/dev/null \
+  && grep -q '"connected": true' "$HOME/.dsh/slack-state/health.json" 2>/dev/null; then
   echo "   ✅ connected"
 else
   echo "   ⚠️  not connected yet — check:"

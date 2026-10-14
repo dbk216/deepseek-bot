@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
-import { gateway, mergeIds, parseIds, readProfile, slackManifest, storeRefs, terminalAsk, terminalChoose, writeProfile, envSet, envValue, type GatewayIO, type RunResult } from '../dist/service/gateway.js'
+import { gateway, mergeIds, parseIds, readProfile, slackManifest, storeRefs, terminalSession, writeProfile, envSet, envValue, type GatewayIO, type RunResult } from '../dist/service/gateway.js'
 import { route, usage } from '../dist/tui/cli.js'
 
 const results = []
@@ -421,26 +421,50 @@ for (const [name, profile] of [['no deepbot row', '- id: other\n  config: {}\n']
   s.done()
 }
 
-// 10. The terminal prompt: raw mode, backspace, no echo for a secret, ctrl+c.
+// 10. The terminal: one session for the whole guided setup — raw mode and one reader from the first question
+// to the end, keys parsed out of what arrives however it is split, and keys typed between prompts dropped.
+const fakeTerminal = () => {
+  const input = new EventEmitter() as any
+  const modes: boolean[] = []
+  input.setRawMode = (on: boolean) => { modes.push(on) }
+  input.resume = () => {}
+  input.pause = () => {}
+  const term = { input, modes, shown: '', interrupted: 0, send: (...chunks: string[]) => { for (const c of chunks) input.emit('data', Buffer.from(c)) } }
+  const output = { write: (t: string) => { term.shown += t; return true } } as any
+  return { input, modes, send: term.send, output, session: terminalSession(input, output, () => { term.interrupted++ }), get text() { return term.shown }, get interrupted() { return term.interrupted } }
+}
 {
-  const prompt = (secret: boolean, ...chunks: string[]) => {
-    const input = new EventEmitter() as any
-    const modes: boolean[] = []
-    input.setRawMode = (on: boolean) => { modes.push(on) }
-    input.resume = () => {}
-    input.pause = () => {}
-    let shown = ''
-    const output = { write: (t: string) => { shown += t; return true } } as any
-    const answer = terminalAsk(input, output)('Token:', secret)
-    for (const chunk of chunks) input.emit('data', Buffer.from(chunk))
-    return answer.then((value) => ({ value, shown, modes, listeners: input.listenerCount('data') }))
-  }
-  const typed = await prompt(false, 'abx', '\x7f', '\x1b[A', 'c\r')
-  check('prompt: typed, backspace, an arrow key ignored, Enter', typed.value === 'abc' && typed.shown === 'Token: abx\b \bc\n' && typed.modes.join() === 'true,false' && typed.listeners === 0, JSON.stringify(typed))
-  const secret = await prompt(true, 'xoxb-1-2\r')
-  check('prompt: a secret shows a * per character, never the character', secret.value === 'xoxb-1-2' && secret.shown === 'Token: ********\n', JSON.stringify(secret.shown))
-  const cancelled = await prompt(true, 'xo\x03')
-  check('prompt: ctrl+c is null, and raw mode is undone', cancelled.value === null && cancelled.modes.join() === 'true,false')
+  const t = fakeTerminal()
+  const answer = t.session.ask('Token:', false)
+  t.send('abx', '\x7f', '\x1b[A', 'c\r')
+  check('prompt: typed, backspace, an arrow key ignored, Enter', await answer === 'abc' && t.text === 'Token: abx\b \bc\n', JSON.stringify(t.text))
+  const secret = t.session.ask('Token:', true)
+  t.send('xoxb-1-2\r')
+  check('prompt: a secret shows a * per character, never the character', await secret === 'xoxb-1-2' && t.text.endsWith('Token: ********\n'), JSON.stringify(t.text.slice(-20)))
+  const cancelled = t.session.ask('Token:', true)
+  t.send('xo\x03')
+  check('prompt: ctrl+c is null', await cancelled === null)
+  const esc = t.session.ask('Id:', false)
+  t.send('12\x1b')
+  check('prompt: Esc is back (empty), after the wait that tells it from a key', await esc === '')
+  check('session: raw mode is taken once, for every prompt', t.modes.join() === 'true', t.modes.join())
+  // Typed while no prompt is open — an Enter while a token is checked — is dropped, not the next answer.
+  t.send('x\r')
+  const next = t.session.ask('Next:', false)
+  t.send('y\r')
+  check('session: keys typed between prompts are dropped', await next === 'y')
+  t.send('\x03')
+  check('session: Ctrl+C with no prompt open quits', t.interrupted === 1)
+  t.session.close()
+  check('session: closed, raw mode and the reader are given back', t.modes.join() === 'true,false' && t.input.listenerCount('data') === 0)
+}
+{
+  const t = fakeTerminal()
+  const word = t.session.ask('Name:', false)
+  const euro = Buffer.from('€\r')
+  t.input.emit('data', euro.subarray(0, 1)); t.input.emit('data', euro.subarray(1))
+  check('prompt: a character split across two reads arrives whole', await word === '€')
+  t.session.close()
 }
 
 // 11. Usage.
@@ -709,7 +733,7 @@ const slackReply = (bad = 'never') => (url: string, init: any) => (url.includes(
   const code = await gateway(['setup'], s.io)
   const lists = readProfile(s.profile()) as any
   check('guided Discord: the Message Content intent is checked, and checked again once turned on', s.out.filter((l) => l.includes('Message Content Intent is off')).length === 1 && reads === 2, s.text())
-  check('guided Discord: the invite link is made from the token, with the permissions it needs', s.opened.some((u) => u === 'https://discord.com/oauth2/authorize?client_id=777&scope=bot&permissions=101376'), JSON.stringify(s.opened))
+  check('guided Discord: the invite link is made from the token, with the permissions it needs', s.opened.some((u) => u === 'https://discord.com/oauth2/authorize?client_id=777&scope=bot&permissions=274878008320'), JSON.stringify(s.opened))
   check('guided Discord: "only me" is the application\'s owner, with nothing to type', code === 0 && lists.allowedUsers.join() === '42' && s.asked.length === 1, JSON.stringify({ users: lists.allowedUsers, asked: s.asked }))
   s.done()
 }
@@ -735,7 +759,7 @@ const slackReply = (bad = 'never') => (url: string, init: any) => (url.includes(
   const s = scene({ picks: [3, MENU_DONE, 1], answers: [] })
   const code = await gateway(['setup'], s.io)
   const lists = readProfile(s.profile()) as any
-  check('guided: the terminal is turned on from the menu, with its channel', code === 0 && lists.platform.join() === 'slack,local', JSON.stringify(lists))
+  check('guided: the terminal is turned on from the menu, every channel already letting it in', code === 0 && lists.platform.join() === 'slack,local' && lists.targetChannels.join() === '*', JSON.stringify(lists))
   s.done()
 }
 {
@@ -769,25 +793,80 @@ const slackReply = (bad = 'never') => (url: string, init: any) => (url.includes(
   t.done()
 }
 
-// 15. The menu widget itself: ↑↓ and j/k move, Enter or a digit chooses, Esc goes back, Ctrl+C quits.
 {
-  const menu = async (...keys: string[]) => {
-    const input = new EventEmitter() as any
-    input.setRawMode = () => {}
-    input.resume = () => {}
-    input.pause = () => {}
-    let shown = ''
-    const output = { write: (t: string) => { shown += t; return true } } as any
-    const answer = terminalChoose(input, output)('   Pick:', [{ label: 'one' }, { label: 'two', hint: 'second' }, { label: 'three' }], 0)
-    for (const key of keys) input.emit('data', Buffer.from(key))
-    return { value: await answer, shown, listeners: input.listenerCount('data') }
+  // At a terminal, answers that came with the command are not dropped for menus: a flag, or a token in the
+  // environment, means a script or an agent, and takes the path that reads them.
+  const s = scene({ picks: [], answers: [], vars: { TELEGRAM_BOT_TOKEN: '1:a' } })
+  const code = await gateway(['setup', 'telegram', '--users', '999', '--no-verify', '--no-restart'], s.io)
+  const lists = readProfile(s.profile()) as any
+  check('guided: at a terminal, flags and an env token take the flag path — none dropped', code === 0 && s.menus.length === 0 && lists.allowedUsers.join() === '999' && s.env().includes('TELEGRAM_BOT_TOKEN=1:a'), s.text())
+  s.done()
+}
+{
+  // A token already saved in ~/.dsh/.env is offered, not asked for again — a switch back, or a re-setup.
+  const set = `SLACK_BOT_TOKEN=${SLACK.SLACK_BOT_TOKEN}\nSLACK_APP_TOKEN=xapp-1-A0M-2\n`
+  const s = scene({ env: set, picks: [0, 1, 0, 0, 0, MENU_DONE], answers: [], fetchReply: slackReply() })
+  const code = await gateway(['setup'], s.io)
+  check('guided: saved tokens are offered, and used — nothing typed, nothing changed', code === 0 && s.asked.length === 0 && s.menus.filter((m) => m.options[0].label.includes('Use the saved one')).length === 2 && s.env() === set, JSON.stringify(s.asked))
+  s.done()
+  const t = scene({ env: 'SLACK_BOT_TOKEN=xoxb-saved-1\nSLACK_APP_TOKEN=xapp-1-A0M-2\n', picks: [0, 1, 0, 1, 0, 0, MENU_DONE, 1], answers: [SLACK.SLACK_BOT_TOKEN], fetchReply: slackReply('saved') })
+  await gateway(['setup'], t.io)
+  check('guided: a saved token the platform refuses is asked for again', t.out.some((l) => l.includes('the saved one: Slack refused it')) && t.asked.length === 1 && t.env().includes(`SLACK_BOT_TOKEN=${SLACK.SLACK_BOT_TOKEN}`), t.text())
+  t.done()
+}
+{
+  // People: with some listed, Keep keeps them, Only me replaces them (it used to add to them).
+  const tg = TEMPLATE.replace('    platform: slack\n', "    platform: telegram\n").replace("    targetChannels: ['*']\n", "    targetChannels: ['*']\n    allowedUsers: ['111', '222']\n")
+  const s = scene({ profile: tg, env: 'TELEGRAM_BOT_TOKEN=1:a\n', picks: [1, 1, 0, 2, MENU_DONE, 1], answers: ['333'] })
+  await gateway(['setup'], s.io)
+  const who = s.menus.find((m) => m.title.includes('Who may talk to it?'))
+  check('guided people: with some listed, the choices are keep, add, only me, anyone', who?.options.map((o) => o.label.split(' ').slice(1).join(' ')).join('|') === 'Keep the 2 listed|Add people|Only me|Anyone who finds the bot', JSON.stringify(who?.options))
+  check('guided people: Only me replaces the list', (readProfile(s.profile()) as any).allowedUsers.join() === '333', JSON.stringify(readProfile(s.profile())))
+  s.done()
+  const t = scene({ profile: tg, env: 'TELEGRAM_BOT_TOKEN=1:a\n', picks: [1, 1, 0, 0, MENU_DONE], answers: [] })
+  const code = await gateway(['setup'], t.io)
+  check('guided people: Keep keeps it, and nothing changes', code === 0 && t.profile() === tg && t.out.some((l) => l.includes('nothing changed')), t.text())
+  t.done()
+}
+{
+  // Not running: Start it now bootstraps the gateway and its probe, and waits for it.
+  const s = scene({ loaded: [], picks: [3, MENU_DONE, 0], answers: [] })
+  const code = await gateway(['setup'], s.io)
+  check('guided: Start it now starts the gateway and its probe, and it connects', code === 0 && s.launchctl().filter((c) => c.startsWith('bootstrap')).length === 2 && s.text().includes('connected (pid 4242)'), s.text())
+  s.done()
+}
+{
+  // A team's Discord application: its owner is the team, a pseudo-user; "only me" is the team's owner.
+  const app = (url: string) => (url.includes('applications/@me')
+    ? { ok: true, status: 200, body: { id: '777', bot: { username: 'deepbot' }, flags: 1 << 18, owner: { id: '900', username: 'team900' }, team: { owner_user_id: '55', members: [{ user: { id: '55', username: 'lead' } }] } } }
+    : { ok: true, status: 200, body: {} })
+  const s = scene({ picks: [2, 0, 1, 1, 0, MENU_DONE, 1], answers: ['MTA.abc_d.ef-g'], fetchReply: app })
+  await gateway(['setup'], s.io)
+  const who = s.menus.find((m) => m.title.includes('Who may talk to it?'))
+  check('guided Discord: for a team\'s app, "only me" is the team\'s owner, not the team', who?.options[0].hint === '@lead' && (readProfile(s.profile()) as any).allowedUsers.join() === '55', JSON.stringify({ hint: who?.options[0].hint, users: (readProfile(s.profile()) as any).allowedUsers }))
+  s.done()
+}
+
+// 15. The menu: ↑↓ and j/k move, Enter or a digit chooses, Esc goes back, Ctrl+C quits — keys parsed out of
+// whatever arrives: an arrow split over two reads (ssh) is an arrow, not Esc; an arrow and Enter in one read are both.
+{
+  const menu = async (...chunks: string[]) => {
+    const t = fakeTerminal()
+    const answer = t.session.choose('   Pick:', [{ label: 'one' }, { label: 'two', hint: 'second' }, { label: 'three' }], 0)
+    t.send(...chunks)
+    const value = await answer
+    t.session.close()
+    return { value, shown: t.text }
   }
   const moved = await menu('\x1b[B', '\x1b[B', '\x1b[A', '\r')
-  check('menu: down, down, up, Enter is the second line', moved.value === 1 && moved.listeners === 0, String(moved.value))
-  check('menu: the cursor line is marked, and what was chosen stays as one line', moved.shown.includes('❯') && moved.shown.endsWith('   Pick: \x1b[2m›\x1b[22m two\n\x1b[?25h'), JSON.stringify(moved.shown.slice(-60)))
+  check('menu: down, down, up, Enter is the second line', moved.value === 1, String(moved.value))
+  check('menu: the cursor line is marked, and what was chosen stays as one line', moved.shown.includes('❯') && moved.shown.includes('   Pick: \x1b[2m›\x1b[22m two\n'), JSON.stringify(moved.shown.slice(-80)))
+  check('menu: lines are not wrapped while it is up, and wrapping is given back', moved.shown.startsWith('\x1b[?25l\x1b[?7l') && moved.shown.includes('\x1b[?7h'))
   check('menu: j and k move too, and wrap', (await menu('k', '\r')).value === 2 && (await menu('j', 'j', 'j', '\r')).value === 0)
   check('menu: a digit chooses its line', (await menu('3')).value === 2)
   check('menu: Esc goes back, Ctrl+C quits', (await menu('\x1b')).value === 'back' && (await menu('\x03')).value === 'quit')
+  check('menu: an arrow split over two reads is an arrow, not Esc', (await menu('\x1b', '[B', '\r')).value === 1)
+  check('menu: an arrow and Enter in one read are two keys', (await menu('\x1b[B\r')).value === 1)
 }
 
 const failed = results.filter((r) => !r.ok)

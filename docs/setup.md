@@ -36,8 +36,9 @@ messenger is a few steps, and the browser opens where a token is made:
 
 Each token is checked with the platform as it is pasted (it shows as `*`), and asked again when it is
 wrong. A messenger already set up offers to keep it, set it up again or remove it; another one asks
-before switching, and the old one's tokens stay where they are. At Done the gateway is restarted once
-and waited for. `dsh gateway setup slack` goes straight to one messenger.
+before switching, and the old one's tokens stay where they are. A token already saved is offered
+again instead of asked for. At Done it offers one restart (now, or later) and waits for it.
+`dsh gateway setup slack` goes straight to one messenger.
 
 `setup` saves the tokens to `~/.dsh/.env` (mode 600) and puts the platform in the profile's deepbot
 row — nothing else in the file changes. A switch also replaces the old messenger's channel ids
@@ -76,7 +77,8 @@ written; 130 cancelled. The bot itself cannot set up or remove a platform: its c
 sandbox that cannot write `~/.dsh`. That sandbox confines writes only, so `start`, `stop` and
 `restart` — calls to launchd, as `launchctl` itself is — are not kept from it.
 
-**Who may talk to it.** `allowedUsers` in the deepbot row lists user ids; `--users` adds to it.
+**Who may talk to it.** `allowedUsers` in the deepbot row lists user ids; `--users` adds to it (on a
+switch to another messenger it replaces it).
 Empty — the default — means anyone who can reach the bot in an allowed channel. On Telegram and
 Discord a direct message always reaches it, so there that is anyone who finds it: list yourself. The
 terminal's user is always allowed. Someone not listed starts no turn and gets no reply, and their
