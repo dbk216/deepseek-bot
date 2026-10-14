@@ -44,7 +44,8 @@ again instead of asked for. At Done it offers one restart (now, or later) and wa
 row — nothing else in the file changes. A switch also replaces the old messenger's channel ids
 (with every channel) and its people (with the ones given).
 
-**Without a terminal** — an agent such as Claude Code, a script — nothing is asked: name the platform,
+**Without a terminal** — an agent such as Claude Code, a script — nothing is asked, and the same holds
+at a terminal when a flag or the platform's token in the environment is given: name the platform,
 and a token comes from the environment variable of its own name (`SLACK_BOT_TOKEN` and
 `SLACK_APP_TOKEN`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`), the channels from `--channels`, the
 people from `--users`. A missing answer is exit 2 and nothing is written. A token is never an argument:

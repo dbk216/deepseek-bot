@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
-import { gateway, mergeIds, parseIds, readProfile, slackManifest, storeRefs, terminalSession, writeProfile, envSet, envValue, type GatewayIO, type RunResult } from '../dist/service/gateway.js'
+import { gateway, mergeIds, parseIds, readProfile, slackManifest, storeRefs, terminalSession, keyReader, writeProfile, envSet, envValue, type GatewayIO, type RunResult } from '../dist/service/gateway.js'
 import { route, usage } from '../dist/tui/cli.js'
 
 const results = []
@@ -781,8 +781,8 @@ const slackReply = (bad = 'never') => (url: string, init: any) => (url.includes(
   const listed = TEMPLATE.replace("    targetChannels: ['*']\n", "    targetChannels: ['*']\n    allowedUsers: ['U0SLACK']\n")
   const s = scene({ profile: listed, picks: [1, 1, MENU_DONE], answers: [] })
   const before = s.profile()
-  await gateway(['setup'], s.io)
-  check('guided switch: choosing another messenger asks first, and Back changes nothing', s.menus[1]?.title.includes('The bot is on Slack') && s.menus[1].options[0].label.includes('Switch to Telegram') && s.profile() === before, JSON.stringify(s.menus[1]))
+  const back = await gateway(['setup'], s.io)
+  check('guided switch: choosing another messenger asks first, and Back changes nothing', back === 0 && s.menus[1]?.title.includes('The bot is on Slack') && s.menus[1].options[0].label.includes('Switch to Telegram') && s.profile() === before, JSON.stringify(s.menus[1]))
   s.done()
   const t = scene({ profile: listed, picks: [1, 0, 1, 1, MENU_DONE, 1], answers: ['123456:AAbb_cc-dd'] })
   await gateway(['setup'], t.io)
@@ -846,6 +846,17 @@ const slackReply = (bad = 'never') => (url: string, init: any) => (url.includes(
   check('guided Discord: for a team\'s app, "only me" is the team\'s owner, not the team', who?.options[0].hint === '@lead' && (readProfile(s.profile()) as any).allowedUsers.join() === '55', JSON.stringify({ hint: who?.options[0].hint, users: (readProfile(s.profile()) as any).allowedUsers }))
   s.done()
 }
+
+{
+  // A token in the DeepSeek Harness app that the platform refuses is said so, with where to change it.
+  const reply = (url: string) => (url.includes('auth.test') ? { ok: true, status: 200, body: { ok: false, error: 'token_revoked' } } : { ok: true, status: 200, body: { ok: true } })
+  const s = scene({ store: 'refs:\n  SLACK_BOT_TOKEN: stored-bot-value\n', picks: [0, MENU_DONE], answers: [], fetchReply: reply })
+  const before = s.profile()
+  const code = await gateway(['setup'], s.io)
+  check('guided: a token in the app the platform refuses is refused, with where to change it, nothing written', code === 0 && s.out.some((l) => l.includes('token_revoked') && l.includes('change it in the app')) && s.profile() === before && !s.text().includes('stored-bot-value'), s.text())
+  s.done()
+}
+check('keys: a private-parameter sequence (SGR mouse) is one key, not Esc', (() => { const keys: string[] = []; keyReader((k) => keys.push(k))('\x1b[<0;10;5M'); return keys.length === 1 })())
 
 // 15. The menu: ↑↓ and j/k move, Enter or a digit chooses, Esc goes back, Ctrl+C quits — keys parsed out of
 // whatever arrives: an arrow split over two reads (ssh) is an arrow, not Esc; an arrow and Enter in one read are both.
