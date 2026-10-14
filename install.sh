@@ -65,6 +65,51 @@ env_language() {
   echo en
 }
 
+# ── The model provider ──────────────────────────────────────────────────────
+# DeepSeek's own API is dsh-base's default route and needs no rows. OpenGateway and any other
+# OpenAI-compatible endpoint go through llm-pi-ai, whose route has to be written out in full: a
+# profile row's `config` replaces the bundle's, and the image input is read from `input` only.
+
+# A custom endpoint's answers go into the profile's YAML: nothing that could leave a quoted value, or
+# start a new key, gets through.
+valid_endpoint() {   # valid_endpoint <baseURL> <model> <keyRef> <contextWindow>
+  local url_re='^https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$' model_re='^[A-Za-z0-9._:/@+-]+$' ref_re='^[A-Za-z_][A-Za-z0-9_]*$'
+  [[ $1 =~ $url_re ]] && [[ $2 =~ $model_re ]] && [[ $3 =~ $ref_re ]] && [[ $4 =~ ^[0-9]+$ ]] && [ "$4" -gt 0 ]
+}
+
+route_rows() {   # route_rows <id> <displayName> <keyRef> <baseURL> <model> <window> <images yes|no> [deepseek]
+  local input='[text]'; [ "$7" = yes ] && input='[text, image]'
+  printf '\n# ── Model route (written by install.sh) ─────────────────────────────────────\n'
+  printf -- "- id: llm-pi-ai\n  config:\n    providers:\n      %s:\n        displayName: %s\n        apiKeyEnv: %s\n        api: openai-completions\n        baseURL: '%s'\n" "$1" "$2" "$3" "$4"
+  # A DeepSeek model behind the endpoint: its thinking comes in DeepSeek's format, with these efforts.
+  [ "${8:-}" = deepseek ] && printf '        compat:\n          thinkingFormat: deepseek\n'
+  printf "        models:\n          - id: '%s'\n            name: '%s'\n            contextWindow: %s\n            input: %s\n" "$5" "$5" "$6" "$input"
+  [ "${8:-}" = deepseek ] && printf '            reasoningEfforts:\n              off:\n              low: low\n              medium: medium\n              high: high\n'
+  printf "\n- id: agent-default-model\n  config:\n    provider: %s\n    model: '%s'\n" "$1" "$5"
+  [ "${8:-}" = deepseek ] && printf '    reasoningEffort: medium\n'
+  return 0
+}
+
+provider_rows() {   # provider_rows deepseek | opengateway | custom <keyRef> <baseURL> <model> <window> <images>
+  case "$1" in
+    deepseek) return 0 ;;
+    opengateway) route_rows og OpenGateway OG_API_KEY https://apis.opengateway.ai/v1 deepseek/deepseek-v4.1-flash-ultrafast 1000000 yes deepseek ;;
+    custom) route_rows custom 'Custom endpoint' "$2" "$3" "$4" "$5" "$6" ;;
+    *) return 1 ;;
+  esac
+}
+
+provider_key() {   # provider_key <provider> [keyRef]: the credential the provider's route reads
+  case "$1" in opengateway) echo OG_API_KEY ;; custom) echo "$2" ;; *) echo DEEPSEEK_API_KEY ;; esac
+}
+
+# The credential an existing profile's route reads, for a rerun: DeepSeek's when it declares none.
+profile_key() {
+  local found
+  found="$(sed -n -E 's/^ {8}apiKeyEnv: ([A-Za-z_][A-Za-z0-9_]*)$/\1/p' "$1" 2>/dev/null | head -1 || true)"
+  printf '%s\n' "${found:-DEEPSEEK_API_KEY}"
+}
+
 set_profile_language() {   # set_profile_language <patch> <en|ko|zh>
   sed -i '' -e "s/^    language: en$/    language: $2/" "$1"
 }
@@ -213,6 +258,20 @@ if [ "$new_profile" -eq 1 ]; then
   if [ "$platform" != telegram ]; then ask channels "channels to answer in (* = every channel it is invited to, or ids separated by spaces)?" '*'; fi
   ask language "language of the bot's own messages and of dsh (en / ko / zh)?" "$(env_language)"
   case "$language" in en|ko|zh) ;; *) die "unknown language: $language (en, ko or zh)" ;; esac
+  ask provider "model provider (deepseek / opengateway / custom)?" deepseek
+  case "$provider" in
+    deepseek|opengateway) ;;
+    custom)
+      ask base_url "the endpoint's base URL (OpenAI-compatible, https://…/v1)?"
+      ask model_id "the model id it serves?"
+      ask key_ref "the name to keep its API key under?" CUSTOM_API_KEY
+      ask window "the model's context window, in tokens?" 128000
+      ask images "does the model read images (yes / no)?" no
+      valid_endpoint "$base_url" "$model_id" "$key_ref" "$window" \
+        || die "the endpoint, model id, key name or context window has a character a profile cannot hold"
+      case "$images" in yes|no) ;; *) die "images: yes or no (got: $images)" ;; esac ;;
+    *) die "unknown provider: $provider (deepseek, opengateway or custom)" ;;
+  esac
   list="$(channel_list "$channels")" || die "channel ids are letters, digits, - and _ (got: $channels)"
 fi
 DEEPBOT_INSTALLER=1 DSH_BIN="$DSH_BIN" "$DEEPBOT_DIR/init.sh" --home "$DEEPBOT_HOME" --profile "$DEEPBOT_PROFILE" | sed 's/^/    /'
@@ -232,14 +291,26 @@ case "$platform" in
   telegram) put_key TELEGRAM_BOT_TOKEN "Telegram bot token:" ;;
   discord)  put_key DISCORD_BOT_TOKEN "Discord bot token:" ;;
 esac
-put_key DEEPSEEK_API_KEY "DeepSeek API key:"
+# The model's key: the provider chosen now, or the one an existing profile's route reads.
+if [ "$new_profile" -eq 1 ]; then model_key="$(provider_key "$provider" "${key_ref:-}")"; else model_key="$(profile_key "$profile_dir/cordis.patch.yml")"; fi
+case "$model_key" in
+  DEEPSEEK_API_KEY) put_key DEEPSEEK_API_KEY "DeepSeek API key:" ;;
+  OG_API_KEY) put_key OG_API_KEY "OpenGateway API key:" ;;
+  *) put_key "$model_key" "API key for the model endpoint ($model_key):" ;;
+esac
+# web_search goes through DeepSeek's API whatever answers the chat (dsh-base's web-search-deepseek row).
+if [ "$model_key" != DEEPSEEK_API_KEY ] && ! has_key DEEPSEEK_API_KEY; then
+  if [ "$new_profile" -eq 1 ]; then put_key DEEPSEEK_API_KEY "DeepSeek API key, for web search (enter to skip):"
+  else note "web search uses DeepSeek's API: add DEEPSEEK_API_KEY to $DSH_HOME/.env to turn it on"; fi
+fi
 
 if [ "$new_profile" -eq 1 ]; then
   patch="$profile_dir/cordis.patch.yml"
   list="$(with_terminal "$list")"
   sed -i '' -e "s/^    platform: slack$/    platform: ['$platform', 'local']/" -e "s/^    targetChannels: \['\*'\]$/    targetChannels: $list/" "$patch"
   set_profile_language "$patch" "$language"
-  note "profile: platform $platform and the terminal, channels $list, language $language"
+  provider_rows "$provider" "${key_ref:-}" "${base_url:-}" "${model_id:-}" "${window:-}" "${images:-}" >>"$patch"
+  note "profile: platform $platform and the terminal, channels $list, language $language, model provider $provider"
 else
   note "profile $DEEPBOT_PROFILE already existed — its settings are kept"
   grep -q "^    platform: .*'local'" "$profile_dir/cordis.patch.yml" 2>/dev/null \

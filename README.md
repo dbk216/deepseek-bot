@@ -33,8 +33,9 @@ dsh
 ```
 
 The first line installs it, and running it again updates; `dsh` opens it in the terminal. It needs
-macOS with Node.js 22+, the DeepSeek Harness app, a DeepSeek API key and a bot token for the platform
-you choose; it asks for the rest on the terminal. Creating the Slack, Telegram or Discord bot is in
+macOS with Node.js 22+, the DeepSeek Harness app, an API key for the model (DeepSeek's own API,
+OpenGateway, or another OpenAI-compatible endpoint) and a bot token for the platform you choose; it
+asks for the rest on the terminal. Creating the Slack, Telegram or Discord bot is in
 [docs/setup.md](docs/setup.md).
 
 <img src="docs/opengateway-logo.svg" height="16" alt="OpenGateway"> **Fast on [OpenGateway](https://opengateway.ai).** It serves `deepseek/deepseek-v4.1-flash-ultrafast`

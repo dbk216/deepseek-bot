@@ -17,9 +17,10 @@
 # ("deepseek-official"), which reads DEEPSEEK_API_KEY from the credentials
 # service. That is the simplest setup, so nothing is overridden here.
 #
-# To route through an OpenAI-compatible gateway instead, uncomment the block
-# below, point it at your endpoint, and add an `agent-default-model` override
-# that names the same provider id.
+# install.sh appends the route below, filled in, when you choose OpenGateway or a
+# custom OpenAI-compatible endpoint (see docs/setup.md, The model provider). By
+# hand: uncomment it, point it at your endpoint, and keep the `agent-default-model`
+# override naming the same provider id.
 #
 # - id: llm-pi-ai
 #   config:

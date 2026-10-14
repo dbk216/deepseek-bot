@@ -7,6 +7,12 @@ the caveat about version numbers is at the bottom.
 
 ### Added
 
+- **The installer sets up the model provider.** It asks for DeepSeek's own API, OpenGateway or a
+  custom OpenAI-compatible endpoint, and for the last two writes the whole `llm-pi-ai` route and the
+  default model row into the new profile (OpenGateway's as the running deployment has it: images,
+  DeepSeek's thinking format, four efforts, `medium` by default). It asks for the route's key, offers
+  `DEEPSEEK_API_KEY` for web search, and checks what a custom endpoint's answers put into the YAML. A
+  rerun asks only for the key the existing route names.
 - **English, Korean and Chinese.** A `language` setting in the deepbot row (`en` by default, `ko`,
   `zh`) sets what the bot itself says on every platform (approvals and their buttons, stops,
   failures, the working message, Slack's status, the usage report) and everything `dsh` draws; `dsh`

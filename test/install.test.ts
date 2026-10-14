@@ -170,6 +170,49 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   check('services: install.sh stops at a failed service instead of saying done', /services_done \|\| return 1\n\nstep "done"/.test(readFileSync(INSTALL, 'utf8')))
 }
 
+// The model provider of a new profile: DeepSeek's own needs no rows (dsh-base's default); OpenGateway and a
+// custom OpenAI-compatible endpoint get a complete llm-pi-ai route and the default model row.
+{
+  const og = withHelpers('provider_rows opengateway')
+  check('provider: OpenGateway gets its route, with the key ref, the endpoint, the deepseek thinking format', og.code === 0
+    && /^- id: llm-pi-ai$/m.test(og.out) && /^ {6}og:$/m.test(og.out) && /^ {8}apiKeyEnv: OG_API_KEY$/m.test(og.out)
+    && /^ {8}api: openai-completions$/m.test(og.out) && /^ {8}baseURL: 'https:\/\/apis\.opengateway\.ai\/v1'$/m.test(og.out) && /^ {10}thinkingFormat: deepseek$/m.test(og.out), og.out)
+  check('provider: its model takes images and the four efforts, and is the default with effort medium',
+    /^ {10}- id: 'deepseek\/deepseek-v4\.1-flash-ultrafast'$/m.test(og.out) && /^ {12}input: \[text, image\]$/m.test(og.out)
+    && /^ {12}reasoningEfforts:\n {14}off:\n {14}low: low\n {14}medium: medium\n {14}high: high$/m.test(og.out)
+    && /^- id: agent-default-model\n {2}config:\n {4}provider: og\n {4}model: 'deepseek\/deepseek-v4\.1-flash-ultrafast'\n {4}reasoningEffort: medium$/m.test(og.out), og.out)
+  const custom = withHelpers(`provider_rows custom MY_KEY 'https://llm.example.com/v1' 'vendor/model-x' 200000 no`)
+  check('provider: a custom endpoint gets its own route, text only when it takes no images, and no efforts it did not declare', custom.code === 0
+    && /^ {6}custom:$/m.test(custom.out) && /^ {8}apiKeyEnv: MY_KEY$/m.test(custom.out) && /^ {8}baseURL: 'https:\/\/llm\.example\.com\/v1'$/m.test(custom.out)
+    && /^ {12}contextWindow: 200000$/m.test(custom.out) && /^ {12}input: \[text\]$/m.test(custom.out) && !/reasoningEfforts|thinkingFormat|reasoningEffort/.test(custom.out), custom.out)
+  const ds = withHelpers('provider_rows deepseek')
+  check('provider: DeepSeek\'s own route writes nothing', ds.code === 0 && ds.out === '', JSON.stringify(ds))
+  const bad = (args) => withHelpers(`valid_endpoint ${args}`).code !== 0
+  check('provider: what goes into the YAML is checked — a URL with a quote, a model with a space, a bad key name, a window that is not a number',
+    bad(`"https://x.example/v1'; rm" model KEY 1000`) && bad(`https://x.example/v1 'bad model' KEY 1000`) && bad(`https://x.example/v1 model 1KEY 1000`)
+    && bad(`https://x.example/v1 model KEY lots`) && bad(`ftp://x.example model KEY 1000`)
+    && withHelpers(`valid_endpoint https://llm.example.com/v1 vendor/model-x:free MY_KEY 128000`).code === 0)
+  writeFileSync(join(dir, 'with-og.yml'), `- id: deepbot\n  config:\n    platform: slack\n${og.out}\n`)
+  check('provider: a rerun reads back the key the profile names, and DeepSeek\'s when it names none',
+    withHelpers(`profile_key "${join(dir, 'with-og.yml')}"`).out === 'OG_API_KEY' && withHelpers(`profile_key "${join(dir, 'missing.yml')}"`).out === 'DEEPSEEK_API_KEY')
+  // Where the harness is installed, the rows must compose: the template plus them, through dsh itself.
+  const DSH = '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
+  if (existsSync(DSH)) {
+    const home = join(dir, 'dsh-home'), prof = join(home, 'profiles', 'composed')
+    mkdirSync(prof, { recursive: true })
+    for (const f of ['package.json', 'cordis.patch.yml']) copyFileSync(new URL(`../profile/${f}`, import.meta.url), join(prof, f))
+    writeFileSync(join(prof, 'cordis.patch.yml'), readFileSync(join(prof, 'cordis.patch.yml'), 'utf8') + og.out + '\n')
+    let dump = ''
+    try { dump = execFileSync(DSH, ['--profile', 'composed', '--dump-config'], { encoding: 'utf8', env: { ...process.env, DSH_HOME: home }, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }) } catch (e) { dump = `__ERROR__ ${String(e.stderr ?? e.message).slice(0, 300)}` }
+    // dsh composes without mounting, so this proves the YAML parses and the rows land, not that the values are valid:
+    // that is the live profile, which runs on the same route.
+    check('provider: the template with the OpenGateway rows parses and composes, and the default model is og', !dump.startsWith('__ERROR__') && !/ValidationError/.test(dump)
+      && /provider: og/.test(dump) && /apis\.opengateway\.ai/.test(dump), dump.slice(0, 200))
+  } else {
+    console.log('  TODO  provider: composing the rows with dsh needs DeepSeek Harness installed; not run here')
+  }
+}
+
 rmSync(dir, { recursive: true, force: true })
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)

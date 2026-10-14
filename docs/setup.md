@@ -41,6 +41,23 @@ Create an application at <https://discord.com/developers/applications>, add a bo
 **Message Content** privileged intent, and invite it with the `bot` scope and the *Send Messages*,
 *Read Message History* and *Attach Files* permissions. Give the installer the bot token.
 
+## The model provider
+
+The installer asks which provider answers, and writes a new profile for it:
+
+| Answer | What the profile gets | Key it asks for |
+|---|---|---|
+| `deepseek` | nothing: dsh-base's default route, `deepseek-official` | `DEEPSEEK_API_KEY` |
+| `opengateway` | an `llm-pi-ai` route `og` at `https://apis.opengateway.ai/v1` for `deepseek/deepseek-v4.1-flash-ultrafast` (images, DeepSeek's thinking format, efforts off/low/medium/high), and the default model row with effort `medium` | `OG_API_KEY` |
+| `custom` | an `llm-pi-ai` route `custom` for one OpenAI-compatible endpoint: it asks the base URL, the model id, the key's name, the context window and whether the model reads images | the name you gave |
+
+Web search goes through DeepSeek's API whatever answers the chat (dsh-base's `web-search-deepseek`
+row), so with another provider the installer also offers `DEEPSEEK_API_KEY`, which you may skip; the
+`web_search` tool then fails when called. Keys go to `~/.dsh/.env`. A rerun keeps the profile and
+asks only for a key its route names and `.env` lacks. To change the route later, edit the
+`llm-pi-ai` and `agent-default-model` rows of the profile, and restart the gateway; `/model` in `dsh`
+switches one conversation between the models the routes list.
+
 ## Running it
 
 The installer leaves four launchd jobs; each script also takes `--status` and `--uninstall`.
