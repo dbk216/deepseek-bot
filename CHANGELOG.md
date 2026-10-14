@@ -49,6 +49,9 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **A model moved to another route was not told.** After `/model` (or a tenant's or the deployment's
+  model changing), the model took the turns above for its own. The first turn on another route now
+  opens with a `[model changed]` line naming both; an effort step is not a change of model.
 - **The instruction root is kept where the agent works.** The harness reads `AGENTS.md` and
   `CLAUDE.md` from a session's directory up to the nearest `.git`. The `.deepbot-root` marker the
   setup and tenant code wrote was never read by it, so a tenant under a home with a `.git` got the
