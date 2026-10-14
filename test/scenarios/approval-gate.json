@@ -1,5 +1,5 @@
 {
-  "_comment": "OPEN: a destructive command inside the workspace must wait for a human. The gate fires and the file survives (steps 1, 2, 4 pass), but the harness dispatches approval/request with scopeTarget(request.agent, request.agent) and neither the adapter scope nor agent.ctx was reached — the turn then waits until the timeout. The gate is therefore disabled in the profiles (approvalPatterns: []) and this scenario is left failing on step 3 as the record. The gate and the answerer are unit-verified in test/core.test.mjs.",
+  "_comment": "OPEN: a destructive command inside the workspace must wait for a human. The gate fires and the file survives (steps 1, 2, 4 pass), but the harness dispatches approval/request with scopeTarget(request.agent, request.agent) and neither the adapter scope nor agent.ctx was reached — the turn then waits until the timeout. The gate is therefore disabled in the profiles (approvalPatterns: []) and this scenario is left failing on step 3 as the record. The gate and the answerer are unit-verified in test/core.test.ts.",
   "steps": [
     {
       "session": "G",

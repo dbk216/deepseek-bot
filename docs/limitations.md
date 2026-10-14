@@ -80,7 +80,7 @@ decision with a cost.
 INDEX=$(ls -d "$DSH_HOME"/recall/*/ | head -1)recall-index.jsonl
 wc -l "$INDEX"                              # rows: grows as conversations are indexed
 grep -c 'some phrase you said' "$INDEX"     # the phrase reached the index
-node test/run-scenario.mjs test/scenarios/recall-immediate.json
+node test/run-scenario.ts test/scenarios/recall-immediate.json
 ```
 
 If the row count stays flat after conversations, the refresh job is not running:

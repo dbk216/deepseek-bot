@@ -11,7 +11,7 @@
 #   <agent home>/watches/*.json    watches the agent created with its file tools
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "${BASH_SOURCE[0]}")"
 DIR="$(pwd)"
 LABEL="ai.deepbot.watch"
 UID_N="$(id -u)"
@@ -25,6 +25,22 @@ INTERVAL_S="${INTERVAL_S:-60}"
 NODE="${DEEPBOT_NODE:-$(command -v node || echo /usr/local/bin/node)}"
 RUNTIME_DIR="${DEEPBOT_RUNTIME_DIR:-$HOME/.dsh/service}"
 AGENT_HOME="${DEEPBOT_HOME:-$(kept DEEPBOT_HOME)}"; AGENT_HOME="${AGENT_HOME:-$HOME/dsh-agent}"
+
+# The runner is compiled from watch.ts. Its copy keeps the name the plist runs, and .mjs keeps it an ES
+# module outside the package. Without a build it refuses, before writing anything: copying nothing, or
+# a stale runner, is worse than stopping.
+copy_runtime() {
+  [ -f "$DIR/../dist/watch/watch.js" ] || { echo "❌ dist/watch/watch.js not found — build first: pnpm run build"; return 1; }
+  mkdir -p "$RUNTIME_DIR" "$AGENT_HOME/watches" "$HOME/.dsh"
+  cp "$DIR/../dist/watch/watch.js" "$RUNTIME_DIR/watch.mjs"; chmod +x "$RUNTIME_DIR/watch.mjs"
+  echo "✅ runtime copy: $RUNTIME_DIR/watch.mjs"
+  # Watches the agent wrote run inside this runner, read-only; without it they do not run at all.
+  cp "$DIR/../service/confined-runner.sh" "$RUNTIME_DIR/confined-runner.sh"; chmod +x "$RUNTIME_DIR/confined-runner.sh"
+  echo "✅ runtime copy: $RUNTIME_DIR/confined-runner.sh"
+}
+
+# Sourced with DEEPBOT_INSTALL_SOURCED=1 (test/install.test.ts), it defines the above and stops here.
+if [ "${DEEPBOT_INSTALL_SOURCED:-0}" = 1 ]; then return 0; fi
 
 case "${1:-}" in
 --status)
@@ -44,12 +60,7 @@ esac
 
 echo "=== installing the deepbot watch runner ==="
 [ -x "$NODE" ] || { echo "❌ node not found: $NODE"; exit 1; }
-mkdir -p "$RUNTIME_DIR" "$AGENT_HOME/watches" "$HOME/.dsh"
-cp "$DIR/watch.mjs" "$RUNTIME_DIR/watch.mjs"; chmod +x "$RUNTIME_DIR/watch.mjs"
-echo "✅ runtime copy: $RUNTIME_DIR/watch.mjs"
-# Watches the agent wrote run inside this runner, read-only; without it they do not run at all.
-cp "$DIR/../service/confined-runner.sh" "$RUNTIME_DIR/confined-runner.sh"; chmod +x "$RUNTIME_DIR/confined-runner.sh"
-echo "✅ runtime copy: $RUNTIME_DIR/confined-runner.sh"
+copy_runtime || exit 1
 
 cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>

@@ -18,10 +18,10 @@
  * the naive call and to all 31 events with the split.)
  *
  * Usage:
- *   deepbot-recall.mjs index [--out FILE] [--quiet]
- *   deepbot-recall.mjs search <query> [--limit N] [--index FILE]
- *   deepbot-recall.mjs recent [--limit N] [--index FILE]
- *   deepbot-recall.mjs show <sessionId> [--limit N] [--index FILE]
+ *   node dist/recall/deepbot-recall.js index [--out FILE] [--quiet]
+ *   node dist/recall/deepbot-recall.js search <query> [--limit N] [--index FILE]
+ *   node dist/recall/deepbot-recall.js recent [--limit N] [--index FILE]
+ *   node dist/recall/deepbot-recall.js show <sessionId> [--limit N] [--index FILE]
  *
  * Zero dependencies. Node 22+ (needs node:zlib zstd support).
  */
@@ -375,7 +375,7 @@ function removeOldIndex() {
 
 function loadIndex(indexFile) {
   if (!existsSync(indexFile)) {
-    console.error(`no index at ${indexFile} — run: deepbot-recall.mjs index`)
+    console.error(`no index at ${indexFile} — run: node dist/recall/deepbot-recall.js index`)
     process.exit(2)
   }
   return readFileSync(indexFile, 'utf8')
@@ -426,7 +426,7 @@ switch (command) {
 
   case 'search': {
     const query = argv[1]
-    if (!query) { console.error('usage: deepbot-recall.mjs search <query>'); process.exit(2) }
+    if (!query) { console.error('usage: node dist/recall/deepbot-recall.js search <query>'); process.exit(2) }
     const limit = Number(flag('limit', 20))
     // Rank by how many query words a passage contains, not by substring order: a passage that
     // shares the words is more likely to be what was meant, and the index order is just time.
@@ -460,7 +460,7 @@ switch (command) {
 
   case 'show': {
     const sessionId = argv[1]
-    if (!sessionId) { console.error('usage: deepbot-recall.mjs show <sessionId>'); process.exit(2) }
+    if (!sessionId) { console.error('usage: node dist/recall/deepbot-recall.js show <sessionId>'); process.exit(2) }
     const limit = Number(flag('limit', 50))
     const rows = loadIndex(flag('index', INDEX_DEFAULT)).filter((r) => r.sessionId === sessionId).slice(-limit)
     console.log(`${rows.length} message(s) in ${sessionId}`)

@@ -10,7 +10,7 @@ is built before the thing it stands on. The detailed history of each milestone i
 2. **Automate the verification before doing the work.** A fix for something observed failing comes
    with a test that failed first.
 3. **Two gates, always:** `pnpm run typecheck` and `pnpm test`. A real-model scenario
-   (`node test/run-scenario.mjs test/scenarios/<name>.json`) for anything the model has to do.
+   (`node test/run-scenario.ts test/scenarios/<name>.json`) for anything the model has to do.
 4. **Say what is unverified** — in the commit, in this file, in the README — in the same change
    that makes the claim.
 5. **The live instance stays up.** Changes reach it by reinstalling or restarting a supervised

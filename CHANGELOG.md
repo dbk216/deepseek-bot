@@ -5,6 +5,15 @@ the caveat about version numbers is at the bottom.
 
 ## Unreleased
 
+### Changed
+
+- **The suites, the tools and the runtime scripts are TypeScript.** The suites run as `.ts` under
+  Node's type stripping (Node 22.18 or newer, no flag) and `pnpm run typecheck` checks them with
+  `test/tsconfig.json`. The health probe, the watch runner and `tools/` are compiled into `dist/`;
+  `install-health.sh` and `install-watch.sh` copy the build under the deployed names
+  (`health-check.mjs`, `watch.mjs`) and refuse without one. `pnpm persona` and `pnpm qa:slack` run
+  from `dist/tools/`.
+
 ### Added
 
 - **Install in one line**: `curl -fsSL …/install.sh | bash` fetches, builds, scaffolds the home and

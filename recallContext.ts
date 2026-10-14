@@ -3,8 +3,8 @@
  *
  * Recall used to end where a search ends: the agent ran the index CLI with bash and read raw
  * passages, so a question about last week produced a dump and left the model to be clever about
- * it. This ranks passages in-process — the same word-overlap ranking `recall/deepbot-recall.mjs`
- * uses, which `test/recall.test.mjs` pins — and asks for the implication instead of the passages.
+ * it. This ranks passages in-process — the same word-overlap ranking `recall/deepbot-recall.ts`
+ * uses, which `test/recall.test.ts` pins — and asks for the implication instead of the passages.
  *
  * The implication is written by the model, not guessed here: only a model reads intent. What this
  * decides is which few passages are worth showing.

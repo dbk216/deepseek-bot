@@ -11,7 +11,7 @@
 # heals itself stays quiet. Alerts are rate-limited.
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "${BASH_SOURCE[0]}")"
 DIR="$(pwd)"
 
 LABEL="ai.deepbot.health"
@@ -25,6 +25,25 @@ DEEPBOT_ALERT_TO="${DEEPBOT_ALERT_TO-$(kept DEEPBOT_ALERT_TO)}"
 INTERVAL_S="${INTERVAL_S:-300}"
 NODE="${DEEPBOT_NODE:-$(command -v node || echo /usr/local/bin/node)}"
 RUNTIME_DIR="${DEEPBOT_RUNTIME_DIR:-$HOME/.dsh/service}"
+
+# The probe is compiled from health-check.ts. Its copy keeps the name the plist, install.sh and the docs
+# run, and .mjs keeps it an ES module outside the package. Without a build it refuses, before writing
+# anything: copying nothing, or a stale probe, is worse than stopping.
+copy_runtime() {
+  [ -f "$DIR/../dist/service/health-check.js" ] || { echo "❌ dist/service/health-check.js not found — build first: pnpm run build"; return 1; }
+  # Runtime copy outside TCC-protected folders, like the gateway itself.
+  mkdir -p "$RUNTIME_DIR" "$HOME/.dsh/slack-state"
+  cp "$DIR/../dist/service/health-check.js" "$RUNTIME_DIR/health-check.mjs"
+  chmod +x "$RUNTIME_DIR/health-check.mjs"
+  echo "✅ runtime copy: $RUNTIME_DIR/health-check.mjs"
+  # The probe rotates logs with this, from its own directory; without the copy it never did.
+  cp "$DIR/rotate-logs.sh" "$RUNTIME_DIR/rotate-logs.sh"
+  chmod +x "$RUNTIME_DIR/rotate-logs.sh"
+  echo "✅ runtime copy: $RUNTIME_DIR/rotate-logs.sh"
+}
+
+# Sourced with DEEPBOT_INSTALL_SOURCED=1 (test/install.test.ts), it defines the above and stops here.
+if [ "${DEEPBOT_INSTALL_SOURCED:-0}" = 1 ]; then return 0; fi
 
 case "${1:-}" in
 --status)
@@ -47,17 +66,7 @@ esac
 
 echo "=== installing the deepbot health probe ==="
 [ -x "$NODE" ] || { echo "❌ node not found: $NODE (set DEEPBOT_NODE)"; exit 1; }
-[ -f "$DIR/health-check.mjs" ] || { echo "❌ health-check.mjs not found next to this script"; exit 1; }
-
-# Runtime copy outside TCC-protected folders, like the gateway itself.
-mkdir -p "$RUNTIME_DIR" "$HOME/.dsh/slack-state"
-cp "$DIR/health-check.mjs" "$RUNTIME_DIR/health-check.mjs"
-chmod +x "$RUNTIME_DIR/health-check.mjs"
-echo "✅ runtime copy: $RUNTIME_DIR/health-check.mjs"
-# The probe rotates logs with this, from its own directory; without the copy it never did.
-cp "$DIR/rotate-logs.sh" "$RUNTIME_DIR/rotate-logs.sh"
-chmod +x "$RUNTIME_DIR/rotate-logs.sh"
-echo "✅ runtime copy: $RUNTIME_DIR/rotate-logs.sh"
+copy_runtime || exit 1
 
 cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>

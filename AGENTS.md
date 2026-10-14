@@ -62,7 +62,7 @@ Define success criteria. Loop until verified.
 - **See it fail for the reason you claim.** A "red" run made by stashing a whole file failed because a
   getter was gone, not because of the defect; a mutant crashed before it reached the check. Remove
   only the line under test, and read why it failed.
-- **Never pipe a suite into `head` in a gate.** `node test/x.mjs | head -3` closes the pipe, node dies
+- **Never pipe a suite into `head` in a gate.** `node test/x.ts | head -3` closes the pipe, node dies
   of EPIPE, and the exit status says 1 for a suite that passed. Four rounds went into chasing a
   "flaky guard" that was this. Run suites with output to a file and read the exit code.
 - **Gate on both: `pnpm run typecheck` and `pnpm test`.** One commit reached `origin` with a type
@@ -79,7 +79,7 @@ Define success criteria. Loop until verified.
 - **Never run an installer from a test.** `install.sh` and the `install-*.sh` scripts clone, build
   and call `launchctl`. Their logic is tested by sourcing `install.sh` with
   `DEEPBOT_INSTALL_SOURCED=1`, which defines its functions and runs nothing.
-- **Verify where it runs.** `node test/run-scenario.mjs test/scenarios/<name>.json` against a real
+- **Verify where it runs.** `node test/run-scenario.ts test/scenarios/<name>.json` against a real
   model (not in CI; `service/run-scenarios.sh` runs the set daily), then restart the live bot and
   read `node ~/.dsh/service/health-check.mjs --status`.
 - **One heavy job at a time.** Suites, scenarios and review agents run one after another, never side
@@ -91,7 +91,7 @@ Define success criteria. Loop until verified.
   to directly. History on `master` is never rewritten without the owner saying so.
 - **The repository is public and names nobody.** No home paths, account names, workspace or channel
   ids, or people's names — in files, fixtures, commit messages or author fields. Scenarios write
-  paths as `{HOME}`; `test/secrets.test.mjs` scans the tree for token shapes. Before committing,
+  paths as `{HOME}`; `test/secrets.test.ts` scans the tree for token shapes. Before committing,
   `git config user.email` must be the repository's own identity, not a personal or company one.
 - **A commit message says what was wrong, what changed, how it was checked, and what is still
   unverified.** No tool attribution lines.
@@ -107,13 +107,19 @@ Define success criteria. Loop until verified.
 - Profiles live outside the repository (`~/.dsh/profiles/`); a `config:` block **replaces the whole
   config**, so a new `- id: deepbot` row must restate every setting it means to keep.
   `profile/cordis.patch.yml` is the template the installer copies.
-- `test/profile.test.mjs` checks the composed posture, because profile edits have silently changed
+- `test/profile.test.ts` checks the composed posture, because profile edits have silently changed
   it three times.
 - **A deployment runs copies.** The launcher, the sandbox runner, the health probe and the watch
   runner are copied to `~/.dsh/service`, outside the agent home, so nothing the agent can write runs
   unconfined. An edit under `service/` or `watch/` reaches a deployment only when its
   `install-*.sh` is run again; those scripts keep the installed job's settings. The gateway itself
   loads `dist/` from the checkout it was installed from.
+- **The suites are TypeScript that Node runs as it is**, by type stripping (Node 22.18 or newer, no
+  flag). So: erasable syntax only (no `enum`, `namespace` or parameter properties), `import type` for
+  a type, and `.ts` in a relative import. They import the build from `dist/`, not the sources, and
+  `test/tsconfig.json` typechecks them. The health probe, the watch runner and `tools/` are compiled
+  into `dist/`; the probe and the runner are deployed under their old names, `health-check.mjs` and
+  `watch.mjs`, and their installers refuse without a build.
 - **The recall index is not in the agent home.** `recallIndexPath` puts it under the harness home
   (`$DSH_HOME/recall/<home>-<hash>/`). The indexer writes it, only the adapter reads it, and the
   sandbox denies it to the agent's commands. Passages are injected per channel.
@@ -145,7 +151,7 @@ Define success criteria. Loop until verified.
 | `profile/`, `cordis.patch.yml` | the gateway profile template, and the bundle's own patch |
 | `agent/` | templates for a new agent home: `SOUL.md`, `AGENTS.md`, `USER.md`, `MEMORY.md` |
 | `types/` | hand-written types for the harness and the platforms |
-| `test/` | unit suites (`*.test.mjs`), real-model scenarios (`scenarios/`), the fake transport |
+| `test/` | unit suites (`*.test.ts`), real-model scenarios (`scenarios/`), the fake transport |
 | `tools/` | persona check, a live Slack QA script, the secret patterns |
 | `docs/` | setup, how it works, limitations, harness API notes |
 | `SPEC.md`, `PLAN.md`, `CHANGELOG.md` | what it is for; what is done, open and unverified; what changed |

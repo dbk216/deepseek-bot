@@ -41,28 +41,28 @@ Each line is traceable to code and to something that checks it.
 
 | It | Where | Checked by |
 |---|---|---|
-| Serves Slack over **Socket Mode**: receive, reply in thread, chunk long answers, drop duplicate events | `transports/slack.ts` | `test/slack.test.mjs` 54/54; `tools/qa-slack.mjs` against a live workspace |
-| Serves **Telegram** by long polling | `transports/telegram.ts` | `test/telegram.test.mjs` 41/41 |
-| Serves **Discord** (gateway websocket + REST), with buttons for approvals | `transports/discord.ts` | `test/discord.test.mjs` 38/38 |
-| Serves a **terminal** (`deepbot-tui`) over a local socket, beside Slack or alone: streamed answers, approval buttons, a turn's questions, its subagents and shells | `transports/local.ts`, `transports/composite.ts`, `tui/` | `test/local.test.mjs` 132/132, `test/tui-*.test.mjs`; `test/tui-live.mjs` 11/11 against a model |
-| Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.mjs` 152/152; `test/scenarios/restart-1.json` + `restart-2.json` |
-| Injects **persona and notes** (`SOUL.md`/`USER.md`/`MEMORY.md` from the adapter, `AGENTS.md` from `dsh-agent-instructions`), without re-sending them every turn | `index.ts` | `test/core.test.mjs`; `test/scenarios/persona.json` 4/4 |
-| **Recalls past conversations** — rank passages, then ask for what they imply | `recall/`, `recallContext.ts` | `test/recall.test.mjs` 13/13; `test/recall-context.test.mjs` 25/25 |
-| Reads the **thread it was mentioned in**, as a delta | `transports/slack.ts` | `test/history.test.mjs` 9/9 |
-| Sends an attached **image** to the model as an image | `transports/attachments.ts`, `index.ts` | `test/attachments.test.mjs` 13/13; `vision.json` needs a model |
+| Serves Slack over **Socket Mode**: receive, reply in thread, chunk long answers, drop duplicate events | `transports/slack.ts` | `test/slack.test.ts` 54/54; `tools/qa-slack.ts` against a live workspace |
+| Serves **Telegram** by long polling | `transports/telegram.ts` | `test/telegram.test.ts` 41/41 |
+| Serves **Discord** (gateway websocket + REST), with buttons for approvals | `transports/discord.ts` | `test/discord.test.ts` 38/38 |
+| Serves a **terminal** (`deepbot-tui`) over a local socket, beside Slack or alone: streamed answers, approval buttons, a turn's questions, its subagents and shells | `transports/local.ts`, `transports/composite.ts`, `tui/` | `test/local.test.ts` 132/132, `test/tui-*.test.ts`; `test/tui-live.ts` 11/11 against a model |
+| Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.ts` 152/152; `test/scenarios/restart-1.json` + `restart-2.json` |
+| Injects **persona and notes** (`SOUL.md`/`USER.md`/`MEMORY.md` from the adapter, `AGENTS.md` from `dsh-agent-instructions`), without re-sending them every turn | `index.ts` | `test/core.test.ts`; `test/scenarios/persona.json` 4/4 |
+| **Recalls past conversations** — rank passages, then ask for what they imply | `recall/`, `recallContext.ts` | `test/recall.test.ts` 13/13; `test/recall-context.test.ts` 25/25 |
+| Reads the **thread it was mentioned in**, as a delta | `transports/slack.ts` | `test/history.test.ts` 9/9 |
+| Sends an attached **image** to the model as an image | `transports/attachments.ts`, `index.ts` | `test/attachments.test.ts` 13/13; `vision.json` needs a model |
 | Produces **documents** (docx, pptx, xlsx) | `profile/cordis.patch.yml` office rows | `test/scenarios/document.json` asserts the artifacts |
-| Asks the user to **approve** a destructive command, in the conversation — with buttons on every platform | `index.ts`, `transports/*.ts` | approval checks in `test/core.test.mjs`; `approval-gate.json` records one open gap |
-| Confines **reads**, for commands and for the file tools — other agents' homes, credentials, the session store, the gateway's logs, the user's agent sockets | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.mjs` 35/35; `test/edges.test.mjs` 19/19 |
-| Flags **instruction-like text** in fetched material | `injection.ts` | `test/injection.test.mjs` 31/31 |
-| **Uploads the documents a turn made** (pdf, docx, xlsx, pptx, csv changed during the turn, whose path the answer names, with one link and inside the home; on Slack it needs `files:write`) | `index.ts`, `transports/*.ts` | `test/core.test.mjs` 152/152; `test/slack.test.mjs` |
-| Runs **one turn at a time per conversation**; a later message waits, and a stop withdraws what is waiting | `index.ts` | `test/failures.test.mjs` 32/32 |
-| Shows it is **working at once** with the platform's own indicator (Slack's thread status, typing elsewhere), or a progress message where that is refused | `progress.ts`, `index.ts` | `test/progress.test.mjs` 22/22; `test/core.test.mjs` |
+| Asks the user to **approve** a destructive command, in the conversation — with buttons on every platform | `index.ts`, `transports/*.ts` | approval checks in `test/core.test.ts`; `approval-gate.json` records one open gap |
+| Confines **reads**, for commands and for the file tools — other agents' homes, credentials, the session store, the gateway's logs, the user's agent sockets | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.ts` 35/35; `test/edges.test.ts` 19/19 |
+| Flags **instruction-like text** in fetched material | `injection.ts` | `test/injection.test.ts` 31/31 |
+| **Uploads the documents a turn made** (pdf, docx, xlsx, pptx, csv changed during the turn, whose path the answer names, with one link and inside the home; on Slack it needs `files:write`) | `index.ts`, `transports/*.ts` | `test/core.test.ts` 152/152; `test/slack.test.ts` |
+| Runs **one turn at a time per conversation**; a later message waits, and a stop withdraws what is waiting | `index.ts` | `test/failures.test.ts` 32/32 |
+| Shows it is **working at once** with the platform's own indicator (Slack's thread status, typing elsewhere), or a progress message where that is refused | `progress.ts`, `index.ts` | `test/progress.test.ts` 22/22; `test/core.test.ts` |
 | **Stops** a running turn on request, and on its own timeout | `index.ts` | `test/scenarios/interrupt.json` |
-| Reports **token usage** without starting a turn | `usage.ts` | `test/usage.test.mjs` 19/19 |
-| Delivers **reminders** and **watches** — speaking first, but only when asked to; a watch the agent wrote runs read-only in the sandbox | `watch/`, schedule bundle | `test/watch.test.mjs` 22/22; `test/delivery.test.mjs` 9/9 |
-| Publishes **health** so an external probe can restart a disconnected bot | `service/health-check.mjs` | `PLAN.md` M3: injected unhealthy state → restart → recovered |
-| Gives each conversation group its own **workspace** (tenants) | `index.ts` | tenant checks in `test/core.test.mjs`; `test/scenarios/tenant.json` |
-| Prunes its own bookkeeping so a long-running process does not grow forever | `index.ts` (`stateRetentionDays`) | `test/resources.test.mjs` 8/8 |
+| Reports **token usage** without starting a turn | `usage.ts` | `test/usage.test.ts` 19/19 |
+| Delivers **reminders** and **watches** — speaking first, but only when asked to; a watch the agent wrote runs read-only in the sandbox | `watch/`, schedule bundle | `test/watch.test.ts` 22/22; `test/delivery.test.ts` 9/9 |
+| Publishes **health** so an external probe can restart a disconnected bot | `service/health-check.ts` | `PLAN.md` M3: injected unhealthy state → restart → recovered |
+| Gives each conversation group its own **workspace** (tenants) | `index.ts` | tenant checks in `test/core.test.ts`; `test/scenarios/tenant.json` |
+| Prunes its own bookkeeping so a long-running process does not grow forever | `index.ts` (`stateRetentionDays`) | `test/resources.test.ts` 8/8 |
 
 ## Does it work? How to read the claims
 
@@ -70,7 +70,7 @@ Three kinds of evidence appear in this repository, and they are not equivalent:
 
 1. **Unit suites** (`pnpm test`) drive `apply()` against mocks — a fake context, fake transports,
    fake Slack/Discord/Telegram APIs. No harness install, no network, no account. They run in CI.
-2. **Scenarios** (`test/run-scenario.mjs`) boot a real profile and call a real model. They prove
+2. **Scenarios** (`test/run-scenario.ts`) boot a real profile and call a real model. They prove
    behaviour, and they need a model credential, so **CI does not run them**.
 3. **Live checks** were made against a running deployment and are recorded here, in `PLAN.md`, or
    in a code comment with the measurement next to it.
@@ -95,7 +95,7 @@ suites on Node 22 with `pnpm run typecheck` in front of them.
 | Streaming tokens into Slack | **not implemented** — the answer arrives whole, after the working status |
 | Semantic/vector recall | **not implemented** — ranking is lexical, so a paraphrase can miss |
 | Browser automation | **not implemented** — link reading is an HTTP fetch |
-| Per-tenant *permission* preset | **not supported** — `permission` is read and never applied (`TODO` in `test/core.test.mjs`) |
+| Per-tenant *permission* preset | **not supported** — `permission` is read and never applied (`TODO` in `test/core.test.ts`) |
 
 ## How it works
 
@@ -109,7 +109,7 @@ buttons })`, `fetchHistory`, `fetchAttachments`, `identity()`, optional `permali
 `uploadFile`, `startTyping` and `remove`, and a `supportsButtons` flag the core reads rather than
 assumes.
 
-`platform: 'slack' | 'telegram' | 'discord'` selects one. `test/fake-transport.mjs` supplies a
+`platform: 'slack' | 'telegram' | 'discord'` selects one. `test/fake-transport.ts` supplies a
 fourth, which is how the core is tested with no platform account at all.
 
 ### Sessions
@@ -141,7 +141,7 @@ instance that runs is mounted inside the `standard` agent preset with the defaul
 disabled. This README used to say otherwise, and from 2026-10-10 to 2026-10-13 the live bot ran
 without its persona — asked "how can I use you, <name>?", it wrote a message *to* <name> instead of
 answering. The adapter now puts those three files at the top of its own standing block (below), so
-they are sent once per conversation and again only when they change. `test/core.test.mjs` checks
+they are sent once per conversation and again only when they change. `test/core.test.ts` checks
 they reach the model and `AGENTS.md` does not go twice; `test/scenarios/persona.json` checks it
 against a real model, with file tools forbidden so the model cannot read `SOUL.md` itself.
 
@@ -201,7 +201,7 @@ wires up what it does not turn on by default, and adds the consumer the agent pl
   gets the best matches; one that does not gets them only when a passage shares at least two rare
   words with it — so "did anyone say 테스트-1234?" is answered, and an ordinary message is not
   interrupted. Lexical still: a paraphrase with no word in common is missed.
-  `test/recall.test.mjs`, `test/recall-context.test.mjs` 25/25, `test/core.test.mjs`.
+  `test/recall.test.ts`, `test/recall-context.test.ts` 25/25, `test/core.test.ts`.
 
 ## Memory: the layers, and who writes what
 
@@ -223,14 +223,14 @@ these budgets:
 | `MEMORY.md` | durable facts about the work | 4,000 chars | as you learn them |
 
 An over-budget file is **truncated silently**: the tail simply stops being part of the prompt,
-with nothing logged. `tools/persona-check.mjs` exists for that — it reports the exact overflow,
+with nothing logged. `tools/persona-check.ts` exists for that — it reports the exact overflow,
 warns when the same fact is written into two files (it would be injected twice), warns about
 undated lines, and refuses on a secret, which would otherwise be in every prompt and every
 session log.
 
 ```bash
 $EDITOR ~/dsh-agent/SOUL.md                             # make it yours
-node ~/.deepbot/tools/persona-check.mjs ~/dsh-agent     # budgets, duplicated facts, secrets
+node ~/.deepbot/dist/tools/persona-check.js ~/dsh-agent # budgets, duplicated facts, secrets
 ```
 
 Note hygiene is deliberately small: `notes.ts` counts characters and repeated lines and asks the
@@ -250,7 +250,7 @@ core asks and the transport decides. Only the requester's answer counts by defau
 (`runTimeoutMs`, fifteen minutes).
 
 The answerer, the buttons, the timeout and the same-user rule are unit-verified in
-`test/core.test.mjs`. Two things are honestly less than that:
+`test/core.test.ts`. Two things are honestly less than that:
 
 - **The shipped profile fails closed.** `defaultPreset: unattended` is
   `{ sandbox: workspace-write, approval: never }`: an escalation is refused rather than asked,
@@ -309,7 +309,7 @@ at `$DEEPBOT_READ_PROFILE`; nothing in this repository generates it.)
 
 A read outside those roots is denied with a reason the model can act on — "ask the user to put the
 file there, or to paste its contents". Symlinks are resolved when the path exists, so a link
-inside the workspace that points outside it does not count as inside (`test/edges.test.mjs` pins
+inside the workspace that points outside it does not count as inside (`test/edges.test.ts` pins
 that with a symlink to `/etc/hosts`), and with tenant isolation on, the readable roots follow the
 **speaking conversation** rather than the shared home.
 
@@ -421,7 +421,7 @@ platform cannot delete, the answer edits the progress message instead. Edits are
 (`progressUpdateMs`, 2.5 s) because every edit is a rate-limited API call: the message says roughly
 what is happening, not every step. Renders are serial per conversation and the answer waits for
 them, so a second message in the same thread cannot post a second progress message that nothing
-replaces (`test/core.test.mjs`, with a post that takes 150 ms). A turn whose completion fails still
+replaces (`test/core.test.ts`, with a post that takes 150 ms). A turn whose completion fails still
 gives way to the failure, so nothing is left claiming to be working.
 
 `progressAfterMs: 0` no longer silences Slack: to post nothing until the answer, set
@@ -429,7 +429,7 @@ gives way to the failure, so nothing is left claiming to be working.
 progress message, posted before the history is read, is not quoted back to the model.
 
 Not verified on a live Discord or Telegram server: typing is checked against the mocked APIs in
-`test/discord.test.mjs` and `test/telegram.test.mjs`, the same as the rest of those transports.
+`test/discord.test.ts` and `test/telegram.test.ts`, the same as the rest of those transports.
 
 The rule worth knowing when changing this code lives in `progress.ts`, tested with no agent and no
 platform: create once, edit after, never leave it behind. An orphaned "working on it" is worse than
@@ -534,8 +534,8 @@ instance (it boots `agent-test` with a `--patch` overlay that serves only the so
 - **Reminders** use the schedule bundle: the agent creates one, the wall clock fires it, and the
   schedule takes a turn in the session by itself. The adapter does not drive that turn — it
   delivers assistant messages for session ids it is not currently driving, which is
-  `test/delivery.test.mjs` 9/9 and `test/scenarios/reminder.json`.
-- **Watches** ("tell me when this changes") are `watch/watch.mjs`, installed as a launchd job by
+  `test/delivery.test.ts` 9/9 and `test/scenarios/reminder.json`.
+- **Watches** ("tell me when this changes") are `watch/watch.ts`, installed as a launchd job by
   `watch/install-watch.sh` (evaluated every 60 s by default). Watch definitions come from
   `~/.dsh/watches.json` and from `<agent home>/watches/*.json`, merged by id — the second location
   is how the agent authors its own. The first observation is a **baseline** and never alerts; a
@@ -548,10 +548,10 @@ instance (it boots `agent-test` with a `--patch` overlay that serves only the so
   a host watch's id is confined too; without the runner such a watch does not run; only plain files
   under 64 KiB are read from the agent's watches directory (a FIFO there stopped every watch), and
   an id must be a plain name (`__proto__` skipped the baseline). Its output is still posted to
-  Slack. `test/watch.test.mjs` 22/22.
+  Slack. `test/watch.test.ts` 22/22.
 - **Health.** A process that is running but disconnected looks perfectly healthy from outside —
   that is how a 57-minute outage went unnoticed. The plugin publishes what it knows to
-  `<stateDir>/health.json`, and `service/health-check.mjs` diagnoses it (no file, not connected, or
+  `<stateDir>/health.json`, and `service/health-check.ts` diagnoses it (no file, not connected, or
   stale/wedged). On unhealthy it restarts the service, waits for recovery, and only then alerts, so
   a blip that heals itself stays quiet; alerts are rate-limited because an alert storm is its own
   outage. `service/install-health.sh` installs it as a 5-minute job, and `service/rotate-logs.sh`
@@ -576,7 +576,7 @@ Tokens come from the harness's `tokenUsage` session projection, which reports **
 totals for a session. The tracker stores the last snapshot per session and adds only the growth,
 so the running total survives a restart; a session whose totals go down — compaction, or a
 different log — is treated as a new baseline rather than a negative delta. All of that is
-`test/usage.test.mjs` 19/19.
+`test/usage.test.ts` 19/19.
 
 Money is deliberately absent. The harness exposes no price for a model, so a price table here
 would be a number nobody could check: the summary reports tokens and says why.
@@ -611,11 +611,11 @@ the refusal names what it *is* allowed to read.
 fail to read it by name, fail to find it in its own directory, and fail to reach it by walking up
 and across (`../acme/...`). `tenantPolicies` gives a tenant its own agent preset, model and
 persona, with the deployment's settings as the default and a refusal that names the tenant when a
-preset does not exist — all verified by checks in `test/core.test.mjs`.
+preset does not exist — all verified by checks in `test/core.test.ts`.
 
 **A per-tenant *permission* preset is not supported.** The `permission` key is read into the
 policy, but the session-level call that would apply it never executes, and the check for it is a
-`TODO` printed by `test/core.test.mjs` rather than a passing one. Treat it as unsupported.
+`TODO` printed by `test/core.test.ts` rather than a passing one. Treat it as unsupported.
 
 **A YAML trap worth knowing:** a key containing a colon must be quoted. `scenario:T1: acme` parses
 as the key `scenario` with the value `T1: acme`, so isolation silently does nothing — which is
@@ -632,7 +632,7 @@ not quote the attack back** — a warning that repeats the payload delivers it t
 **This is a mitigation, not a boundary.** What decides is elsewhere: the read scope refuses files
 outside the workspace, the sandbox runner refuses other instances' data, and destructive commands
 ask a human. This layer makes an attempt visible to the model at the point of use and to the
-operator in the log, instead of silent. `test/injection.test.mjs` (31/31) weights the benign cases
+operator in the log, instead of silent. `test/injection.test.ts` (31/31) weights the benign cases
 as heavily as the attacks, because a guard that flags ordinary conversation is a guard nobody
 reads.
 
@@ -641,7 +641,7 @@ reads.
 ```bash
 pnpm test                     # 21 suites, no harness, no network, no account
 pnpm test:profile             # the composed posture of the installed profiles
-node test/run-scenario.mjs    # default: test/scenarios/recall.json (needs a model credential)
+node test/run-scenario.ts    # default: test/scenarios/recall.json (needs a model credential)
 ```
 
 `pnpm test:profile` reads what the harness actually composes for the profiles you name (default
@@ -652,7 +652,7 @@ approval policy, read isolation. 24/24 on this machine. It needs the profiles in
 
 A scenario is a JSON file of steps executed against the real services in an isolated instance —
 its own profile, its own fresh agent home, its own index and port, and it never connects to Slack.
-`node test/run-scenario.mjs test/scenarios/<name>.json` exits 0 when every step passed, 1 when a
+`node test/run-scenario.ts test/scenarios/<name>.json` exits 0 when every step passed, 1 when a
 step failed, 2 on setup problems. Flags: `--timeout <s>`, `--seed <file>`, `--dump <file>`,
 `--keep`.
 
@@ -679,7 +679,7 @@ Named shortcuts exist for the common ones (`pnpm test:doc`, `test:vision`, `test
 `test:approval-gate`, `test:interrupt`, `test:immediate`, ...; the full list is in
 `package.json`). `service/run-scenarios.sh` runs the set unattended, writes
 `$DSH_HOME/slack-state/scenario-report.txt`, takes a lock so two runs cannot share state, and runs
-`--quick` (interrupt and approval-gate) when asked. `test/dist-fresh.mjs` guards the scenario
+`--quick` (interrupt and approval-gate) when asked. `test/dist-fresh.ts` guards the scenario
 runner too, so a scenario can never run a stale build.
 
 ## Changing the voice
@@ -695,7 +695,7 @@ Two things worth knowing before editing them:
 - The bot's **own** messages — approvals, stops, progress notes — sit in the conversation, and the
   model copies the voice around it: one polite string pulls replies toward that register no matter
   what the persona file says. Those strings live in `index.ts`, and the core suite reads that file
-  and fails if an honorific ending comes back (`test/core.test.mjs`, its last check).
+  and fails if an honorific ending comes back (`test/core.test.ts`, its last check).
 - The persona files are read on every turn, so a rule added there takes effect immediately — but a
   *contradictory* rule does not win by being newer. It wins by being specific.
 

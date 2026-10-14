@@ -69,7 +69,7 @@ for name in $LIST; do
     (cd test/fixtures && python3 -m http.server 8899 --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > /tmp/deepbot-qa-server.pid)
     sleep 2
   fi
-  out=$("$NODE" test/run-scenario.mjs "$file" --timeout "$TIMEOUT" 2>&1)
+  out=$("$NODE" test/run-scenario.ts "$file" --timeout "$TIMEOUT" 2>&1)
   status=$?
   if [ "$name" = "browser" ] && [ -f /tmp/deepbot-qa-server.pid ]; then
     kill "$(cat /tmp/deepbot-qa-server.pid)" 2>/dev/null

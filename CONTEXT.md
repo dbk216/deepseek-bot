@@ -82,7 +82,7 @@ Never say just "home".
 
 ## Checking it
 
-- **suite** — a unit test file, `test/<name>.test.mjs`, run without a model.
+- **suite** — a unit test file, `test/<name>.test.ts`, that Node runs as TypeScript, without a model.
 - **scenario** — a scripted conversation run against a real model in a throwaway agent home
   (`test/scenarios/*.json`).
 - **health file**, **probe** — what the gateway writes about itself, and the job that reads it,

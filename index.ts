@@ -2963,5 +2963,5 @@ export function apply(ctx, config) {
 
 // Re-exported at the end of the module: `defaults` must be read after DEFAULTS is
 // initialized, and an export placed above the declaration throws at import time.
-// tools/persona-check.mjs reads the real budgets instead of a copy that drifts.
+// tools/persona-check.ts reads the real budgets instead of a copy that drifts.
 export { DEFAULTS as defaults }
