@@ -8,6 +8,7 @@
  *
  * Run: node test/persona-check.test.ts
  */
+import './dist-fresh.ts'   // fails loudly on a stale dist
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

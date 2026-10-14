@@ -9,7 +9,7 @@
  * Run: node test/install.test.ts
  */
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -75,9 +75,9 @@ for (const file of ['service/install-health.sh', 'service/rotate-logs.sh', 'serv
   mkdirSync(dirname(join(repo, file)), { recursive: true })
   copyFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), join(repo, file))
 }
-for (const [installer, built, copy] of [
-  ['service/install-health.sh', 'dist/service/health-check.js', 'health-check.mjs'],
-  ['watch/install-watch.sh', 'dist/watch/watch.js', 'watch.mjs'],
+for (const [installer, built, copy, source] of [
+  ['service/install-health.sh', 'dist/service/health-check.js', 'health-check.mjs', 'service/health-check.ts'],
+  ['watch/install-watch.sh', 'dist/watch/watch.js', 'watch.mjs', 'watch/watch.ts'],
 ]) {
   // Sourced, an installer must stop before its first launchctl; one that would not is never sourced here.
   const text = readFileSync(join(repo, installer), 'utf8')
@@ -99,10 +99,19 @@ for (const [installer, built, copy] of [
   const missing = copyStep()
   check(`${installer}: without a build it refuses and says to build`, missing.code !== 0 && missing.out.includes('build first: pnpm run build'), missing.out)
   check(`${installer}: and writes nothing`, !existsSync(runtime))
+  // The source, older than the build that is about to be written.
+  writeFileSync(join(repo, source), `// ${source}\n`)
+  utimesSync(join(repo, source), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
   mkdirSync(dirname(join(repo, built)), { recursive: true })
   writeFileSync(join(repo, built), `// compiled ${built}\n`)
   const copied = copyStep()
   check(`${installer}: it copies ${built} to ${copy}`, copied.code === 0 && existsSync(join(runtime, copy)) && readFileSync(join(runtime, copy), 'utf8') === `// compiled ${built}\n`, copied.out.split('\n')[0])
+  // An edit to the source after the last build: the copy would deploy what the source no longer says.
+  writeFileSync(join(repo, source), `// ${source}, edited\n`)
+  utimesSync(join(repo, source), new Date(Date.now() + 60_000), new Date(Date.now() + 60_000))
+  writeFileSync(join(runtime, copy), 'the copy already deployed\n')
+  const stale = copyStep()
+  check(`${installer}: a build older than ${source} is refused, and the deployed copy is left as it was`, stale.code !== 0 && stale.out.includes('older than') && stale.out.includes('pnpm run build') && readFileSync(join(runtime, copy), 'utf8') === 'the copy already deployed\n', stale.out)
 }
 
 rmSync(dir, { recursive: true, force: true })

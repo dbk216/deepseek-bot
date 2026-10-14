@@ -31,6 +31,7 @@ AGENT_HOME="${DEEPBOT_HOME:-$(kept DEEPBOT_HOME)}"; AGENT_HOME="${AGENT_HOME:-$H
 # a stale runner, is worse than stopping.
 copy_runtime() {
   [ -f "$DIR/../dist/watch/watch.js" ] || { echo "❌ dist/watch/watch.js not found — build first: pnpm run build"; return 1; }
+  [ "$DIR/watch.ts" -nt "$DIR/../dist/watch/watch.js" ] && { echo "❌ dist/watch/watch.js is older than watch.ts — build first: pnpm run build"; return 1; }
   mkdir -p "$RUNTIME_DIR" "$AGENT_HOME/watches" "$HOME/.dsh"
   cp "$DIR/../dist/watch/watch.js" "$RUNTIME_DIR/watch.mjs"; chmod +x "$RUNTIME_DIR/watch.mjs"
   echo "✅ runtime copy: $RUNTIME_DIR/watch.mjs"

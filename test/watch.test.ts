@@ -15,6 +15,7 @@
  * Run: node test/watch.test.ts
  */
 
+import './dist-fresh.ts'   // fails loudly on a stale dist
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

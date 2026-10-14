@@ -21,7 +21,8 @@
  *       { "id": "disk", "name": "disk free", "command": "df -h / | tail -1",
  *         "intervalSeconds": 300, "channel": "U0123", "rateLimitMinutes": 30 } ] }
  *
- * Usage: node watch.mjs [--config FILE] [--state FILE] [--dry-run] [--force]
+ * Usage: node ~/.dsh/service/watch.mjs [--config FILE] [--state FILE] [--dry-run] [--force]
+ *        (the deployed copy of dist/watch/watch.js, which runs the same way)
  * Exit:  0 nothing to do, 1 at least one alert was emitted, 2 setup problem
  */
 

@@ -45,6 +45,9 @@ trap 'rm -rf "$LOCK"' EXIT INT TERM
 
 cd "$REPO" || exit 1
 [ -x "$NODE" ] || { echo "run-scenarios: no node at $NODE" >&2; exit 1; }
+# test/run-scenario.ts runs as TypeScript, which Node does without a flag from 22.18.
+"$NODE" -e 'process.exit(process.features.typescript ? 0 : 1)' 2>/dev/null \
+  || { echo "run-scenarios: $NODE cannot run test/run-scenario.ts — it needs Node 22.18 or newer (set DEEPBOT_NODE)" >&2; exit 1; }
 [ -f dist/index.js ] || { echo "run-scenarios: dist is missing — build first" >&2; exit 1; }
 
 if [ "$QUICK" = 1 ]; then

@@ -31,6 +31,7 @@ RUNTIME_DIR="${DEEPBOT_RUNTIME_DIR:-$HOME/.dsh/service}"
 # anything: copying nothing, or a stale probe, is worse than stopping.
 copy_runtime() {
   [ -f "$DIR/../dist/service/health-check.js" ] || { echo "❌ dist/service/health-check.js not found — build first: pnpm run build"; return 1; }
+  [ "$DIR/health-check.ts" -nt "$DIR/../dist/service/health-check.js" ] && { echo "❌ dist/service/health-check.js is older than health-check.ts — build first: pnpm run build"; return 1; }
   # Runtime copy outside TCC-protected folders, like the gateway itself.
   mkdir -p "$RUNTIME_DIR" "$HOME/.dsh/slack-state"
   cp "$DIR/../dist/service/health-check.js" "$RUNTIME_DIR/health-check.mjs"

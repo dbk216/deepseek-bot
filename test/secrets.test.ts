@@ -8,6 +8,7 @@
  *
  * Run: node test/secrets.test.ts <dir> [more dirs...]
  */
+import './dist-fresh.ts'   // fails loudly on a stale dist
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
