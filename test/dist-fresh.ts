@@ -74,9 +74,9 @@ if (existsSync(indexerSource) && !existsSync(`${repoRoot}dist/recall/deepbot-rec
   fail('recall/deepbot-recall.ts has no dist/recall/deepbot-recall.js — recall would go stale. Run: pnpm run build')
 }
 
-// The health probe, the watch runner and the tools are run from the build, by their suites and by the
-// installers. A suite run on its own after an edit would otherwise test the build from before it.
-for (const script of ['service/health-check', 'watch/watch', 'tools/persona-check', 'tools/qa-slack', 'tools/secret-patterns']) {
+// The health probe, the watch runner, the tools and `dsh gateway` are run from the build, by their suites
+// and by the installers. A suite run on its own after an edit would otherwise test the build from before it.
+for (const script of ['service/health-check', 'service/gateway', 'tui/cli', 'watch/watch', 'tools/persona-check', 'tools/qa-slack', 'tools/secret-patterns']) {
   const from = `${repoRoot}${script}.ts`, to = `${repoRoot}dist/${script}.js`
   if (!existsSync(from)) continue
   if (!existsSync(to)) fail(`${script}.ts has no dist/${script}.js — run: pnpm run build`)

@@ -7,6 +7,27 @@ the caveat about version numbers is at the bottom.
 
 ### Added
 
+- **`dsh gateway`: connecting a messenger, and running the service.** The installer set up one
+  platform, once; adding another meant editing the profile by hand, and starting or stopping meant
+  `launchctl`. `dsh gateway setup <slack|telegram|discord|local>` saves the tokens to `~/.dsh/.env`
+  (mode 600), checks them with the platform (`auth.test` and `apps.connections.open`, `getMe`,
+  `users/@me`; for Slack, that both tokens are from one app), adds the platform, channels and people
+  to the profile's deepbot row without touching any other line, restarts the gateway and waits for
+  it to connect — with several platforms, a few seconds more for another reporting an error. `*` for
+  the channels, which the platforms share, needs `--yes` when another platform is served. `remove`,
+  `start`, `stop` (with the health probe, which would otherwise alert), `restart`, `status [--json]`
+  and `manifest slack` (an app manifest) go with it. Every answer can come without a terminal — a
+  token from the environment variable of its name, `--channels`, `--users` — so an agent can run it;
+  a missing one is exit 2 with nothing written. `dsh gateway` alone still boots a harness profile
+  named gateway: only `gateway` followed by one of these commands is taken.
+- **`allowedUsers`: who may talk to it.** A Telegram private chat always reaches the bot and the
+  installer answers in every Telegram chat, so anyone who found the bot could run turns in the
+  agent's workspace; Discord direct messages likewise. The deepbot row now takes a list of user ids;
+  someone not in it is ignored without a reply, their button presses too. Empty, the default, keeps
+  the old behaviour. The terminal's user is always allowed, in the terminal's own channel. An id
+  written unquoted, which YAML reads as a number, is a config error that says to quote it. The
+  installer says so for Telegram and Discord, and `dsh gateway setup` asks.
+
 - **English, Korean and Chinese.** A `language` setting in the deepbot row (`en` by default, `ko`,
   `zh`) sets what the bot itself says on every platform (approvals and their buttons, stops,
   failures, the working message, Slack's status, the usage report) and everything `dsh` draws; `dsh`
@@ -18,6 +39,13 @@ the caveat about version numbers is at the bottom.
 
 ### Changed
 
+- **The health file says when a platform fails to start, and when a Telegram poll recovers.** A
+  startup failure was only in the log, so with another platform connected the file read healthy;
+  it now carries the error as `lastError`, and the start that works after it clears it. A Telegram
+  poll error stayed in `lastError` after polling worked again; the next poll that works clears it.
+  The platforms share that field, so each clears only the error it wrote, never another's.
+- **`docs/setup.md` asks for `im:history`.** The Slack steps subscribed to `message.im` for direct
+  messages without the scope that event needs; the manifest and the steps now include it.
 - **A service that fails to install fails the install.** On an account with no
   `~/Library/LaunchAgents`, all four installers failed to write their plist and `install.sh` still
   said "done" and exited 0. The installers make the directory; `install.sh` says which service failed,
