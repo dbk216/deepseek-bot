@@ -19,7 +19,7 @@ if (process.platform !== 'darwin') {
   process.exit(0)
 }
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -191,6 +191,32 @@ for (const resolved of [false, true]) {
   writeFileSync(join(alt, 'dsh-runtimes', 'rt', 'tool'), 'alt-runtime-8e9\n')
   check('with DSH_HOME set, its runtimes stay readable' + as, readAlt(join('dsh-runtimes', 'rt', 'tool')).includes('alt-runtime-8e9'), readAlt(join('dsh-runtimes', 'rt', 'tool')).slice(0, 40))
   rmSync(made, { recursive: true, force: true })
+}
+
+// Second review. An entry the runner cannot resolve (no search permission: a retired home made chmod 000)
+// wrote an empty subpath, which sandbox-exec refuses, and every command failed. A workspace given by a
+// link's name was denied as "another home" by its real name. A DEEPBOT_DENY_READ entry that is a link to a
+// file left the file readable.
+{
+  const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'runner-names-')))
+  const env = { ...process.env, HOME: fakeHome }
+  const ws = join(fakeHome, 'dsh-agent-ws')
+  mkdirSync(ws, { recursive: true })
+  writeFileSync(join(ws, 'note.md'), 'ws-note-1b2\n')
+  const closed = join(fakeHome, 'dsh-agent-retired')
+  mkdirSync(closed)
+  chmodSync(closed, 0o000)
+  const inWs = (cmd, extraEnv = {}, root = ws) => { try { return execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--bind', root, root, '--', ...cmd], { encoding: 'utf8', env: { ...env, ...extraEnv }, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}: ${String(e.stderr ?? '').slice(0, 80)}` } }
+  check('an agent home it cannot search does not stop every command', inWs(['/bin/echo', 'ran-2c3']).includes('ran-2c3'), inWs(['/bin/echo', 'ran-2c3']).slice(0, 100))
+  check('nor does such a DEEPBOT_DENY_READ entry', inWs(['/bin/echo', 'ran-3d4'], { DEEPBOT_DENY_READ: closed }).includes('ran-3d4'))
+  chmodSync(closed, 0o755)
+  const link = join(fakeHome, 'ws-link')
+  symlinkSync(ws, link)
+  check('a workspace given by a link\'s name is not denied by its real name', inWs(['/bin/cat', join(link, 'note.md')], {}, link).includes('ws-note-1b2'), inWs(['/bin/cat', join(link, 'note.md')], {}, link).slice(0, 100))
+  writeFileSync(join(fakeHome, 'secret.txt'), 'canary-linked-file-4e5\n')
+  symlinkSync(join(fakeHome, 'secret.txt'), join(fakeHome, 'secret-link'))
+  check('a DEEPBOT_DENY_READ link to a file denies the file', !inWs(['/bin/cat', join(fakeHome, 'secret.txt')], { DEEPBOT_DENY_READ: join(fakeHome, 'secret-link') }).includes('canary-linked-file-4e5'))
+  rmSync(fakeHome, { recursive: true, force: true })
 }
 
 // A harness home that is itself a link (~/.dsh -> elsewhere). The deny on the link's name blocked reading

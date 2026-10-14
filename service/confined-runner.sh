@@ -121,14 +121,17 @@ profile() {
   echo ";; read confinement: other agent homes, and DEEPBOT_DENY_READ"
   extra=()
   IFS=':' read -r -a extra <<< "${DEEPBOT_DENY_READ:-}"
+  ws_resolved="${workspace_real:-$workspace_root}"
   for candidate in "$HOME"/dsh-agent* ${extra[@]+"${extra[@]}"}; do
     [ -n "$candidate" ] && [ -e "$candidate" ] || continue
-    [ "$candidate" = "$workspace_root" ] && continue
+    # Its resolved name, the one Seatbelt matches: an entry under a link (/var → /private/var), or a link
+    # to a file, denied nothing by the name given. None when it cannot be resolved; an empty subpath
+    # made sandbox-exec refuse every command.
+    resolved="$(/bin/realpath "$candidate" 2>/dev/null || true)"
+    # The workspace is not another home, by either of its names.
+    if [ "$candidate" = "$workspace_root" ] || { [ -n "$resolved" ] && [ "$resolved" = "$ws_resolved" ]; }; then continue; fi
     printf '(deny file-read* (subpath %s))\n' "$(sbpl "$candidate")"
-    # And by its resolved name: Seatbelt matches that, so an entry under a link (/var → /private/var)
-    # denied nothing.
-    if [ -d "$candidate" ]; then resolved="$(cd "$candidate" && pwd -P)"; else resolved="$(cd "$(dirname "$candidate")" && pwd -P)/$(basename "$candidate")"; fi
-    if [ "$resolved" != "$candidate" ] && [ "$resolved" != "${workspace_real:-}" ]; then
+    if [ -n "$resolved" ] && [ "$resolved" != "$candidate" ]; then
       printf '(deny file-read* (subpath %s))\n' "$(sbpl "$resolved")"
     fi
   done
