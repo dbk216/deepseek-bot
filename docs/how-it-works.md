@@ -674,12 +674,15 @@ default. The read scope follows the speaker, so one tenant reading another's not
 the refusal names what it *is* allowed to read.
 
 **The instruction root.** The harness reads `AGENTS.md` and `CLAUDE.md` from a session's directory up
-to the nearest `.git`, and every file on the way. So the adapter keeps an empty `.git` in the home and
-in each tenant directory, checked on every turn because the agent can remove it: a tenant is not
-handed the home's files, and a home under a repository (a dotfiles home) is not handed that
-repository's. git passes over an empty `.git`; one already there (a repository, a worktree's gitlink)
-is left as it is. The `.deepbot-root` file older setups wrote was never read by the harness and can
-be deleted.
+to the nearest `.git`, and every file on the way. When a directory above the home or a tenant directory
+has a `.git` (a home under a dotfiles repository, a home the agent ran `git init` in), the adapter keeps
+an empty `.git` in that directory, checked on every turn because the agent can remove it, so neither is
+handed the files above it. With none above, it makes none: the loader stops there already, and a `.git`
+would be one more place to climb to, and would turn on `.gitignore` rules for the grep tool. The sandbox
+runner refuses a command that removes or moves the workspace's `.git` (what is in it stays writable),
+and a tenant whose directory is not its own, or cannot be kept the root, is refused its turn. git passes
+over an empty `.git`; one already there (a repository, a worktree's gitlink) is left as it is. The
+`.deepbot-root` file older setups wrote was never read by the harness and can be deleted.
 
 `test/scenarios/tenant.json` (6 steps, needs a model) has one tenant write a file and the other
 fail to read it by name, fail to find it in its own directory, and fail to reach it by walking up

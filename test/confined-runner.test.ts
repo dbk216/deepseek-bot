@@ -250,6 +250,25 @@ for (const resolved of [false, true]) {
   rmSync(fakeHome, { recursive: true, force: true })
 }
 
+// The workspace's .git, when the adapter keeps one as the instruction root: a command could remove it, and
+// the harness's loader, which looks for it again on every step, would climb to the home's instructions.
+{
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'runner-root-')))
+  const env = { ...process.env, HOME: base }
+  const inWs = (ws, cmd) => { try { execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--bind', ws, ws, '--', '/bin/sh', '-c', cmd], { env, stdio: 'pipe' }); return true } catch { return false } }
+  const marked = join(base, 'marked')
+  mkdirSync(join(marked, '.git'), { recursive: true })
+  inWs(marked, `rmdir '${join(marked, '.git')}'`)
+  check('a command cannot remove the workspace\'s .git', existsSync(join(marked, '.git')))
+  inWs(marked, `mv '${join(marked, '.git')}' '${join(marked, 'moved')}'`)
+  check('nor move it aside', existsSync(join(marked, '.git')) && !existsSync(join(marked, 'moved')))
+  check('while what is in it can be written (git init works there)', inWs(marked, `echo ref > '${join(marked, '.git', 'HEAD')}'`) && existsSync(join(marked, '.git', 'HEAD')))
+  const plain = join(base, 'plain')
+  mkdirSync(plain)
+  check('a workspace with no .git can make one', inWs(plain, `mkdir '${join(plain, '.git')}'`) && existsSync(join(plain, '.git')))
+  rmSync(base, { recursive: true, force: true })
+}
+
 // A harness home that is itself a link (~/.dsh -> elsewhere). The deny on the link's name blocked reading
 // the link, so every path through it failed — the office skill's node, named through ~/.dsh, could not start.
 {

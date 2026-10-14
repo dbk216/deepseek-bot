@@ -10,7 +10,7 @@
  * name is never followed: the data goes to a fresh file beside it (O_EXCL, so not through any existing
  * name) and is renamed over the target — rename replaces a link instead of writing through it.
  */
-import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, join, sep } from 'node:path'
 
@@ -58,11 +58,21 @@ export function mkdirInside(root: string, dir: string): void {
  * to a directory — is a root as it is and left alone; a link to nothing is not, and is replaced.
  */
 export function markInstructionRoot(root: string, dir: string): void {
-  const marker = join(dir, '.git')
-  try { statSync(marker); return } catch { /* none, or a link to nothing */ }
+  // Inside the guard first: a directory linked outside is refused even when a .git is there.
   const realRoot = realpathSync(root)
   const realDir = realpathSync(dir)
   if (!inside(realRoot, realDir)) throw new Error(`refusing to mark ${dir}: it resolves outside ${realRoot}`)
-  try { if (lstatSync(join(realDir, '.git')).isSymbolicLink()) rmSync(join(realDir, '.git')) } catch { /* nothing there */ }
-  mkdirSync(join(realDir, '.git'))
+  const marker = join(realDir, '.git')
+  try { statSync(marker); return } catch { /* none, or a link to nothing */ }
+  try { if (lstatSync(marker).isSymbolicLink()) rmSync(marker) } catch { /* nothing there */ }
+  mkdirSync(marker)
+  // The directory could have been swapped for a link between the check and the mkdir: what was made
+  // outside is taken back, and the mark refused.
+  const made = realpathSync(marker)
+  if (!inside(realRoot, made)) { try { rmdirSync(made) } catch { /* not ours to remove */ } throw new Error(`refusing to mark ${dir}: it moved outside ${realRoot}`) }
+}
+
+/** Whether `path` resolves inside `root`. */
+export function resolvesInside(root: string, path: string): boolean {
+  try { return inside(realpathSync(root), realpathSync(path)) } catch { return false }
 }

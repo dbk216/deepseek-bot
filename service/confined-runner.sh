@@ -86,6 +86,14 @@ profile() {
       escaped="$(printf '%s' "$name" | sed 's/[][\.*^$+?(){}|]/\\&/g; s/"/./g')"
       printf '(deny file-write* (regex #"^%s/\\.env(\\..*)?$"))\n' "$escaped"
     done
+    # And its .git, when there is one (the adapter keeps one as the instruction root when a directory above
+    # has a .git): removed or moved aside, the harness's loader, which looks again on every step, would
+    # climb past the workspace to the home's instructions. What is in it stays writable: git init works.
+    for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
+      if [ -d "$name/.git" ] && [ ! -L "$name/.git" ]; then
+        printf '(deny file-write* (literal %s))\n' "$(sbpl "$name/.git")"
+      fi
+    done
   else
     echo '(deny file-write*)'
     printf '(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper"))\n'

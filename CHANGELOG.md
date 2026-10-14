@@ -52,8 +52,11 @@ the caveat about version numbers is at the bottom.
 - **The instruction root is kept where the agent works.** The harness reads `AGENTS.md` and
   `CLAUDE.md` from a session's directory up to the nearest `.git`. The `.deepbot-root` marker the
   setup and tenant code wrote was never read by it, so a tenant under a home with a `.git` got the
-  home's files, and a home under a repository got that repository's. The adapter now keeps an empty
-  `.git` in the home and each tenant directory, on every turn; git passes over it.
+  home's files, and a home under a repository got that repository's. When a directory above has a
+  `.git`, the adapter now keeps an empty one in the home and each tenant directory, on every turn (git
+  passes over it); with none above it makes none. The sandbox runner refuses removing or moving the
+  workspace's `.git`, and a tenant whose directory is not its own, or cannot be kept the root, is
+  refused its turn.
 - **A gateway serving only the terminal is connected once it has started.** Only a messenger set the
   health file's `connected`, so a terminal-only gateway read as down, and the health probe restarted
   it every five minutes. `install-service.sh` likewise looked for Slack's "Socket Mode connected" in

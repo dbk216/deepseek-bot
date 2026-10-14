@@ -59,7 +59,7 @@ import { createCompositeTransport } from './transports/composite.js'
 import { createProgressTracker } from './progress.js'
 import { languageOf } from './i18n.js'
 import { defaultWords, messages } from './messages.js'
-import { markInstructionRoot, mkdirInside, writeInside } from './safeWrite.js'
+import { markInstructionRoot, mkdirInside, resolvesInside, writeInside } from './safeWrite.js'
 import { createUsageTracker, emptyUsageStore } from './usage.js'
 import { createRecallContext, recallIndexPath } from './recallContext.js'
 import { analyzeNotes } from './notes.js'
@@ -594,7 +594,8 @@ export function apply(ctx, config) {
       .sort((a, b) => b.lastAt - a.lastAt)
       .slice(0, limit)
     const titles = new Map<string, string>()
-    const workspaces = new Set(await Promise.all(items.map((i) => cwdFor(i.key))))
+    // A tenant refused its directory has no titles to give, and must not take the rest of the list with it.
+    const workspaces = new Set((await Promise.all(items.map((i) => cwdFor(i.key).catch(() => null)))).filter((w): w is string => w !== null))
     for (const workspace of workspaces) {
       const file = recallIndexPath(workspace)
       if (!existsSync(file)) continue
@@ -645,13 +646,27 @@ export function apply(ctx, config) {
   }
 
   /**
-   * The harness reads AGENTS.md and CLAUDE.md from a session's directory up to the nearest `.git`: kept
-   * there, every time, since the agent can remove it. A failure is said once, not on every turn.
+   * The harness reads AGENTS.md and CLAUDE.md from a session's directory up to the nearest `.git`. A
+   * directory is kept the root, every turn since the agent can remove it, only when one above it has a
+   * `.git`: with none, the loader stops there already, and a `.git` would be one more place to climb to
+   * (and turns on .gitignore rules for the grep tool). False when it is needed and could not be kept; a
+   * failure is said once until it recovers.
    */
   const rootFailures = new Set<string>()
-  function keepInstructionRoot(guard: string, dir: string): void {
-    try { markInstructionRoot(guard, dir) } catch (e) {
+  function rootAbove(dir: string): boolean {
+    let at = dirname(resolve(dir))
+    for (;;) {
+      try { statSync(join(at, '.git')); return true } catch { /* none here */ }
+      const up = dirname(at)
+      if (up === at) return false
+      at = up
+    }
+  }
+  function keepInstructionRoot(guard: string, dir: string): boolean {
+    if (!rootAbove(dir)) return true
+    try { markInstructionRoot(guard, dir); rootFailures.delete(dir); return true } catch (e) {
       if (!rootFailures.has(dir)) { rootFailures.add(dir); log(`instructions: could not keep ${dir} the instruction root — ${String((e as Error)?.message ?? e)}`) }
+      return false
     }
   }
 
@@ -665,8 +680,11 @@ export function apply(ctx, config) {
     const dir = join(root, tenant)
     if (!isTenantName(tenant) || dirname(resolve(dir)) !== resolve(root)) throw new Error(`deepbot: invalid tenant name ${JSON.stringify(tenant)}`)
     // The default root is in the agent's home, which the agent can replace with a link: these writes
-    // run unconfined, so they are held to the home (or to the configured root) and never follow one.
-    const guard = typeof cfg.tenantRoot === 'string' && cfg.tenantRoot !== '' ? cfg.tenantRoot : await sessionCwd()
+    // run unconfined, so they are held to the home and never follow one. A configured root is the guard
+    // only when it is outside the home; inside it, the agent could replace it with a link as well.
+    const homeDir = await sessionCwd()
+    const configured = typeof cfg.tenantRoot === 'string' && cfg.tenantRoot !== '' ? cfg.tenantRoot : null
+    const guard = configured !== null && !resolve(configured).startsWith(resolve(homeDir) + sep) ? configured : homeDir
     if (!existsSync(dir)) {
       mkdirInside(guard, dir)
       const policy = tenantPolicy(tenant)
@@ -680,8 +698,13 @@ export function apply(ctx, config) {
       }
       log(`tenant ${tenant} created at ${dir}`)
     }
-    // A tenant must not be handed the home's AGENTS.md, or anything above it: its directory is its root.
-    keepInstructionRoot(guard, dir)
+    // A tenant runs in its own directory, never one a link moved elsewhere, and is never handed the home's
+    // AGENTS.md or anything above it: refused, rather than run under them.
+    if (!resolvesInside(guard, dir) || !keepInstructionRoot(guard, dir)) {
+      const why = `tenant ${tenant}: refused — its directory ${dir} is not its own, or cannot be kept the instruction root, and the home's instructions would reach it`
+      log(why)
+      throw new Error(`deepbot: ${why}`)
+    }
     return dir
   }
 
