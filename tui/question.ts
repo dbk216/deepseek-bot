@@ -2,7 +2,7 @@
  * Answering a turn's questions, one at a time: the state behind the question panel.
  *
  * Pure, so its rules are tested without a screen. A single-select question is answered by Enter
- * on an option; a multi-select one by Space to toggle, then Enter. "직접 입력…" takes the person's
+ * on an option; a multi-select one by Space to toggle, then Enter. "type your own…" takes the person's
  * own words (replacing the choice on single-select, adding to it on multi-select — the harness's
  * rule). Esc skips a question, which the harness accepts as `{ id, selected: [] }`.
  */
@@ -51,7 +51,7 @@ export class QuestionFlow {
     if (q === undefined) return []
     return [
       ...q.options.map((o, i) => ({ kind: 'option' as const, label: o.label, ...(o.description ? { description: o.description } : {}), checked: this.picked.has(i) })),
-      { kind: 'custom' as const, label: '직접 입력…', checked: false },
+      { kind: 'custom' as const, label: 'type your own…', checked: false },
     ]
   }
 
@@ -70,7 +70,7 @@ export class QuestionFlow {
 
   /**
    * Enter. On an option it answers (single) or confirms what is ticked (multi; the option under the
-   * cursor when nothing is). On "직접 입력…" it switches to typing.
+   * cursor when nothing is). On "type your own…" it switches to typing.
    */
   choose(): 'answered' | 'typing' {
     const q = this.current
@@ -101,7 +101,7 @@ export class QuestionFlow {
   describe(answer: QuestionAnswer): string {
     const parts = [...answer.selected]
     if (answer.custom !== undefined) parts.push(`"${answer.custom}"`)
-    return parts.length === 0 ? '(건너뜀)' : parts.join(', ')
+    return parts.length === 0 ? '(skipped)' : parts.join(', ')
   }
 
   private record(answer: QuestionAnswer): void {

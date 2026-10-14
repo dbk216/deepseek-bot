@@ -33,7 +33,7 @@ const app = new App({
   env: process.env,
   platform: process.platform,
   onExit: (code) => {
-    process.stdout.write('deepbot-tui demo: 종료\n')
+    process.stdout.write('dsh demo: done\n')
     process.exit(code)
   },
   backend: {

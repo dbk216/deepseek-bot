@@ -6,7 +6,7 @@ import { graphemes } from './render/width.js'
 
 export interface CommandInfo {
   name: string
-  /** The argument it takes, as help shows it ("<번호|id>"), if any. */
+  /** The argument it takes, as help shows it ("<n|id>"), if any. */
   usage?: string
   hint: string
   /** Whether it needs an argument: then choosing it puts it in, rather than running it. */

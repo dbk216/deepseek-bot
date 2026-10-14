@@ -60,7 +60,7 @@ const multi = { id: 'checks', question: '어떤 검사를 돌릴까?', options: 
   f.skip()
   check('skip: recorded as nothing selected, and the next question comes up', JSON.stringify(f.answers[0]) === JSON.stringify({ id: 'env', selected: [] }) && f.current?.id === 'checks' && !f.done)
   f.choose()
-  check('batch: done after the last question, one answer each', f.done && f.answers.length === 2 && f.describe(f.answers[0]) === '(건너뜀)')
+  check('batch: done after the last question, one answer each', f.done && f.answers.length === 2 && f.describe(f.answers[0]) === '(skipped)')
   const review = { id: 'plan', question: '이 계획으로 진행할까?', options: [{ label: 'Revise' }, { label: 'Approve' }], multiSelect: false, detail: '# Plan\n1. …', intent: { kind: 'plan-review', approve: 'Approve' } }
   const p = new QuestionFlow('p', [review])
   check('plan review: the cursor starts on the approving option', p.cursor === 1 && p.choose() === 'answered' && p.answers[0].selected[0] === 'Approve')
@@ -88,7 +88,7 @@ const multi = { id: 'checks', question: '어떤 검사를 돌릴까?', options: 
   const done = readState('```interview-state\n{"round": 6, "scores": {}, "ambiguity": 15, "done": true, "spec": "specs/tui.md"}\n```')
   check('state: done, with the spec it wrote', done?.done === true && done.spec === 'specs/tui.md')
   const prompt = interviewPrompt('TUI 설계')
-  check('prompt: names the topic, one question per round, the block format and the stop rule', prompt.startsWith('딥인터뷰: TUI 설계') && prompt.includes('ask_user_question') && prompt.includes('```interview-state') && prompt.includes(`${AMBIGUITY_TARGET} 이하`) && prompt.includes('specs/'))
+  check('prompt: names the topic, one question per round, the block format and the stop rule', prompt.startsWith('Deep interview: TUI 설계') && prompt.includes('ask_user_question') && prompt.includes('```interview-state') && prompt.includes(`${AMBIGUITY_TARGET} or less`) && prompt.includes('specs/'))
 }
 
 const failed = results.filter((r) => !r.ok)

@@ -47,15 +47,15 @@ export const AMBIGUITY_TARGET = 20
 /** The opening message of /interview: the topic, then how to run it. */
 export function interviewPrompt(topic: string): string {
   return [
-    `딥인터뷰: ${topic}`,
+    `Deep interview: ${topic}`,
     '',
-    '진행 방식:',
-    '- 라운드마다 ask_user_question 도구로 질문을 딱 하나만 해. 선택지는 2~4개, 짧게.',
-    '- 도구를 부르기 직전에 지금까지의 명확도를 아래 형식 그대로 먼저 써. 터미널이 이 블록을 읽어 게이지로 보여주고 본문에서는 숨긴다.',
+    'How to run it:',
+    '- Each round, ask exactly one question with the ask_user_question tool, in the language the topic is written in. Two to four short options.',
+    '- Right before calling the tool, write the clarity so far in exactly this form. The terminal reads this block into gauges and hides it from the text.',
     '```interview-state',
-    '{"round": 1, "scores": {"목표": 0, "제약": 0, "성공 기준": 0, "맥락": 0}, "ambiguity": 100}',
+    '{"round": 1, "scores": {"goal": 0, "constraints": 0, "success criteria": 0, "context": 0}, "ambiguity": 100}',
     '```',
-    '- scores는 항목별 명확도 0~100, ambiguity는 아직 모호한 정도 0~100. 네 판단이지 측정값이 아니다.',
-    `- ambiguity가 ${AMBIGUITY_TARGET} 이하가 되면 질문을 멈추고, 답을 정리한 spec을 작업 폴더의 specs/<짧은-영문-slug>.md 로 써. 마지막 블록에 "done": true 와 "spec": "specs/….md" 를 넣어.`,
+    '- scores is the clarity of each item, 0 to 100; ambiguity is how unclear it still is, 0 to 100. Both are your judgement, not a measurement.',
+    `- Once ambiguity is ${AMBIGUITY_TARGET} or less, stop asking and write the answers up as a spec at specs/<short-english-slug>.md in the working folder. Put "done": true and "spec": "specs/….md" in the last block.`,
   ].join('\n')
 }

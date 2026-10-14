@@ -17,23 +17,23 @@ export function parseArgs(argv: string[]): Args | { error: string } {
     if (flag === '-h' || flag === '--help') { args.help = true; continue }
     const value = argv[i + 1]
     const key = ({ '--name': 'name', '--socket': 'socket', '--tenant': 'tenant', '--resume': 'resume' } as const)[flag]
-    if (key === undefined) return { error: `알 수 없는 옵션: ${flag}` }
-    if (value === undefined || value.startsWith('--')) return { error: `${flag}에 값이 필요함` }
+    if (key === undefined) return { error: `unknown option: ${flag}` }
+    if (value === undefined || value.startsWith('--')) return { error: `${flag} needs a value` }
     args[key] = value
     i++
   }
   return args
 }
 
-export const USAGE = `dsh — 터미널에서 deepseek-bot과 대화
+export const USAGE = `dsh — talk to deepseek-bot in the terminal
 
   dsh [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
-  dsh <그 외 인자>   DeepSeek Harness CLI로 그대로 넘김 (DSH_BIN, 기본은 앱 안의 dsh)
+  dsh <anything else>   handed to the DeepSeek Harness CLI (DSH_BIN, by default the dsh in the app)
 
-  --name     연결할 gateway 이름 (deepbot 설정의 tuiName, 기본 default)
-  --socket   gateway socket 경로를 직접 지정
-  --tenant   tenant workspace로 대화 (tenantIsolation이 켜져 있어야 함)
-  --resume   이전 대화 이어가기 (종료할 때 출력되는 id)
+  --name     the gateway to connect to (tuiName in the deepbot config, by default default)
+  --socket   the gateway's socket path, given directly
+  --tenant   talk in a tenant's workspace (needs tenantIsolation on)
+  --resume   continue an earlier conversation (the id printed on exit)
 `
 
 /** The terminal's own flags; `dsh` with anything else is the harness CLI's command line. */
@@ -48,7 +48,7 @@ export function route(argv: string[]): 'tui' | 'harness' {
 export const HARNESS_CLI = '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
 
 /** What is printed on the way out, so the conversation can be picked up again. */
-export const resumeHint = (conversation: string): string => `이어서 대화하려면: dsh --resume ${conversation}\n`
+export const resumeHint = (conversation: string): string => `to continue this conversation: dsh --resume ${conversation}\n`
 
 /** Frames from the gateway, onto the screen. */
 export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
@@ -77,7 +77,7 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       commands?.ready()
       app.setBusy(frame.busy)
       app.setStatus({ connected: true, workspace: frame.workspace, session: frame.conversation, model: frame.model, preset: app.status.preset || 'ask' })
-      if (frame.tenant !== null) app.notice(`tenant ${frame.tenant} workspace에서 대화 중`, 'info')
+      if (frame.tenant !== null) app.notice(`talking in the workspace of tenant ${frame.tenant}`, 'info')
       return
     case 'typing':
       if (frame.on) app.turnStarted()
@@ -115,15 +115,15 @@ export function parseCommand(text: string): { name: CommandName; args: string } 
 
 /** What each command takes and does: the source of /help and of the completion list. */
 export const COMMAND_INFO: Array<CommandInfo & { name: CommandName }> = [
-  { name: 'new', hint: '새 대화 (같은 workspace)', args: false },
-  { name: 'sessions', hint: '터미널 대화 목록 (어느 tenant인지 표시)', args: false },
-  { name: 'resume', usage: '<번호|id>', hint: '목록의 대화 이어가기', args: true },
-  { name: 'tenant', usage: '[이름]', hint: '그 tenant workspace에서 새 대화 (이름 없이: 설정의 기본, 없으면 home)', args: true },
-  { name: 'interview', usage: '<주제>', hint: '딥인터뷰: 질문을 하나씩 받아 명확도를 올리고 spec으로 정리', args: true },
-  { name: 'usage', hint: '지금까지 쓴 토큰', args: false },
-  { name: 'clear', hint: '화면 비우기 (대화는 그대로)', args: false },
-  { name: 'help', hint: '이 도움말', args: false },
-  { name: 'quit', hint: '종료 (ctrl+c 두 번, ctrl+d도 같음)', args: false },
+  { name: 'new', hint: 'a new conversation (same workspace)', args: false },
+  { name: 'sessions', hint: 'the terminal conversations, with their tenant', args: false },
+  { name: 'resume', usage: '<n|id>', hint: 'continue a conversation from the list', args: true },
+  { name: 'tenant', usage: '[name]', hint: "a new conversation in that tenant's workspace (no name: the configured default, else home)", args: true },
+  { name: 'interview', usage: '<topic>', hint: 'deep interview: one question at a time until it is clear, then a spec', args: true },
+  { name: 'usage', hint: 'tokens used so far', args: false },
+  { name: 'clear', hint: 'clear the screen (the conversation stays)', args: false },
+  { name: 'help', hint: 'this help', args: false },
+  { name: 'quit', hint: 'quit (ctrl+c twice, or ctrl+d)', args: false },
 ]
 
 const column = (text: string, width: number) => text + ' '.repeat(Math.max(1, width - stringWidth(text)))
@@ -131,27 +131,27 @@ const column = (text: string, width: number) => text + ' '.repeat(Math.max(1, wi
 export const HELP = [
   ...COMMAND_INFO.map((c) => `${column(`/${c.name}${c.usage ? ` ${c.usage}` : ''}`, 18)}${c.hint}`),
   '',
-  '↵ 전송 · alt+↵ 줄바꿈 · esc 중단 · 휠/PgUp/PgDn 스크롤 · 드래그 복사',
-  '/ 명령 · @ 파일 (tab으로 넣기) · ctrl+r 입력 기록 검색 · ctrl+o 생각·도구 결과 펼치기/접기',
+  '↵ send · alt+↵ newline · esc interrupt · wheel/PgUp/PgDn scroll · drag to copy',
+  '/ commands · @ files (tab inserts) · ctrl+r search what you typed · ctrl+o expand/fold thinking and tool output',
 ].join('\n')
 
 function ago(ms: number, now: number): string {
   const s = Math.max(0, Math.round((now - ms) / 1000))
-  if (s < 60) return `${s}초 전`
-  if (s < 3600) return `${Math.round(s / 60)}분 전`
-  if (s < 86400) return `${Math.round(s / 3600)}시간 전`
-  return `${Math.round(s / 86400)}일 전`
+  if (s < 60) return `${s}s ago`
+  if (s < 3600) return `${Math.round(s / 60)}m ago`
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`
+  return `${Math.round(s / 86400)}d ago`
 }
 
 /** The /sessions list, numbered for /resume <n>. */
 export function formatSessions(items: Array<{ conversation: string; lastAt: number; turns: number; tenant: string | null; title: string }>, now: number, current: string | null): string {
-  if (items.length === 0) return '이 workspace에 터미널 대화가 아직 없음'
+  if (items.length === 0) return 'no terminal conversation in this workspace yet'
   return items.map((item, i) => {
     const mark = item.conversation === current ? '●' : ' '
     const where = item.tenant !== null ? ` · tenant ${item.tenant}` : ''
-    const title = item.title === '' ? '(제목 없음)' : item.title
-    return `${mark}${String(i + 1).padStart(2)}. ${title}\n     ${ago(item.lastAt, now)} · ${item.turns}턴${where} · ${item.conversation}`
-  }).join('\n') + '\n/resume <번호>로 이어가기'
+    const title = item.title === '' ? '(untitled)' : item.title
+    return `${mark}${String(i + 1).padStart(2)}. ${title}\n     ${ago(item.lastAt, now)} · ${item.turns} turn${item.turns === 1 ? '' : 's'}${where} · ${item.conversation}`
+  }).join('\n') + '\n/resume <n> to continue one'
 }
 
 /** What the commands need of the connection. */
@@ -179,7 +179,7 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
   const now = options.now ?? (() => Date.now())
   let listed: ConversationItem[] = []
   let wantHistory = options.resumeOnStart === true
-  const offline = () => app.notice('gateway에 연결되어 있지 않음', 'error')
+  const offline = () => app.notice('not connected to the gateway', 'error')
 
   return {
     intercept(text) {
@@ -190,14 +190,14 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
         case 'new':
           app.clear()
           link.switchTo(null, link.tenant)
-          app.notice(`새 대화${link.tenant !== undefined ? ` · tenant ${link.tenant}` : ''}`, 'info')
+          app.notice(`new conversation${link.tenant !== undefined ? ` · tenant ${link.tenant}` : ''}`, 'info')
           break
         case 'tenant':
           // A conversation's workspace is fixed when it starts (a session resumes in the directory it
           // was created in), so changing tenant means a new conversation there.
           app.clear()
           link.switchTo(null, args === '' ? undefined : args)
-          app.notice(args === '' ? '새 대화 · 기본 workspace' : `새 대화 · tenant ${args}`, 'info')
+          app.notice(args === '' ? 'new conversation · default workspace' : `new conversation · tenant ${args}`, 'info')
           break
         case 'sessions':
           if (!link.send({ type: 'sessions' })) offline()
@@ -206,7 +206,7 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
           const n = Number(args)
           const item = Number.isInteger(n) && n >= 1 && n <= listed.length ? listed[n - 1] : listed.find((i) => i.conversation === args)
           const id = item?.conversation ?? args
-          if (!NAME.test(id)) { app.notice('/resume <번호|id> — 번호는 /sessions 목록의 것', 'error'); break }
+          if (!NAME.test(id)) { app.notice('/resume <n|id> — n is a number from /sessions', 'error'); break }
           app.clear()
           // The listed conversation's own workspace; a bare id lets the gateway use the recorded one.
           link.switchTo(id, item?.tenant ?? undefined)
@@ -215,9 +215,9 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
           break
         }
         case 'interview':
-          if (args === '') { app.notice('/interview <주제> — 무엇에 대해 인터뷰할지', 'error'); break }
+          if (args === '') { app.notice('/interview <topic> — what the interview is about', 'error'); break }
           app.startInterview(args)
-          app.sendAs(`딥인터뷰: ${args}`, interviewPrompt(args))
+          app.sendAs(`deep interview: ${args}`, interviewPrompt(args))
           break
         case 'usage':
           if (!link.send({ type: 'usage' })) offline()
@@ -243,7 +243,7 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
     },
     rolledBack(message) {
       app.clear()
-      app.notice(`전환하지 못함: ${message} — 이전 대화를 계속함`, 'error')
+      app.notice(`could not switch: ${message} — staying in this conversation`, 'error')
       wantHistory = !link.send({ type: 'history' })
     },
   }

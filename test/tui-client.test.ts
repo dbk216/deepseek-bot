@@ -42,7 +42,7 @@ async function until(predicate, ms = 3000) {
   const a = parseArgs(['--name', 'work', '--tenant', 'acme', '--resume', 'c-1'])
   check('args: name, tenant and resume', a.name === 'work' && a.tenant === 'acme' && a.resume === 'c-1' && a.help === false)
   check('args: a flag without its value is an error', 'error' in parseArgs(['--name']) && 'error' in parseArgs(['--name', '--tenant', 'x']))
-  check('usage: names the project, deepseek-bot', USAGE.split('\n')[0].includes('deepseek-bot과 대화'), USAGE.split('\n')[0])
+  check('usage: names the project, deepseek-bot', USAGE.split('\n')[0].includes('talk to deepseek-bot'), USAGE.split('\n')[0])
   check('args: an unknown flag is an error, not ignored', 'error' in parseArgs(['--verbose']))
   check('args: --help', parseArgs(['--help']).help === true)
 
@@ -50,7 +50,7 @@ async function until(predicate, ms = 3000) {
   check('route: no arguments, or only the terminal\'s flags, open the terminal', route([]) === 'tui' && route(['--resume', 'c-1']) === 'tui' && route(['--name', 'work']) === 'tui' && route(['-h']) === 'tui' && route(['--help']) === 'tui')
   check('route: anything else goes to the harness CLI', route(['--profile', 'agent']) === 'harness' && route(['gateway']) === 'harness' && route(['--version']) === 'harness')
   check('usage: the command is dsh', USAGE.includes('\n  dsh [--name <gateway>]') && !USAGE.includes('deepbot-tui'), USAGE.split('\n')[2])
-  check('exit: the resume hint names dsh', resumeHint('c-1') === '이어서 대화하려면: dsh --resume c-1\n', JSON.stringify(resumeHint('c-1')))
+  check('exit: the resume hint names dsh', resumeHint('c-1') === 'to continue this conversation: dsh --resume c-1\n', JSON.stringify(resumeHint('c-1')))
 
   // End to end: the arguments reach the harness CLI unchanged, and its exit status comes back.
   const bin = mkdtempSync(join(tmpdir(), 'deepbot-dshbin-'))
@@ -213,7 +213,7 @@ async function until(predicate, ms = 3000) {
   check('/sessions: the command itself is not echoed as a message', !term.screen.text().includes('› /sessions'))
   term.type('/resume 2\r')
   check('/resume <n>: switches to that conversation', await until(() => connection.conversation === 'conv-a' && app.status.session === 'conv-a'))
-  check('/resume: the earlier messages are shown', await until(() => term.screen.text().includes('이전 대화') && term.screen.text().includes('staging 먼저.')))
+  check('/resume: the earlier messages are shown', await until(() => term.screen.text().includes('earlier in this conversation') && term.screen.text().includes('staging 먼저.')))
   check('/resume: asked for once, after the gateway confirmed the conversation', JSON.stringify(historyCalls) === JSON.stringify(['conv-a']), JSON.stringify(historyCalls))
   term.type('이어서 질문\r')
   check('/resume: what is typed next belongs to that conversation', await until(() => received.some((m) => m.text === '이어서 질문' && m.target.threadTs === 'conv-a')))
@@ -223,7 +223,7 @@ async function until(predicate, ms = 3000) {
   const beforeTenant = connection.conversation
   term.type('/tenant acme\r')
   check('/tenant: refused here, because tenant isolation is off — and said so', await until(() => term.screen.text().includes('tenant isolation')))
-  check('/tenant: refused, the terminal keeps the conversation the gateway still has', await until(() => term.screen.text().includes('전환하지 못함')) && connection.conversation === beforeTenant && connection.tenant === undefined)
+  check('/tenant: refused, the terminal keeps the conversation the gateway still has', await until(() => term.screen.text().includes('could not switch')) && connection.conversation === beforeTenant && connection.tenant === undefined)
   term.type('거부 뒤 메시지\r')
   check('/tenant: and the next message goes to that same conversation', await until(() => received.some((m) => m.text === '거부 뒤 메시지' && m.target.threadTs === beforeTenant)))
   // A refused /resume (that conversation is in a tenant, and this gateway has none): the conversation
@@ -242,7 +242,7 @@ async function until(predicate, ms = 3000) {
   term.type('/Users/me/notes.txt 열어줘\r')
   check('a path is not a command: it is sent as text', await until(() => received.some((m) => m.text === '/Users/me/notes.txt 열어줘')))
   term.type('/help\r')
-  check('/help: lists the commands', await until(() => term.screen.text().includes('/resume <번호|id>')))
+  check('/help: lists the commands', await until(() => term.screen.text().includes('/resume <n|id>')))
 
   connection.close()
   app.stop(0)

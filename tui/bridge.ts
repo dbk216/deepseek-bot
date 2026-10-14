@@ -53,7 +53,7 @@ const MAX_CHILDREN = 20
 const MAX_LINE_CHARS = 8000
 const MAX_OUTPUT_CHARS = 200_000
 
-const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max)}… (${text.length - max}자 생략)`)
+const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max)}… (${text.length - max} chars left out)`)
 
 function textOf(content: unknown): string {
   if (!Array.isArray(content)) return ''
@@ -213,7 +213,7 @@ export function createBridge(services: Services, log: (...parts: unknown[]) => v
      */
     async send(root: string, child: string, text: string): Promise<string | null> {
       const subagents = services.get('subagents')
-      if (typeof subagents?.prompt !== 'function') return '이 배포에는 subagent 메시지 기능이 없음'
+      if (typeof subagents?.prompt !== 'function') return 'this deployment cannot message a subagent'
       const running = services.get('agents')?.get?.(child)?.status === 'running'
       try {
         await subagents.prompt({
@@ -223,9 +223,9 @@ export function createBridge(services: Services, log: (...parts: unknown[]) => v
         return null
       } catch (e) {
         const code = String((e as { code?: string })?.code ?? '')
-        if (code.includes('parent-unavailable')) return '부모 대화의 turn이 끝나 있어 보낼 수 없음 — turn이 실행 중일 때만 가능'
-        if (code.includes('not-resumable') || code.includes('unauthorized')) return '이 subagent에는 메시지를 보낼 수 없음 (one-shot이거나 직속 자식이 아님)'
-        return `보내지 못함: ${String((e as Error)?.message ?? e).slice(0, 160)}`
+        if (code.includes('parent-unavailable')) return 'not sent: the parent conversation has no turn running — only possible while one runs'
+        if (code.includes('not-resumable') || code.includes('unauthorized')) return 'this subagent takes no messages (it is one-shot, or not a direct child)'
+        return `not sent: ${String((e as Error)?.message ?? e).slice(0, 160)}`
       }
     },
 
@@ -247,7 +247,7 @@ export function createBridge(services: Services, log: (...parts: unknown[]) => v
         const job = service.get?.(id, owner)
         const all = (read?.chunks ?? []).map((c: { text?: string }) => String(c?.text ?? '')).join('')
         // The newest output is what a person watching wants; a huge first read keeps its tail.
-        const text = all.length <= MAX_OUTPUT_CHARS ? all : `… (${all.length - MAX_OUTPUT_CHARS}자 생략)\n${all.slice(-MAX_OUTPUT_CHARS)}`
+        const text = all.length <= MAX_OUTPUT_CHARS ? all : `… (${all.length - MAX_OUTPUT_CHARS} chars left out)\n${all.slice(-MAX_OUTPUT_CHARS)}`
         return { text, next: Number(read?.next ?? from), status: String(job?.status ?? 'unknown') }
       } catch {
         return null

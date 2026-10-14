@@ -7,6 +7,12 @@ the caveat about version numbers is at the bottom.
 
 ### Changed
 
+- **The terminal speaks English.** Its status line, hints, notices, `/help`, usage and exit line were
+  Korean in a project whose README and docs are English. The `/interview` instructions to the model
+  are English too and ask it to question in the topic's language. The adapter's own messages on the
+  platforms (approvals, the working message) are unchanged. When no gateway is running, the terminal
+  now says to start one rather than only to add `'local'`, which a new install already has.
+  `docs/demo.gif` is recorded again, in English.
 - **The terminal is `dsh`.** The command was `deepbot-tui`. It shares its name with the DeepSeek
   Harness CLI, so given anything but its own flags (`--name`, `--socket`, `--tenant`, `--resume`,
   `--help`) it runs that CLI (`DSH_BIN`, or the one inside the app) with them and exits with its status.

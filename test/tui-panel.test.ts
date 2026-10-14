@@ -161,7 +161,7 @@ function services(overrides = {}) {
   const svc = services({ subagents: { prompt: async () => { const e: Error & { code?: string } = new Error('no parent'); e.code = 'subagent/parent-unavailable'; throw e } } })
   const bridge = createBridge(svc, () => {})
   const error = await bridge.send('root', 'child-1', 'hi')
-  check('bridge: a message while the parent turn is over explains why it cannot be sent', /turn이 끝나 있어/.test(error ?? ''), error)
+  check('bridge: a message while the parent turn is over explains why it cannot be sent', /has no turn running/.test(error ?? ''), error)
 }
 
 {

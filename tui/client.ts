@@ -107,7 +107,7 @@ export class Connection {
     socket.on('data', (chunk: string) => {
       for (const r of reader.push(chunk)) {
         // A line it could not read (too large, not JSON) is said, not dropped in silence.
-        if (r.frame === undefined) { this.o.onFrame({ type: 'error', code: 'unreadable', message: `gateway 응답을 읽지 못함: ${r.error}` }); continue }
+        if (r.frame === undefined) { this.o.onFrame({ type: 'error', code: 'unreadable', message: `unreadable frame from the gateway: ${r.error}` }); continue }
         const frame = r.frame as unknown as ServerFrame
         if (frame.type === 'ready') {
           this.ready = true
@@ -124,7 +124,7 @@ export class Connection {
             // Before any ready this connection has no conversation yet: ask for the one it had.
             if (!this.ready) socket.write(encode(this.hello()))
           } else if (!this.ready) {
-            this.o.onState('disconnected', `거부됨: ${frame.message}`)
+            this.o.onState('disconnected', `refused: ${frame.message}`)
           }
         }
         this.o.onFrame(frame)
@@ -138,7 +138,7 @@ export class Connection {
       if (this.closed) return
       const wait = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)]
       this.attempt++
-      this.o.onState('disconnected', `${wait}ms 후 재연결`)
+      this.o.onState('disconnected', `reconnecting in ${wait}ms`)
       this.timer = (this.o.setTimer ?? setTimeout)(() => { this.timer = null; this.open() }, wait)
     })
   }
@@ -172,11 +172,11 @@ export function discover(name: string | undefined, env: Record<string, string | 
   const live = files.map(read).filter((d): d is Discovery => d !== null)
   if (name !== undefined) {
     const hit = live.find((d) => d.name === name)
-    return hit ?? { error: `'${name}' 이름으로 실행 중인 gateway가 없음 (찾은 것: ${live.map((d) => d.name).join(', ') || '없음'})` }
+    return hit ?? { error: `no running gateway is named '${name}' (found: ${live.map((d) => d.name).join(', ') || 'none'})` }
   }
   const named = live.find((d) => d.name === 'default')
   if (named !== undefined) return named
   if (live.length === 1) return live[0]
-  if (live.length === 0) return { error: `실행 중인 gateway를 찾지 못함 (${dir}). deepbot의 platform에 'local'을 넣고 gateway를 재시작해야 함` }
-  return { error: `gateway가 여러 개 실행 중: ${live.map((d) => d.name).join(', ')} — --name으로 고르기` }
+  if (live.length === 0) return { error: `no running gateway found (${dir}). Start the gateway, with 'local' in deepbot's platform` }
+  return { error: `several gateways are running: ${live.map((d) => d.name).join(', ')} — pick one with --name` }
 }

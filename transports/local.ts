@@ -170,7 +170,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
     if (client.socket.destroyed) return
     let line = encode(frame)
     // The terminal refuses a line over MAX_FRAME_BYTES; say what was too big rather than send it.
-    if (Buffer.byteLength(line) > MAX_FRAME_BYTES) line = encode({ type: 'error', code: 'too-large', message: `${frame.type} 프레임이 너무 커서 보내지 못함` })
+    if (Buffer.byteLength(line) > MAX_FRAME_BYTES) line = encode({ type: 'error', code: 'too-large', message: `${frame.type} frame too large to send` })
     client.socket.write(line)
     if (client.socket.writableLength > MAX_UNSENT_BYTES) {
       log(`local: a terminal stopped reading (${client.socket.writableLength} bytes unsent); disconnecting it`)
@@ -239,7 +239,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
       }
       case 'answer': {
         const pending = typeof frame.id === 'string' ? questions.get(frame.id) : undefined
-        if (pending === undefined || pending.conversation !== client.conversation) return refuse(client, 'question-closed', '이미 닫힌 질문')
+        if (pending === undefined || pending.conversation !== client.conversation) return refuse(client, 'question-closed', 'that question is already closed')
         if (frame.answers === null) { pending.finish(null); return }
         const answers = validAnswers(pending.items, frame.answers)
         if (answers === null) return refuse(client, 'bad-frame', 'one answer per question, with labels from its options')
@@ -251,14 +251,14 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         if (frame.kind === 'agent' && typeof frame.id === 'string' && client.offered.agents.has(frame.id)) client.view = { kind: 'agent', id: frame.id, last: '' }
         else if (frame.kind === 'job' && typeof frame.id === 'string' && client.offered.jobs.get(frame.id) === frame.owner) client.view = { kind: 'job', id: frame.id, owner: frame.owner as string, cursor: 0, status: '' }
         else if (frame.kind === 'main') client.view = null
-        else return refuse(client, 'not-offered', '이 대화의 패널에 없는 항목')
+        else return refuse(client, 'not-offered', "not in this conversation's panel")
         await refreshView(client)
         return
       }
       case 'agent.send':
       case 'agent.interrupt': {
         const root = rootOf(client)
-        if (bridge === null || root === null || typeof frame.id !== 'string' || !client.offered.agents.has(frame.id)) return refuse(client, 'agent-unavailable', '이 대화의 subagent가 아님')
+        if (bridge === null || root === null || typeof frame.id !== 'string' || !client.offered.agents.has(frame.id)) return refuse(client, 'agent-unavailable', 'not a subagent of this conversation')
         if (frame.type === 'agent.interrupt') { await bridge.interrupt(root, frame.id); schedulePanels(); return }
         if (typeof frame.text !== 'string' || frame.text === '') return refuse(client, 'bad-frame', 'a message needs text')
         const error = await bridge.send(root, frame.id, frame.text)
@@ -267,7 +267,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         return
       }
       case 'job.kill': {
-        if (bridge === null || typeof frame.id !== 'string' || typeof frame.owner !== 'string' || client.offered.jobs.get(frame.id) !== frame.owner) return refuse(client, 'not-offered', '이 대화의 job이 아님')
+        if (bridge === null || typeof frame.id !== 'string' || typeof frame.owner !== 'string' || client.offered.jobs.get(frame.id) !== frame.owner) return refuse(client, 'not-offered', 'not a job of this conversation')
         bridge.killJob(frame.owner, frame.id)
         schedulePanels()
         return
@@ -310,7 +310,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         // A button of this conversation's own messages: an approval for its own key, nothing else.
         // The core's buttons carry the request they were posted with (#<8 hex>); the conversation is what is checked here.
         const own = new RegExp(`^approval:(allow|deny):${LOCAL_CHANNEL}:${client.conversation.replace(/[.]/g, '\\.')}(#[0-9a-f]{8})?$`)
-        if (typeof frame.id !== 'string' || !own.test(frame.id)) return refuse(client, 'not-offered', '이 대화의 버튼이 아님')
+        if (typeof frame.id !== 'string' || !own.test(frame.id)) return refuse(client, 'not-offered', 'not a button of this conversation')
         handlers?.onAction?.({ id: frame.id, target: { channel: LOCAL_CHANNEL, threadTs: client.conversation }, user: 'local' })
         return
       }

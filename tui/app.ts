@@ -104,7 +104,7 @@ export class App {
   readonly editor = new Editor()
   readonly terminal: Terminal
   readonly status: AppStatus = {
-    connected: false, link: '연결 중…', workspace: '', session: '', model: '', preset: '',
+    connected: false, link: 'connecting…', workspace: '', session: '', model: '', preset: '',
     running: false, startedAt: 0, tokens: 0, contextPct: null,
   }
   private readonly o: AppOptions
@@ -358,7 +358,7 @@ export class App {
   ask(id: string, items: QuestionItem[]): void {
     for (const item of items) {
       if (item.intent?.kind === 'plan-review' && typeof item.detail === 'string') {
-        this.transcript.push(noticeBlock('plan 검토 요청', 'warn', this.mode))
+        this.transcript.push(noticeBlock('plan review requested', 'warn', this.mode))
         const plan = answerBlock(this.mode)
         plan.finish(item.detail)
         this.transcript.push(plan)
@@ -379,7 +379,7 @@ export class App {
     this.question = null
     // The keys are the input box's again: a command still typed there gets its list back.
     this.refreshCompletion()
-    this.notice('질문이 닫힘', 'info')
+    this.notice('question closed', 'info')
   }
 
   /** After each answer: record it, and send the batch when the last one is in. */
@@ -420,12 +420,12 @@ export class App {
   /** Earlier messages of a resumed conversation, as they were said. */
   history(items: Array<{ role: 'user' | 'assistant'; text: string }>): void {
     if (items.length === 0) return
-    this.notice(`이전 대화 · 최근 ${items.length}개 메시지`, 'info')
+    this.notice(`earlier in this conversation · last ${items.length} messages`, 'info')
     for (const item of items) {
       if (item.role === 'user') { this.transcript.push(userBlock(item.text, this.mode)); this.transcript.push(spacerBlock()) }
       else { const block = answerBlock(this.mode); block.finish(item.text); this.transcript.push(block) }
     }
-    this.notice('── 여기부터 이어서 ──', 'info')
+    this.notice('── continued from here ──', 'info')
     this.terminal.requestRender()
   }
 
@@ -497,8 +497,8 @@ export class App {
     if (this.view.kind !== 'job' || this.view.id !== id) return
     if (!append) { this.side.clear(); this.side.push(noticeBlock(`shell · ${this.view.id} · ${this.view.label}`, 'info', this.mode)) }
     if (text !== '') { const block = answerBlock(this.mode); block.finish(text.replace(/\n$/, '')); this.side.push(block) }
-    if (status === 'removed') this.side.push(noticeBlock('정리됨 · 이 job을 만든 turn이 끝나면서 함께 정리됨', 'warn', this.mode))
-    else if (status !== 'running' && status !== 'stopping') this.side.push(noticeBlock(`종료됨 · ${status}`, status === 'completed' ? 'ok' : 'warn', this.mode))
+    if (status === 'removed') this.side.push(noticeBlock('removed · cleaned up when the turn that started it ended', 'warn', this.mode))
+    else if (status !== 'running' && status !== 'stopping') this.side.push(noticeBlock(`ended · ${status}`, status === 'completed' ? 'ok' : 'warn', this.mode))
     this.terminal.requestRender()
   }
 
@@ -509,11 +509,11 @@ export class App {
     this.side.clear()
     if (row.kind === 'agent') {
       this.view = { kind: 'agent', id: row.agent.id, label: row.agent.label, mode: row.agent.mode }
-      this.side.push(noticeBlock(`subagent · ${row.agent.label} · 불러오는 중`, 'info', this.mode))
+      this.side.push(noticeBlock(`subagent · ${row.agent.label} · loading`, 'info', this.mode))
       this.o.backend.view?.('agent', row.agent.id)
     } else {
       this.view = { kind: 'job', id: row.job.id, owner: row.job.owner, label: row.job.label }
-      this.side.push(noticeBlock(`shell · ${row.job.id} · 불러오는 중`, 'info', this.mode))
+      this.side.push(noticeBlock(`shell · ${row.job.id} · loading`, 'info', this.mode))
       this.o.backend.view?.('job', row.job.id, row.job.owner)
     }
     this.focus = 'editor'
@@ -533,7 +533,7 @@ export class App {
     if (event.type === 'paste') {
       this.clearSelection()
       const text = event.text.length > MAX_PASTE_CHARS ? event.text.slice(0, MAX_PASTE_CHARS) : event.text
-      if (text !== event.text) this.showToast(`붙여넣기가 커서 앞 ${MAX_PASTE_CHARS.toLocaleString('en-US')}자만 넣음`)
+      if (text !== event.text) this.showToast(`paste too long: kept the first ${MAX_PASTE_CHARS.toLocaleString('en-US')} characters`)
       this.search = null
       this.editor.insert(text)
       this.refreshCompletion()
@@ -561,8 +561,8 @@ export class App {
       switch (key.ch) {
         case 'c': return this.ctrlC()
         case 'x':
-          if (this.view.kind === 'agent') { this.o.backend.agentInterrupt?.(this.view.id); this.showToast(`${this.view.label} 중단 요청`) }
-          else if (this.view.kind === 'job') { this.o.backend.jobKill?.(this.view.id, this.view.owner); this.showToast(`${this.view.id} 종료 요청`) }
+          if (this.view.kind === 'agent') { this.o.backend.agentInterrupt?.(this.view.id); this.showToast(`asked ${this.view.label} to stop`) }
+          else if (this.view.kind === 'job') { this.o.backend.jobKill?.(this.view.id, this.view.owner); this.showToast(`asked ${this.view.id} to end`) }
           return
         case 'd': if (this.editor.text === '') { this.stop(0); return } break
         case 'a': this.editor.home(); break
@@ -747,13 +747,13 @@ export class App {
     // Kept for the next run only where it went somewhere: a command run, a message sent.
     if (this.o.intercept?.(text.trim()) === true) { this.o.remember?.(text); return }
     if (this.view.kind === 'agent') {
-      if (this.view.mode !== 'continuable') { this.showToast('이 subagent는 one-shot이라 메시지를 받을 수 없음'); return }
+      if (this.view.mode !== 'continuable') { this.showToast('this subagent is one-shot and takes no messages'); return }
       this.o.remember?.(text)
       this.o.backend.agentSend?.(this.view.id, text)
-      this.showToast(`→ ${this.view.label}에게 보냄`)
+      this.showToast(`→ sent to ${this.view.label}`)
       return
     }
-    if (this.view.kind === 'job') { this.showToast('셸에는 입력할 수 없음 — esc로 main으로'); return }
+    if (this.view.kind === 'job') { this.showToast('a shell takes no input · esc back to main'); return }
     this.o.remember?.(text)
     this.transcript.push(userBlock(text, this.mode))
     this.transcript.push(spacerBlock())   // one blank line between a question and what answers it
@@ -774,7 +774,7 @@ export class App {
     const now = this.clock.now()
     if (this.quitArmed !== 0 && now - this.quitArmed < TOAST_MS) { this.stop(0); return }
     this.quitArmed = now
-    this.showToast('Ctrl+C를 한 번 더 누르면 종료')
+    this.showToast('press Ctrl+C again to quit')
   }
 
   private onMouse(m: MouseEvent): void {
@@ -834,7 +834,7 @@ export class App {
       const text = pane.selectedText()
       if (text === '') { this.clearSelection(); return }
       const method = (this.o.copy ?? ((t: string) => systemCopy(t, { env: this.o.env, platform: this.o.platform, write: (d) => this.o.io.write(d) })))(text)
-      this.showToast(`복사됨 · ${[...text].length}자${method === 'osc52' ? ' (OSC 52)' : ''}`)
+      this.showToast(`copied · ${[...text].length} chars${method === 'osc52' ? ' (OSC 52)' : ''}`)
     }
   }
 
@@ -895,7 +895,7 @@ export class App {
         choiceSpans.push({ from, to: x })
         x = screen.put(x, choiceRow, '  ')
       })
-      screen.put(x + 2, choiceRow, '←→ 선택 · ↵ 확정 · 클릭', s(theme.dim))
+      screen.put(x + 2, choiceRow, '←→ choose · ↵ confirm · click', s(theme.dim))
     }
     this.geometry = { transcriptTop, transcriptHeight, dividerRow, editorTop, choiceRow, choiceSpans, panelTop, panelFirst: panel.first, panelShown, questionTop, questionRowsAt }
     if (panelTop >= 0) this.drawPanel(screen, panelTop, panel.rows, panel.first)
@@ -927,7 +927,7 @@ export class App {
     // Divider, with the "new lines below" marker when scrolled away.
     screen.put(0, dividerRow, '─'.repeat(cols), s(theme.border))
     if (pane.unseen > 0) {
-      const tag = ` ↓ 새 줄 ${pane.unseen} `
+      const tag = ` ↓ ${pane.unseen} new `
       screen.put(Math.max(0, cols - stringWidth(tag) - 2), dividerRow, tag, s(theme.accent))
     }
 
@@ -950,15 +950,15 @@ export class App {
 
     // Hint line: what the keys do here.
     const search = this.search
-    const hint = search !== null ? `(기록 검색) ${search.query}${search.found ? '' : ' · 일치 없음'} · ctrl+r 이전 · ↵ 고르기 · esc 취소`
-      : this.completion !== null ? '↑↓ 고르기 · tab 넣기 · ↵ 실행 · esc 닫기'
-      : this.question?.typing ? '직접 입력 후 ↵ · esc 선택지로'
-      : this.question !== null ? `↑↓ 이동${this.question.current?.multiSelect ? ' · space 선택' : ''} · ↵ 확정 · esc 건너뛰기 · 글자를 치면 직접 입력`
-      : this.focus === 'panel' ? '↑↓ 이동 · ↵ 열기 · esc 입력창으로'
-      : this.view.kind === 'agent' ? `↵ ${this.view.label}에게 보내기 · ctrl+x 중단 · esc main으로`
-        : this.view.kind === 'job' ? 'ctrl+x 종료 · 휠 스크롤 · esc main으로'
-          : this.status.running ? 'esc 중단 · 휠 스크롤 · 드래그 복사'
-            : `↵ 전송 · alt+↵ 줄바꿈 · 드래그 복사${allRows.length > 0 ? ' · tab 패널' : ''} · /help · ctrl+c 종료`
+    const hint = search !== null ? `(history search) ${search.query}${search.found ? '' : ' · no match'} · ctrl+r older · ↵ pick · esc cancel`
+      : this.completion !== null ? '↑↓ pick · tab insert · ↵ run · esc close'
+      : this.question?.typing ? 'type, then ↵ · esc back to the options'
+      : this.question !== null ? `↑↓ move${this.question.current?.multiSelect ? ' · space select' : ''} · ↵ confirm · esc skip · type to answer in your own words`
+      : this.focus === 'panel' ? '↑↓ move · ↵ open · esc back to the input'
+      : this.view.kind === 'agent' ? `↵ send to ${this.view.label} · ctrl+x stop · esc back to main`
+        : this.view.kind === 'job' ? 'ctrl+x end · wheel scroll · esc back to main'
+          : this.status.running ? 'esc interrupt · wheel scroll · drag to copy'
+            : `↵ send · alt+↵ newline · drag to copy${allRows.length > 0 ? ' · tab panel' : ''} · /help · ctrl+c quit`
     screen.put(1, editorTop + 2 + editorRows, hint, s(theme.dim))
   }
 
@@ -976,7 +976,7 @@ export class App {
     }))
   }
 
-  /** The question panel: what is asked, then one row per option and "직접 입력…". */
+  /** The question panel: what is asked, then one row per option and "type your own…". */
   private questionLines(cols: number): Array<{ text: string; style: string; optionRow: boolean }> {
     const q = this.question
     const current = q?.current
@@ -984,7 +984,7 @@ export class App {
     const s = (style) => sgr(style, this.mode)
     const out: Array<{ text: string; style: string; optionRow: boolean }> = []
     const where = q.items.length > 1 ? ` (${q.index + 1}/${q.items.length})` : ''
-    const kind = current.intent?.kind === 'plan-review' ? 'plan 검토' : current.header ?? '질문'
+    const kind = current.intent?.kind === 'plan-review' ? 'plan review' : current.header ?? 'question'
     out.push({ text: `? ${kind}${where}`, style: s({ ...theme.warn, bold: true }), optionRow: false })
     for (const line of wrapPlain(current.question, Math.max(10, cols - 6)).slice(0, 3)) out.push({ text: `  ${line}`, style: s(theme.text), optionRow: false })
     q.rows().forEach((row, i) => {
@@ -1002,11 +1002,11 @@ export class App {
     const s = (style) => sgr(style, this.mode)
     const iv = this.interview!
     const st = iv.state
-    let x = screen.put(1, y, `딥인터뷰 · ${iv.topic}`, s({ ...theme.accent, bold: true }))
+    let x = screen.put(1, y, `deep interview · ${iv.topic}`, s({ ...theme.accent, bold: true }))
     if (st !== null && st.round > 0) x = screen.put(x, y, ` · round ${st.round}`, s(theme.muted))
-    const right = st === null ? '첫 질문 준비 중'
-      : st.done ? `완료${st.spec ? ` · spec: ${st.spec}` : ''}`
-        : `모호도 ${st.ambiguity}% → 목표 ${AMBIGUITY_TARGET}% 이하`
+    const right = st === null ? 'preparing the first question'
+      : st.done ? `done${st.spec ? ` · spec: ${st.spec}` : ''}`
+        : `ambiguity ${st.ambiguity}% → target ${AMBIGUITY_TARGET}% or less`
     screen.put(Math.max(x + 2, cols - 1 - stringWidth(right)), y, right, st?.done ? s(theme.ok) : s(theme.muted))
     let gx = 1
     for (const [name, value] of Object.entries(st?.scores ?? {})) {
@@ -1015,7 +1015,7 @@ export class App {
       if (gx + stringWidth(piece) > cols - 1) break
       gx = screen.put(gx, y + 1, piece, value >= 80 ? s(theme.ok) : value >= 50 ? s(theme.accent) : s(theme.warn))
     }
-    screen.put(1, y + 2, '명확도는 모델의 자기 평가 — 측정값이 아님', s(theme.dim))
+    screen.put(1, y + 2, "clarity is the model's own estimate, not a measurement", s(theme.dim))
   }
 
   private drawPanel(screen: Screen, top: number, rows: PanelRow[], first: number): void {
