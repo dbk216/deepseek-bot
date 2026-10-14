@@ -743,7 +743,7 @@ service/                       runner, launchd installers, health probe, log rot
 agent/                         SOUL.md / AGENTS.md / USER.md / MEMORY.md templates
 tools/                         persona-check, the secret scanner, the live Slack QA runner
 test/                          unit suites, scenarios, fixtures
-docs/                          harness API notes, limitations, the sprite and the logo
+docs/                          harness API notes, limitations, the logos
 cordis.patch.yml               the bundle patch that inserts the adapter row
 ```
 

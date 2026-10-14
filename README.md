@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/sprite.svg" width="280" alt="deepseek-bot: a pixel whale after the DeepSeek mark">
+  <img src="docs/deepseek-bot.svg" width="360" alt="deepseek-bot: a whale with Bot stamped across its lower corner">
 </p>
 
 <h1 align="center">deepseek-bot</h1>
@@ -17,18 +17,18 @@
 </p>
 
 ```text
-            ▄  ▄▄▄▄▄    ▄█
-      ▄▄███████████     ████▄  ▄▄▄█
-     ████████████████▄   █████████▀
-    ███████████████████▄  ▀█████▀▀
-   ██▀  ▀▀▀█████████▀████▄▄███
-   ██        ▀███████  ███████
-   ███         ▀█████▄  █████
-    ███          ▀██████████▀
-    ▀███▄    ▄▄   ▀████████
-      ████▄   ███▄  ▀█████▄
-        ▀██████████▄▄▄▀▀███▀
-           ▀▀▀▀▀▀▀▀▀▀
+██████╗ ███████╗███████╗██████╗ ███████╗███████╗███████╗██╗  ██╗
+██╔══██╗██╔════╝██╔════╝██╔══██╗██╔════╝██╔════╝██╔════╝██║ ██╔╝
+██║  ██║█████╗  █████╗  ██████╔╝███████╗█████╗  █████╗  █████╔╝
+██║  ██║██╔══╝  ██╔══╝  ██╔═══╝ ╚════██║██╔══╝  ██╔══╝  ██╔═██╗
+██████╔╝███████╗███████╗██║     ███████║███████╗███████╗██║  ██╗
+╚═════╝ ╚══════╝╚══════╝╚═╝     ╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝
+                                          ██████╗  ██████╗ ████████╗
+                                          ██╔══██╗██╔═══██╗╚══██╔══╝
+                                          ██████╔╝██║   ██║   ██║
+                                          ██╔══██╗██║   ██║   ██║
+                                          ██████╔╝╚██████╔╝   ██║
+                                          ╚═════╝  ╚═════╝    ╚═╝
 
    you  ▸ @bot what did we decide about the deploy rollback?
         ⟳ working…
@@ -116,4 +116,4 @@ and by scenarios run against a real model.
 ## License
 
 [MIT](LICENSE). deepseek-bot is an independent project, not affiliated with or endorsed by DeepSeek.
-The whale is a pixel rendition of the DeepSeek mark; the DeepSeek name and logo belong to their owner.
+The whale is drawn after the DeepSeek mark; the DeepSeek name and logo belong to their owner.

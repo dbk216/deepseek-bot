@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="32 66 454 280" width="454" height="280" role="img" aria-label="deepseek-bot: a whale with Bot stamped across its lower corner">
+  <defs>
+    <!-- "Bot", drawn as strokes so it looks the same without any font installed -->
+    <g id="bot" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M0 0V64M0 0H22A15 15 0 0 1 22 30H0M0 30H26A17 17 0 0 1 26 64H0"/>
+      <circle cx="92" cy="43" r="21"/>
+      <path d="M157 6V50Q157 64 172 64M142 24H174"/>
+    </g>
+    <!-- the eye, the line under the head and a gap around "Bot" are cut out of the whale, so the
+         page shows through on a light or a dark background alike -->
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="500" height="360">
+      <rect width="500" height="360" fill="#fff"/>
+      <circle cx="106" cy="150" r="10" fill="#000"/>
+      <path d="M62 196C110 220 186 226 246 210" fill="none" stroke="#000" stroke-width="7" stroke-linecap="round"/>
+      <use href="#bot" transform="translate(256 252) rotate(-16) scale(1.12)" stroke="#000" stroke-width="30"/>
+    </mask>
+  </defs>
+  <path mask="url(#cut)" fill="#4D6BFE" d="M48 178C48 128 98 96 168 96C238 96 292 120 336 148C352 158 366 160 376 150C384 130 396 104 424 82C420 104 412 122 400 136C418 136 444 142 470 156C444 164 414 164 392 162C372 190 344 220 300 238C250 258 170 262 116 246C72 232 48 210 48 178Z"/>
+  <use href="#bot" transform="translate(256 252) rotate(-16) scale(1.12)" stroke="#4D6BFE" stroke-width="16"/>
+</svg>
