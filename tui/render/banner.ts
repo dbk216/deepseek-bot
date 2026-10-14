@@ -1,8 +1,9 @@
 /**
  * The deepseek-bot mark, in the logo's blue, sized to the terminal.
  *
- * One line of block letters needs 93 columns. Two lines need 68, with BOT under the end of DEEPSEEK as
- * in the README. Anything narrower gets a one-line wordmark — a banner that wraps is worse than a small one.
+ * One line of block letters needs 93 columns. Two lines need 68, with BOT under the end of DEEPSEEK.
+ * Anything narrower gets a one-line wordmark — a banner that wraps is worse than a small one.
+ * docs/banner.svg is the one-line banner drawn as an image, for the README.
  */
 import { mix, palette, sgr, type ColorMode } from './style.js'
 import type { Line } from './text.js'

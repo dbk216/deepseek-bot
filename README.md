@@ -16,25 +16,9 @@
   <img alt="node 22+" src="https://img.shields.io/badge/node-22%2B-4D6BFE">
 </p>
 
-```text
-██████╗ ███████╗███████╗██████╗ ███████╗███████╗███████╗██╗  ██╗
-██╔══██╗██╔════╝██╔════╝██╔══██╗██╔════╝██╔════╝██╔════╝██║ ██╔╝
-██║  ██║█████╗  █████╗  ██████╔╝███████╗█████╗  █████╗  █████╔╝
-██║  ██║██╔══╝  ██╔══╝  ██╔═══╝ ╚════██║██╔══╝  ██╔══╝  ██╔═██╗
-██████╔╝███████╗███████╗██║     ███████║███████╗███████╗██║  ██╗
-╚═════╝ ╚══════╝╚══════╝╚═╝     ╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝
-                                          ██████╗  ██████╗ ████████╗
-                                          ██╔══██╗██╔═══██╗╚══██╔══╝
-                                          ██████╔╝██║   ██║   ██║
-                                          ██╔══██╗██║   ██║   ██║
-                                          ██████╔╝╚██████╔╝   ██║
-                                          ╚═════╝  ╚═════╝    ╚═╝
-
-   you  ▸ @bot what did we decide about the deploy rollback?
-        ⟳ working…
-   bot  ▸ Tuesday's thread settled on a 15-minute rollback window.
-          Check that window before this deploy.
-```
+<p align="center">
+  <img src="docs/banner.svg" width="720" alt="DEEPSEEK BOT, in the terminal's block letters">
+</p>
 
 > **Sponsors**
 > These are our sponsors. They help keep deepseek-bot going as a personal side project.
