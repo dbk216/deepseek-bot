@@ -20,7 +20,7 @@ process.env.DSH_HOME = DSH_HOME
 
 const { App } = await import('../dist/tui/app.js')
 const { Connection, discover } = await import('../dist/tui/client.js')
-const { bind, createCommands, parseArgs } = await import('../dist/tui/cli.js')
+const { bind, createCommands, parseArgs, USAGE } = await import('../dist/tui/cli.js')
 const { createLocalTransport } = await import('../dist/transports/local.js')
 const { fakeTerminal } = await import('./tui-fakes.mjs')
 
@@ -41,6 +41,7 @@ async function until(predicate, ms = 3000) {
   const a = parseArgs(['--name', 'work', '--tenant', 'acme', '--resume', 'c-1'])
   check('args: name, tenant and resume', a.name === 'work' && a.tenant === 'acme' && a.resume === 'c-1' && a.help === false)
   check('args: a flag without its value is an error', 'error' in parseArgs(['--name']) && 'error' in parseArgs(['--name', '--tenant', 'x']))
+  check('usage: names the project, deepseek-bot', USAGE.split('\n')[0].includes('deepseek-bot과 대화'), USAGE.split('\n')[0])
   check('args: an unknown flag is an error, not ignored', 'error' in parseArgs(['--verbose']))
   check('args: --help', parseArgs(['--help']).help === true)
 }

@@ -71,7 +71,8 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   const text = t.term.screen.text()
   check('start: fullscreen with mouse tracking', t.term.screen.state.altScreen && t.term.screen.state.mouse)
   check('start: the block-letter banner is drawn', text.includes('██████╗'))
-  check('start: the info line names model, workspace and session', /deepbot\s+deepseek-v4\.1 · ~\/dsh-agent · session tui-3f2a9c1e-aaaa/.test(text), text.split('\n').find((l) => l.includes('deepbot  ')) ?? '')
+  check('start: the info line names model, workspace and session', /deepseek-bot\s+deepseek-v4\.1 · ~\/dsh-agent · session tui-3f2a9c1e-aaaa/.test(text), text.split('\n').find((l) => l.includes('deepseek-bot  ')) ?? '')
+  check('start: the header names the project, deepseek-bot', text.split('\n')[0].trimStart().startsWith('deepseek-bot '), text.split('\n')[0])
   check('start: the input box and the status line', text.includes('╭') && text.includes('╰') && text.includes('▸▸ ask'))
 }
 
@@ -257,7 +258,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.app.agentLines('child-1', [{ role: 'user', text: '링크 3개를 요약해' }, { role: 'tool', text: 'web_fetch' }, { role: 'assistant', text: '요약 중간 결과' }])
   t.clock.advance(20)
   const view = t.term.screen.text()
-  check('agent view: the header says where we are, the pane shows the child\'s conversation', view.includes('deepbot · main › research links') && view.includes('› 링크 3개를 요약해') && view.includes('⏺ web_fetch') && view.includes('요약 중간 결과'))
+  check('agent view: the header says where we are, the pane shows the child\'s conversation', view.includes('deepseek-bot · main › research links') && view.includes('› 링크 3개를 요약해') && view.includes('⏺ web_fetch') && view.includes('요약 중간 결과'))
   check('agent view: lines for another child are ignored', (t.app.agentLines('child-2', [{ role: 'user', text: '다른 아이' }]), !t.term.screen.text().includes('다른 아이')))
   t.key('더 짧게 해줘\r')
   check('agent view: Enter sends to that child, not to the conversation', JSON.stringify(t.views.at(-1)) === JSON.stringify(['send', 'child-1', '더 짧게 해줘']) && t.sent.length === 0)

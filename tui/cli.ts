@@ -25,7 +25,7 @@ export function parseArgs(argv: string[]): Args | { error: string } {
   return args
 }
 
-export const USAGE = `deepbot-tui — 터미널에서 deepbot과 대화
+export const USAGE = `deepbot-tui — 터미널에서 deepseek-bot과 대화
 
   deepbot-tui [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
 

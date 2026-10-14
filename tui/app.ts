@@ -901,7 +901,7 @@ export class App {
     if (panelTop >= 0) this.drawPanel(screen, panelTop, panel.rows, panel.first)
 
     // Header, with where the pane is looking.
-    let hx = screen.put(1, 0, 'deepbot', s(theme.brand))
+    let hx = screen.put(1, 0, 'deepseek-bot', s(theme.brand))
     if (this.view.kind !== 'main') hx = screen.put(hx, 0, ` · main › ${this.view.kind === 'agent' ? this.view.label : this.view.id}`, s(theme.accent))
     const right = [this.status.session && `${this.status.session.slice(0, 12)}…`, this.status.workspace].filter(Boolean).join(' · ')
     if (right !== '') screen.put(Math.max(hx + 2, cols - 1 - stringWidth(right)), 0, right, s(theme.muted))

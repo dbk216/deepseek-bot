@@ -216,7 +216,7 @@ export function bannerBlock(info: () => string, mode: ColorMode): Block & { refr
         blank(),
         ...banner(width, mode),
         blank(),
-        { spans: [pad('  '), { text: 'deepbot', style: sgr(theme.brand, mode) }, { text: `  ${info()}`, style: sgr(theme.muted, mode) }], soft: false },
+        { spans: [pad('  '), { text: 'deepseek-bot', style: sgr(theme.brand, mode) }, { text: `  ${info()}`, style: sgr(theme.muted, mode) }], soft: false },
       ]
     },
   }
