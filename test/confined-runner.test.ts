@@ -235,6 +235,8 @@ for (const resolved of [false, true]) {
   const inWs = (root, cmd, extraEnv = {}) => { try { return execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--bind', root, root, '--', ...cmd], { encoding: 'utf8', env: { ...env, ...extraEnv }, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}: ${String(e.stderr ?? '').slice(0, 80)}` } }
   check('a tenant workspace inside the home reads its own files', inWs(tenant, ['/bin/cat', join(tenant, 'note.md')]).includes('tenant-note-6a7'), inWs(tenant, ['/bin/cat', join(tenant, 'note.md')]).slice(0, 100))
   check('and still not the home around it', !inWs(tenant, ['/bin/cat', join(home, 'SOUL.md')]).includes('canary-home-5f6'))
+  // An entry written with a trailing slash is the same directory: it did not count as holding the workspace.
+  check('a DEEPBOT_DENY_READ entry with a trailing / around the workspace leaves it readable', inWs(tenant, ['/bin/cat', join(tenant, 'note.md')], { DEEPBOT_DENY_READ: `${home}/` }).includes('tenant-note-6a7'))
   check('a DEEPBOT_DENY_READ entry inside the workspace still holds', !inWs(tenant, ['/bin/cat', join(tenant, 'private', 'x')], { DEEPBOT_DENY_READ: join(tenant, 'private') }).includes('canary-inner-7b8'))
   const upper = join(fakeHome, 'DSH-AGENT')
   check('a workspace given in another case is still its own (the volume ignores case)', inWs(upper, ['/bin/cat', join(upper, 'SOUL.md')]).includes('canary-home-5f6'), inWs(upper, ['/bin/cat', join(upper, 'SOUL.md')]).slice(0, 100))

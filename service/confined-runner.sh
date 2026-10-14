@@ -96,8 +96,10 @@ profile() {
   extra=()
   IFS=':' read -r -a extra <<< "${DEEPBOT_DENY_READ:-}"
   ws_resolved="${workspace_real:-$workspace_root}"
-  denied=()
+  deny_entries=()
   for candidate in "$HOME"/dsh-agent* ${extra[@]+"${extra[@]}"}; do
+    # "dir/" is dir: with the slash it never counted as holding the workspace inside it.
+    while [ "${#candidate}" -gt 1 ] && [ "${candidate%/}" != "$candidate" ]; do candidate="${candidate%/}"; done
     [ -n "$candidate" ] && [ -e "$candidate" ] || continue
     # Its resolved name, the one Seatbelt matches: an entry under a link (/var → /private/var), or a link
     # to a file, denied nothing by the name given. None when it cannot be resolved; an empty subpath
@@ -106,10 +108,10 @@ profile() {
     # The workspace is not another home, by either of its names.
     if [ "$candidate" = "$workspace_root" ] || { [ -n "$resolved" ] && [ "$resolved" = "$ws_resolved" ]; }; then continue; fi
     printf '(deny file-read* (subpath %s))\n' "$(sbpl "$candidate")"
-    denied+=("$candidate")
+    deny_entries+=("$candidate")
     if [ -n "$resolved" ] && [ "$resolved" != "$candidate" ]; then
       printf '(deny file-read* (subpath %s))\n' "$(sbpl "$resolved")"
-      denied+=("$resolved")
+      deny_entries+=("$resolved")
     fi
   done
   # The workspace is the command's own, even inside a denied entry: a tenant's directory is under the
@@ -148,7 +150,7 @@ profile() {
   done
   # The entries above again, after the allows, except one the workspace is inside: an entry within the
   # workspace, or within the harness home's runtimes, stays denied.
-  for entry in ${denied[@]+"${denied[@]}"}; do
+  for entry in ${deny_entries[@]+"${deny_entries[@]}"}; do
     holds_workspace=0
     for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
       case "$name/" in "$entry"/*) holds_workspace=1 ;; esac
