@@ -114,10 +114,15 @@ provider_rows() {   # provider_rows deepseek | opengateway | custom <keyRef> <ba
 key_source() {   # key_source <NAME>: env, store or dotenv — where it is set — or nothing. Names only.
   local name="$1" home="${DSH_HOME:-$HOME/.dsh}"
   if [ -n "${!name:-}" ]; then echo env; return 0; fi
+  # YAML, read as YAML: a blank line or a comment neither ends refs nor holds a key, at any indent; a
+  # key may be quoted or have a space before its colon; refs may be a flow mapping on one line.
   if [ -f "$home/.credentials.yaml" ] && awk -v k="$name" '
-      /^refs:[[:space:]]*$/ { inrefs = 1; next }
-      /^[^[:space:]#]/      { inrefs = 0 }
-      inrefs && $0 ~ ("^[[:space:]]+" k ":") { found = 1 }
+      function iskey(s) { return s ~ ("^[\"\047]?" k "[\"\047]?[[:space:]]*:") }
+      /^refs:[[:space:]]*\{/ { s = $0; sub(/^refs:[[:space:]]*\{/, "", s); n = split(s, parts, ","); for (i = 1; i <= n; i++) { p = parts[i]; sub(/^[[:space:]]+/, "", p); if (iskey(p)) found = 1 }; next }
+      /^refs:[[:space:]]*(#.*)?$/ { inrefs = 1; next }
+      /^[[:space:]]*(#.*)?$/      { next }
+      /^[^[:space:]]/             { inrefs = 0 }
+      inrefs { s = $0; sub(/^[[:space:]]+/, "", s); if (iskey(s)) found = 1 }
       END { exit !found }' "$home/.credentials.yaml" 2>/dev/null; then echo store; return 0; fi
   if grep -q "^$name=" "$home/.env" 2>/dev/null; then echo dotenv; return 0; fi
   return 0

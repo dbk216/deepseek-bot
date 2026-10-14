@@ -240,6 +240,20 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   check('credentials: one in ~/.dsh/.env is found there', src('DEEPSEEK_API_KEY') === 'dotenv')
   check('credentials: the launch environment comes first', src('OG_API_KEY', { OG_API_KEY: 'from-env' }) === 'env')
   check('credentials: one set nowhere is not found', src('TELEGRAM_BOT_TOKEN') === '')
+  // The store is YAML: a comment does not end refs at any indent; a key may be quoted or spaced; refs may be a flow mapping.
+  const shapes = [
+    ['refs:\n  A_KEY: x\n# a note\n  B_KEY: y\n', 'B_KEY'],
+    ['refs:\n\n  "Q_KEY": x\n', 'Q_KEY'],
+    ["refs:\n  'S_KEY' : x\n", 'S_KEY'],
+    ['refs: { F_KEY: x, G_KEY: y }\n', 'G_KEY'],
+  ]
+  const wrong = shapes.filter(([yaml, name]) => {
+    writeFileSync(join(dsh, '.credentials.yaml'), `version: 1\n${yaml}records: {}\n`)
+    return src(name) !== 'store'
+  }).map(([, name]) => name)
+  writeFileSync(join(dsh, '.credentials.yaml'), 'version: 1\nrefs: { F_KEY: x }\nrecords:\n  r:\n    G_KEY: not-a-ref\n')
+  check('credentials: the store is read as YAML — past comments, quoted and spaced keys, a flow mapping; still not records', wrong.length === 0 && src('G_KEY') === '', wrong.join(', ') || src('G_KEY'))
+  writeFileSync(join(dsh, '.credentials.yaml'), 'version: 1\n\nrefs:\n  OG_API_KEY: og-stored-value\n\nrecords:\n  llm-pi-ai/x:\n    kind: grant\n    payload:\n      SLACK_BOT_TOKEN: not-a-ref\n')
   const stored = withHelpers(`DSH_HOME="${dsh}"; put_key OG_API_KEY "OpenGateway API key:"`, { DSH_HOME: dsh })
   check('credentials: put_key does not ask for a key the store has, says where it is, and writes nothing', stored.code === 0 && /OG_API_KEY/.test(stored.out) && /credentials\.yaml/.test(stored.out)
     && !readFileSync(join(dsh, '.env'), 'utf8').includes('OG_API_KEY') && !stored.out.includes('og-stored-value'), stored.out)
