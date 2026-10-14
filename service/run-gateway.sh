@@ -82,6 +82,12 @@ fi
 mkdir -p "$AGENT_HOME"
 cd "$AGENT_HOME" || { echo "[gateway] cannot enter agent home: $AGENT_HOME" >&2; exit 2; }
 
+# Skills. The harness also loads the skills in <agents home>/skills — ~/.agents unless DSH_AGENTS_HOME
+# says otherwise — which is where the operator's own coding agents keep theirs. Those are not the bot's:
+# its skills live in its home (.dsh/skills). An empty agents home of its own, whatever the caller had set.
+export DSH_AGENTS_HOME="$HOME/.dsh/deepbot/agents-home"
+mkdir -p "$DSH_AGENTS_HOME"
+
 echo "[gateway] starting $(date '+%Y-%m-%d %H:%M:%S') — profile=$PROFILE port=$PORT cwd=$AGENT_HOME"
 
 # The harness reads <cwd>/.env before the deployment's own credentials, and this is the agent's home:

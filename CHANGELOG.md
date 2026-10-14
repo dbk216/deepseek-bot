@@ -20,6 +20,13 @@ the caveat about version numbers is at the bottom.
 
 ### Added
 
+- **The agent knows what it is and which settings are its own.** Every session's setup adds a
+  system-prompt section: it is deepseek-bot on DeepSeek Harness; this conversation's platform (or the
+  terminal) and the language of its notices; what it may change in its home (persona files, notes,
+  watches, skills in `.dsh/skills/`); and what only the operator can (model, provider, platforms,
+  channels, language, keys, approvals, sandbox), which it points to instead of trying. It was told only
+  that it is "a coding agent". The sandbox runner now also denies reading `~/.dsh/profiles`, which
+  that section says the agent cannot read.
 - **`/model` in the terminal.** It lists the models the registered providers advertise, numbered,
   with this conversation's marked and the reasoning efforts it takes; `/model <n>` or
   `/model <provider>/<model> [effort]` moves this conversation to another from its next turn (the same
@@ -57,6 +64,11 @@ the caveat about version numbers is at the bottom.
 
 ### Changed
 
+- **The bot no longer loads the operator's own skills.** The harness also lists the skills in
+  `~/.agents/skills`, where an operator's coding agents keep theirs; the launcher now gives the
+  gateway an empty agents home of its own (`DSH_AGENTS_HOME=~/.dsh/deepbot/agents-home`). Takes effect
+  when `install-service.sh` is run again. The agent template points skills at `.dsh/skills/`, the
+  directory the harness reads, instead of `skills/`, which it never did, and names the terminal.
 - **The deployment's reasoning effort reaches a turn.** `agent-default-model`'s `reasoningEffort` was
   read and dropped: only the provider and model were passed to the session. It is passed now, for the
   deployment's own model and only when that model declares the effort — the harness refuses a call

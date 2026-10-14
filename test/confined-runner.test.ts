@@ -88,6 +88,9 @@ for (const resolved of [false, true]) {
   writeFileSync(join(fakeHome, '.dsh', 'recall', 'home', 'recall-index.jsonl'), 'canary-recall-77b\n')
   writeFileSync(join(fakeHome, '.dsh', 'sessions', 'bucket', 's1', 'session.v4.jsonl.zstd'), 'canary-session-a41\n')
   writeFileSync(join(fakeHome, '.dsh', 'service', 'logs', 'gateway.out.log'), 'token=canary-ui-6d2\n')
+  // The gateway profiles: the operator's settings, which the agent is told it can neither read nor change.
+  mkdirSync(join(fakeHome, '.dsh', 'profiles', 'agent'), { recursive: true })
+  writeFileSync(join(fakeHome, '.dsh', 'profiles', 'agent', 'cordis.patch.yml'), 'canary-profile-8e1\n')
   const env = { ...process.env, HOME: fakeHome }
   const text = execFileSync(RUNNER, ['--print-profile', ...READ_ONLY, '--', 'true'], { encoding: 'utf8', env })
   const as = resolved ? ' (resolved home)' : ' (home under a symlink)'
@@ -103,6 +106,7 @@ for (const resolved of [false, true]) {
   check('nor the gateway\'s log, which carries the web UI token' + as, !read(join('service', 'logs', 'gateway.out.log')).includes('canary-ui-6d2'))
   check('nor the recall index' + as, !read(join('recall', 'home', 'recall-index.jsonl')).includes('canary-recall-77b'))
   check('nor the session store' + as, !read(join('sessions', 'bucket', 's1', 'session.v4.jsonl.zstd')).includes('canary-session-a41'))
+  check('nor a gateway profile' + as, !read(join('profiles', 'agent', 'cordis.patch.yml')).includes('canary-profile-8e1'))
   // A hard link is another path to the same file, which a path rule would not cover. It cannot be made
   // from the workspace — not because the credentials are denied, but because Seatbelt refuses a link
   // whose source is outside the writable paths at all: a readable file outside is refused the same way

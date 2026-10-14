@@ -122,7 +122,9 @@ profile() {
   # reads its own past through the recall index in its home, never through these files.
   # The recall index too: every channel's history, which the adapter hands out one channel at a time.
   # Under DSH_HOME as well, when the harness's home is elsewhere, as the credentials above are.
-  for denied in "$HOME/.dsh/service/logs" "$HOME/.dsh/sessions" "$HOME/.dsh/recall" ${DSH_HOME:+"$DSH_HOME/sessions" "$DSH_HOME/recall"}; do
+  # The gateway profiles: the operator's settings (model, provider, platforms, approvals), which the agent
+  # is told it can neither read nor change — and where a key written inline would otherwise be one cat away.
+  for denied in "$HOME/.dsh/service/logs" "$HOME/.dsh/sessions" "$HOME/.dsh/recall" "$HOME/.dsh/profiles" ${DSH_HOME:+"$DSH_HOME/sessions" "$DSH_HOME/recall" "$DSH_HOME/profiles"}; do
     [ -d "$denied" ] || continue
     printf '(deny file-read* (subpath %s))\n' "$(sbpl "$denied")"
     resolved="$(cd "$denied" && pwd -P)"
