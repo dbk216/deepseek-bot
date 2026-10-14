@@ -171,6 +171,8 @@ export class App {
   /** Turns the conversation has running or waiting: each sends typing on, then off. */
   private busy = 0
   private dragging = false
+  /** The input box's first visible row: kept until the cursor leaves the rows shown. */
+  private editorScroll = 0
   /** Rows of the last frame, for mapping mouse coordinates. */
   private geometry = {
     transcriptTop: 1, transcriptHeight: 0, dividerRow: 0, editorTop: 0, choiceRow: -1, choiceSpans: [] as Array<{ from: number; to: number }>,
@@ -456,7 +458,9 @@ export class App {
     this.terminal.requestRender(true)
   }
 
-  private closePicker(): void {
+  /** Close the picker; with a spec, only when it is the one open. */
+  closePicker(spec?: PickerSpec): void {
+    if (this.picker === null || (spec !== undefined && this.picker.spec !== spec)) return
     this.picker = null
     this.refreshCompletion()
     this.terminal.requestRender(true)
@@ -650,7 +654,7 @@ export class App {
     // A list is for the text it was made from: anything that changed the box since (Ctrl+C, a
     // command that set it) leaves it stale, and Tab or Enter must not act on a stale one.
     if (this.completion !== null && this.completion.text !== this.editor.text) this.refreshCompletion()
-    if (key.ctrl && key.name === 'char' && key.ch === 'r' && this.view.kind === 'main' && this.question === null) { this.startSearch(); return }
+    if (key.ctrl && key.name === 'char' && key.ch === 'r' && this.view.kind === 'main' && this.question === null && this.picker === null) { this.startSearch(); return }
     if (this.completion !== null && this.onCompletionKey(key)) return
     if (key.ctrl && key.name === 'char') {
       switch (key.ch) {
@@ -721,7 +725,7 @@ export class App {
   private refreshCompletion(): void {
     if (this.dismissed !== null && this.dismissed !== this.editor.text) this.dismissed = null
     // Not for an earlier entry being walked through: its list would take the arrows that walk on.
-    const usable = this.view.kind === 'main' && this.question === null && this.search === null && this.dismissed === null && !this.editor.browsingHistory
+    const usable = this.view.kind === 'main' && this.question === null && this.picker === null && this.search === null && this.dismissed === null && !this.editor.browsingHistory
     const found = usable ? complete(this.editor.text, this.editor.cursor, typeof this.o.commands === 'function' ? this.o.commands() : this.o.commands ?? [], this.o.files) : null
     if (found === null) { this.completion = null; return }
     const same = this.completion !== null && this.completion.items.map((i) => i.label).join('\n') === found.items.map((i) => i.label).join('\n')
@@ -734,7 +738,10 @@ export class App {
     switch (key.name) {
       case 'up': c.index = (c.index + c.items.length - 1) % c.items.length; break
       case 'down': c.index = (c.index + 1) % c.items.length; break
-      case 'tab': this.acceptCompletion(false); return true
+      case 'tab':
+        if (key.shift) return false   // the effort's, not the list's
+        this.acceptCompletion(false)
+        return true
       case 'enter':
         if (key.alt || key.shift) return false
         this.acceptCompletion(true)
@@ -823,6 +830,7 @@ export class App {
   /** Keys while a picker is open. Returns false for keys the input box should get instead. */
   private onPickerKey(key: KeyEvent): boolean {
     const p = this.picker!
+    const typing = this.editor.text !== ''
     if (key.ctrl) {
       if (key.name === 'char' && key.ch === 'c') { this.closePicker(); return true }
       return false
@@ -833,10 +841,14 @@ export class App {
       case 'tab': p.move(key.shift ? -1 : 1); break
       case 'left': p.stepEffort(-1); break
       case 'right': p.stepEffort(1); break
-      case 'enter': if (!key.alt && !key.shift) this.choosePicker(); return true
+      case 'enter':
+        // Opened over text being typed (it opens when the gateway answers): ↵ is the text's.
+        if (typing) { this.closePicker(); return false }
+        if (!key.alt && !key.shift) this.choosePicker()
+        return true
       case 'escape': this.closePicker(); return true
       case 'char':
-        if (!key.alt && /^[1-9]$/.test(key.ch ?? '') && p.jump(Number(key.ch))) break
+        if (!key.alt && !typing && /^[1-9]$/.test(key.ch ?? '') && p.jump(Number(key.ch))) break
         // Typing goes back to the input box, with the key.
         this.closePicker()
         return false
@@ -1019,7 +1031,6 @@ export class App {
     const editorRows = Math.min(EDITOR_MAX_ROWS, editor.rows.length)
     const choiceRows = this.choice === null || this.question !== null ? 0 : 1
     const questionLines = this.question === null ? [] : this.questionLines(cols)
-    const pickerLines = this.question === null && this.picker !== null ? this.pickerLines(cols) : []
     const stripRows = this.interview !== null && this.view.kind === 'main' ? 3 : 0
     const allRows = this.rows()
     const panel = panelWindow(allRows, this.panelIndex, PANEL_MAX_ROWS)
@@ -1029,7 +1040,10 @@ export class App {
     // Messages waiting behind the running turn, above the divider: three at most, then a count.
     const waiting = this.view.kind === 'main' ? this.pending : []
     const pendingRows = Math.min(waiting.length, 3) + (waiting.length > 3 ? 1 : 0)
-    const bottom = pendingRows + 1 /* divider */ + 1 /* status */ + panelShown + choiceRows + questionLines.length + pickerLines.length + completionLines.length + editorRows + 2 /* box */ + 1 /* hint */
+    const fixed = pendingRows + 1 /* divider */ + 1 /* status */ + panelShown + choiceRows + questionLines.length + completionLines.length + editorRows + 2 /* box */ + 1 /* hint */
+    // The picker gets what is left after a row of transcript: on a small screen it shrinks, the box stays.
+    const pickerLines = this.question === null && this.picker !== null ? this.pickerLines(cols, rows - (1 + stripRows) - 1 - fixed) : []
+    const bottom = fixed + pickerLines.length
     const transcriptTop = 1 + stripRows
     // As tall as what it shows, up to every row left: the input box follows a short conversation.
     const transcriptHeight = Math.max(1, Math.min(rows - transcriptTop - bottom, this.pane.layout(cols).length))
@@ -1067,7 +1081,11 @@ export class App {
       })
       screen.put(x + 2, choiceRow, t().choiceHint, s(theme.dim))
     }
-    const editorFirst = Math.max(0, editor.cursor.y - editorRows + 1)
+    // A click on a row shown must not scroll the box: the rows stay until the cursor leaves them.
+    let editorFirst = Math.min(this.editorScroll, Math.max(0, editor.rows.length - editorRows))
+    if (editor.cursor.y < editorFirst) editorFirst = editor.cursor.y
+    else if (editor.cursor.y >= editorFirst + editorRows) editorFirst = editor.cursor.y - editorRows + 1
+    this.editorScroll = editorFirst
     this.geometry = {
       transcriptTop, transcriptHeight, dividerRow, editorTop, choiceRow, choiceSpans, panelTop, panelFirst: panel.first, panelShown, questionTop, questionRowsAt,
       pickerTop, pickerMap: pickerLines.map((line) => line.row),
@@ -1172,22 +1190,25 @@ export class App {
   }
 
   /** The picker: its title, a window of numbered rows, and the highlighted row's effort when it has one. */
-  private pickerLines(cols: number): Array<{ text: string; style: string; row: number }> {
+  private pickerLines(cols: number, room: number): Array<{ text: string; style: string; row: number }> {
     const p = this.picker
     if (p === null) return []
     const s = (style) => sgr(style, this.mode)
     const out: Array<{ text: string; style: string; row: number }> = [{ text: p.spec.title, style: s({ ...theme.accent, bold: true }), row: -1 }]
-    const win = p.window(PICKER_MAX_ROWS)
+    // Within the room left: the title, and the effort line when a row has efforts, come off it first.
+    const win = p.window(Math.max(1, Math.min(PICKER_MAX_ROWS, room - 1 - (p.hasEfforts ? 1 : 0))))
     const shown = p.rows.slice(win.first, win.first + win.count)
     const labelWidth = Math.min(Math.max(0, ...shown.map((r) => stringWidth(r.label))), Math.floor(cols / 2))
+    const numberWidth = String(p.rows.length).length
+    if (win.above > 0) out.push({ text: `  ↑ ${win.above}`, style: s(theme.muted), row: -1 })
     shown.forEach((row, k) => {
       const i = win.first + k
       const at = i === p.cursor
       const label = `${row.label}${' '.repeat(Math.max(0, labelWidth - stringWidth(row.label)))}`
-      const text = `${at ? '❯' : ' '} ${i + 1}. ${label}${row.detail ? `  ${row.detail}` : ''}${row.current ? '  ✓' : ''}`
+      const text = `${at ? '❯' : ' '} ${String(i + 1).padStart(numberWidth)}. ${label}${row.detail ? `  ${row.detail}` : ''}${row.current ? '  ✓' : ''}`
       out.push({ text, style: at ? s({ ...theme.accent, bold: true }) : s(theme.text), row: i })
     })
-    if (win.more > 0) out.push({ text: `  ↓ ${win.more}`, style: s(theme.muted), row: -1 })
+    if (win.below > 0) out.push({ text: `  ↓ ${win.below}`, style: s(theme.muted), row: -1 })
     const current = p.rows[p.cursor]
     if (current?.efforts !== undefined) {
       const text = current.efforts.length === 0 ? `  ${t().noEffort}`

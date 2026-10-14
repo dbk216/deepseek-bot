@@ -195,14 +195,24 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
     }
   }
 
+  /** `work` over `items`, at most `limit` at once, the results in their order. */
+  async function inBatches<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+    const out: R[] = new Array(items.length)
+    let next = 0
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) { const i = next++; out[i] = await work(items[i]) }
+    }))
+    return out
+  }
+
   /** To every terminal on the conversation now, and nothing kept for later. */
   function toConversation(conversation: string, frame: ServerFrame): void {
     for (const c of clients) if (c.conversation === conversation) send(c, frame)
   }
 
   /**
-   * A conversation's model and effort changes, one after another: two shift+tabs sent together each
-   * step from where the other left it, not both from where they started.
+   * A conversation's model and effort changes, one after another, so each answer says what its own change
+   * left: two shift+tabs sent together were otherwise both answered with the second one's effort.
    */
   const modelChanges = new Map<string, Promise<void>>()
   function oneAtATime(conversation: string, work: () => Promise<void>): Promise<void> {
@@ -335,9 +345,9 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         const asked = client.conversation
         const key = `${LOCAL_CHANNEL}:${asked}`
         const listed = await (host.listModels?.() ?? Promise.resolve([])).catch(() => [])
-        // Each with the efforts it takes, read side by side; one that cannot be read has none to step.
-        const items = await Promise.all(listed.map(async (item) => host.effortsFor === undefined ? item
-          : { ...item, efforts: await host.effortsFor(item.provider, item.id).catch(() => []) }))
+        // Each with the efforts it takes, four read at a time; one that cannot be read has none to step.
+        const { effortsFor } = host
+        const items = effortsFor === undefined ? listed : await inBatches(listed, 4, async (item) => ({ ...item, efforts: await effortsFor(item.provider, item.id).catch(() => []) }))
         const current = await host.modelChoice?.(key).catch(() => null)
         // An answer for a conversation the terminal has since left is not sent: it would land on the new one.
         if (client.conversation !== asked) return

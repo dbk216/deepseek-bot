@@ -75,12 +75,18 @@ export class Picker {
     this.spec.onPick(this.cursor, this.effortAt(this.cursor))
   }
 
-  /** At most `max` rows around the highlight; `more` counts the rows below the window. */
-  window(max: number): { first: number; count: number; more: number } {
+  /**
+   * At most `max` lines around the highlight: its rows, and a line counting the rows above the window
+   * and one counting those below, each only when there are some.
+   */
+  window(max: number): { first: number; count: number; above: number; below: number } {
     const n = this.spec.rows.length
-    if (n <= max) return { first: 0, count: n, more: 0 }
-    const visible = Math.max(1, max - 1)
-    const first = Math.max(0, Math.min(this.cursor - visible + 1, n - visible))
-    return { first, count: visible, more: n - first - visible }
+    if (n <= max) return { first: 0, count: n, above: 0, below: 0 }
+    const place = (count: number) => Math.max(0, Math.min(this.cursor - count + 1, n - count))
+    let count = Math.max(1, max - 1)
+    let first = place(count)
+    // Rows hidden at both ends: a line for each.
+    if (first > 0 && first + count < n) { count = Math.max(1, max - 2); first = place(count) }
+    return { first, count, above: first, below: n - first - count }
   }
 }

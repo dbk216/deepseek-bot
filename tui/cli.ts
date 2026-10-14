@@ -6,6 +6,7 @@ import type { App } from './app.js'
 import { NAME, type ClientFrame, type ConversationItem, type ModelChoice, type ModelItem, type ServerFrame } from './protocol.js'
 import { interviewPrompt } from './interview.js'
 import type { CommandInfo } from './complete.js'
+import type { PickerSpec } from './picker.js'
 import { stringWidth } from './render/width.js'
 import { languageOf } from '../i18n.js'
 import { setLanguage, t } from './strings.js'
@@ -63,6 +64,7 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       return
     case 'model':
       app.setStatus({ model: frame.current.model, effort: frame.current.effort })
+      commands?.modelChanged()
       // A shift+tab shows in the status line; a line in the transcript for each would bury the conversation.
       if (frame.cause !== 'effort') app.notice(t().modelNow(`${frame.current.provider}/${frame.current.model}`, frame.current.effort), 'ok')
       return
@@ -174,6 +176,8 @@ export interface Commands {
   rolledBack(message: string): void
   /** shift+tab: the conversation's next effort, which the gateway works out. */
   stepEffort(): void
+  /** The conversation's model or effort changed: a model picker still open shows what was. */
+  modelChanged(): void
 }
 
 /**
@@ -184,6 +188,8 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
   const now = options.now ?? (() => Date.now())
   let listed: ConversationItem[] = []
   let models: ModelItem[] = []
+  /** The model picker this terminal opened last, so a change under it can close it. */
+  let modelPicker: PickerSpec | null = null
   let wantHistory = options.resumeOnStart === true
   const offline = () => app.notice(t().notConnected, 'error')
   const send = (frame: ClientFrame) => { if (!link.send(frame)) offline() }
@@ -282,7 +288,7 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
     models(items, current) {
       models = items
       app.setStatus({ model: current.model, effort: current.effort })
-      app.openPicker({
+      modelPicker = {
         title: t().pickModel,
         rows: [
           ...items.map((item) => {
@@ -299,7 +305,12 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
           const item = items[i]
           send(item === undefined ? { type: 'model', provider: null } : { type: 'model', provider: item.provider, model: item.id, effort })
         },
-      })
+      }
+      app.openPicker(modelPicker)
+    },
+    modelChanged() {
+      // What it shows is no longer so; ↵ on it would send the old effort and undo the change.
+      if (modelPicker !== null) app.closePicker(modelPicker)
     },
     stepEffort() {
       send({ type: 'effort', step: 1 })

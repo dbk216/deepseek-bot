@@ -941,6 +941,64 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('mouse: a click on one that takes none runs it', JSON.stringify(intercepted) === '["/help"]', JSON.stringify(intercepted))
 }
 
+// 72. Review of the pickers. A small screen keeps the input box; text being typed when a picker opens
+// keeps ↵ and digits; the picker does not share the screen with the completion list or a history
+// search; shift+tab steps the effort with the completion list open; a click in a tall input box does
+// not scroll it; rows above the window are counted; numbers line up past nine.
+{
+  const many = Array.from({ length: 12 }, (_, i) => ({ label: `p/model-${i + 1}`, detail: `M${i + 1}` }))
+  for (const rows of [16, 13]) {
+    const small = setup({ cols: 80, rows })
+    small.app.openPicker({ title: 'Model', rows: many, onPick: () => {} })
+    small.clock.advance(20)
+    check(`picker: on a screen ${rows} rows tall the input box and the hint line stay`, small.term.screen.find('╰') !== null && small.term.screen.find('╭') !== null && small.term.screen.text().includes('↑↓ pick'), small.term.screen.text().split('\n').slice(-5).join(' | '))
+    check(`picker: and it still shows a row to pick (${rows} rows)`, /❯ +1\. p\/model-1 /.test(small.term.screen.text()))
+  }
+
+  const picked = []
+  const t = setup({ cols: 80, rows: 40, extra: { commands: commandInfo(), intercept: (text) => text.startsWith('/') } })
+  t.key('order ')
+  t.app.openPicker({ title: 'Model', rows: many, onPick: (i) => picked.push(i) })
+  t.clock.advance(20)
+  t.key('2'); t.clock.advance(20)
+  check('picker: opened over text being typed, a digit goes to the text', t.app.editor.text === 'order 2' && picked.length === 0, JSON.stringify(t.app.editor.text))
+  t.app.openPicker({ title: 'Model', rows: many, onPick: (i) => picked.push(i) })
+  t.key('\r'); t.clock.advance(20)
+  check('picker: and ↵ sends the text instead of picking', JSON.stringify(t.sent) === '["order 2"]' && picked.length === 0, JSON.stringify([t.sent, picked]))
+
+  const c = setup({ cols: 80, rows: 40, extra: { commands: commandInfo() } })
+  c.key('/s'); c.clock.advance(20)
+  c.app.openPicker({ title: 'Model', rows: many, onPick: () => {} })
+  c.key('\x1b[5~'); c.clock.advance(20)
+  check('picker: the completion list does not open under it', c.app.picker !== null && c.app.completion === null && !c.term.screen.text().includes('/sessions'), c.term.screen.text().split('\n').filter((l) => l.includes('/s')).join(' | '))
+  c.key('\x12'); c.clock.advance(20)
+  check('picker: nor does a history search', c.app.picker !== null && !/history search/.test(c.term.screen.text()))
+
+  const steps = []
+  const e = setup({ extra: { commands: commandInfo(), stepEffort: () => steps.push(1) } })
+  e.key('/'); e.clock.advance(20)
+  e.key('\x1b[Z'); e.clock.advance(20)
+  check('shift+tab: with the completion list open it steps the effort, and inserts nothing', steps.length === 1 && e.app.editor.text === '/', JSON.stringify(e.app.editor.text))
+
+  const tall = setup({ cols: 80, rows: 40 })
+  tall.key(`\x1b[200~${Array.from({ length: 10 }, (_, i) => `row${i}`).join('\n')}\x1b[201~`)
+  tall.clock.advance(20)
+  // The cursor on the last row: the box shows the last six, row4 to row9, and a click goes on row4.
+  const top = tall.term.screen.find('row4')
+  const shownBefore = tall.term.screen.row(top.row).trim()
+  tall.key(SGR(0, top.col + 2, top.row)); tall.key(SGR(0, top.col + 2, top.row, true)); tall.clock.advance(20)
+  check('mouse: a click in a tall input box does not scroll it', tall.term.screen.row(top.row).trim() === shownBefore, `${shownBefore} → ${tall.term.screen.row(top.row).trim()}`)
+
+  const w = setup({ cols: 80, rows: 40 })
+  w.app.openPicker({ title: 'Model', rows: many, onPick: () => {} })
+  for (let i = 0; i < 10; i++) w.key('\x1b[B')
+  w.clock.advance(20)
+  const text = w.term.screen.text()
+  check('picker: rows above the window are counted', /↑ \d/.test(text), text.split('\n').filter((l) => /[↑↓] \d/.test(l)).join(' | '))
+  const nine = w.term.screen.find('. p/model-9 '), eleven = w.term.screen.find('. p/model-11')
+  check('picker: numbers line up past nine', nine !== null && eleven !== null && nine.col === eleven.col, text.split('\n').filter((l) => /model-(9|11) /.test(l)).join(' | '))
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

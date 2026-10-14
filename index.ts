@@ -2238,7 +2238,8 @@ export function apply(ctx, config) {
     modelChoice: async (key: string) => { const m = modelFor(key); const efforts = await effortsOf(m.provider, m.model); return { provider: m.provider ?? '', model: m.model ?? '', effort: shownEffort(key), efforts } },
     listModels: () => listModels(),
     setModel: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => setModel(key, choice),
-    effortsFor: (provider: string, model: string) => effortsOf(provider, model),
+    // As last read: the /model list asks about every listed model, and a model's efforts do not move.
+    effortsFor: async (provider: string, model: string) => knownEfforts.get(`${provider}/${model}`) ?? effortsOf(provider, model),
     stepEffort: (key: string, step: 1 | -1) => stepEffort(key, step),
     // The tenant a conversation is recorded in (null: the home), or undefined when none is recorded.
     boundTenant: (key: string) => (cfg.tenantIsolation === true ? state.tenantOf?.[key] : undefined),

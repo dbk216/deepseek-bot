@@ -66,8 +66,9 @@ async function until(predicate, ms = 3000) {
   const notices = []
   const statusSeen = []
   const pickers = []
+  const closed = []
   const switched = []
-  const modelApp = { stop: () => {}, notice: (text, kind) => notices.push([kind, text]), clear: () => {}, setStatus: (s) => statusSeen.push(s), status: {}, openPicker: (spec) => pickers.push(spec) }
+  const modelApp = { stop: () => {}, notice: (text, kind) => notices.push([kind, text]), clear: () => {}, setStatus: (s) => statusSeen.push(s), status: {}, openPicker: (spec) => pickers.push(spec), closePicker: (spec) => closed.push(spec) }
   const link = { conversation: 'c-1', tenant: undefined, switchTo: (c, tenant) => switched.push([c, tenant]), send: (f) => { sent.push(f); return true } }
   const cmds = createCommands(modelApp, link)
   cmds.intercept('/model 1')
@@ -113,6 +114,12 @@ async function until(predicate, ms = 3000) {
   check('effort: a step shows in the status line only, not as a line in the transcript', notices.length === quiet && statusSeen.at(-1)?.effort === 'low', JSON.stringify(notices.slice(quiet)))
   cmds.stepEffort()
   check('effort: shift+tab asks the gateway for the next effort', JSON.stringify(sent.at(-1)) === JSON.stringify({ type: 'effort', step: 1 }), JSON.stringify(sent.at(-1)))
+  // A model picker open when the model or effort changes under it (another terminal, a click on the
+  // status line) would send what it showed, and undo the change: it closes instead.
+  bind(modelApp, { type: 'models', current, items }, cmds)
+  const stale = pickers.at(-1)
+  bind(modelApp, { type: 'model', current: { ...current, effort: 'high' }, cause: 'effort' }, cmds)
+  check('/model: a change under an open model picker closes it', closed.includes(stale), String(closed.length))
 
   // /sessions: a picker too; picking one resumes it in its own tenant.
   cmds.intercept('/sessions')
