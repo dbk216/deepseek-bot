@@ -9,7 +9,7 @@
  * Run: node test/install.test.ts
  */
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -55,6 +55,23 @@ const profile = join(dir, 'cordis.patch.yml')
 writeFileSync(profile, 'plugins:\n  - id: deepbot\n    platform: telegram\n    targetChannels: [\'*\']\n')
 check('the platform of an existing profile is read back', withHelpers(`profile_platform "${profile}"`).out === 'telegram', withHelpers(`profile_platform "${profile}"`).out)
 check('and slack when the profile names none', withHelpers(`profile_platform "${join(dir, 'missing.yml')}"`).out === 'slack')
+
+// The terminal: a new profile serves it beside the platform, and `dsh` goes on the PATH.
+writeFileSync(profile, 'plugins:\n  - id: deepbot\n    platform: [\'discord\', \'local\']\n')
+check('a profile that lists the terminal still reads back its platform', withHelpers(`profile_platform "${profile}"`).out === 'discord', withHelpers(`profile_platform "${profile}"`).out)
+check('every channel already includes the terminal\'s', withHelpers(`with_terminal "['*']"`).out === "['*']", withHelpers(`with_terminal "['*']"`).out)
+check('a list of channels gets the terminal\'s, tui', withHelpers(`with_terminal "['C01', 'C02']"`).out === "['C01', 'C02', 'tui']", withHelpers(`with_terminal "['C01', 'C02']"`).out)
+const launcher = join(dir, '.local', 'bin', 'dsh')
+const installed = withHelpers('install_terminal /opt/checkout')
+check('dsh is written to ~/.local/bin and runs the checkout\'s build', installed.code === 0 && existsSync(launcher) && readFileSync(launcher, 'utf8').includes('exec node "/opt/checkout/dist/tui/main.js" "$@"') && (statSync(launcher).mode & 0o111) !== 0, installed.out)
+check('a rerun replaces its own launcher', withHelpers('install_terminal /opt/other').code === 0 && readFileSync(launcher, 'utf8').includes('/opt/other/dist/tui/main.js'))
+// The harness CLI is found on the PATH as dsh too; this project's launcher there must not be taken for it.
+check('the harness CLI is not this project\'s dsh', withHelpers('harness_cli', { PATH: `${join(dir, '.local', 'bin')}:/usr/bin:/bin` }).out === '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh', withHelpers('harness_cli', { PATH: `${join(dir, '.local', 'bin')}:/usr/bin:/bin` }).out)
+writeFileSync(launcher, '#!/bin/sh\necho the harness\n')
+check('a dsh on the PATH that is not ours is the harness CLI', withHelpers('harness_cli', { PATH: `${join(dir, '.local', 'bin')}:/usr/bin:/bin` }).out === launcher)
+const kept = withHelpers('install_terminal /opt/checkout')
+check('a dsh that is not ours is left as it was, and said', kept.code !== 0 && readFileSync(launcher, 'utf8') === '#!/bin/sh\necho the harness\n' && kept.out.includes('not'), kept.out)
+rmSync(join(dir, '.local'), { recursive: true, force: true })
 
 // The services read ~/.dsh; a harness home elsewhere would leave the tokens where nothing looks.
 mkdirSync(join(dir, '.dsh'), { recursive: true })

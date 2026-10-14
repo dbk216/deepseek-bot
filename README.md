@@ -40,11 +40,13 @@
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rlaope/deepseek-bot/master/install.sh | bash
+dsh
 ```
 
-One line, and running it again updates. It needs macOS with Node.js 22+, the DeepSeek Harness app,
-a DeepSeek API key and a bot token for the platform you choose; it asks for the rest on the
-terminal. Creating the Slack, Telegram or Discord bot is in [docs/setup.md](docs/setup.md).
+The first line installs it, and running it again updates; `dsh` opens it in the terminal. It needs
+macOS with Node.js 22+, the DeepSeek Harness app, a DeepSeek API key and a bot token for the platform
+you choose; it asks for the rest on the terminal. Creating the Slack, Telegram or Discord bot is in
+[docs/setup.md](docs/setup.md).
 
 <img src="docs/opengateway.svg" width="16" height="16" alt="OG"> **Fast on [OpenGateway](https://opengateway.ai).** It serves `deepseek/deepseek-v4.1-flash-ultrafast`
 on an OpenAI-compatible endpoint (`https://apis.opengateway.ai/v1`), which it lists at 12× the speed and

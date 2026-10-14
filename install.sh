@@ -36,10 +36,45 @@ channel_list() {
 }
 
 # The platform an existing profile names, so a rerun asks for that platform's tokens; slack if none.
+# A profile written by this installer lists the terminal beside it: platform: ['slack', 'local'].
 profile_platform() {
   local found
-  found="$(sed -n -E 's/^    platform: (slack|telegram|discord)$/\1/p' "$1" 2>/dev/null | head -1 || true)"
+  found="$(sed -n -E "s/^    platform: \[?'?(slack|telegram|discord)'?(, 'local'\])?$/\1/p" "$1" 2>/dev/null | head -1 || true)"
   printf '%s\n' "${found:-slack}"
+}
+
+# The channels with the terminal's added: its conversations are in a channel named tui.
+with_terminal() {
+  if [ "$1" = "['*']" ]; then printf '%s\n' "$1"; else printf '%s\n' "${1%]}, 'tui']"; fi
+}
+
+# The first line after the shebang marks a launcher this installer wrote, so a rerun knows it may
+# replace it, and harness_cli knows not to take it for the harness.
+LAUNCHER_MARK='# deepseek-bot terminal launcher'
+
+# `dsh` in ~/.local/bin, running the checkout's build. A dsh already there that is not ours — the
+# harness CLI, say — is left as it was.
+install_terminal() {   # install_terminal <checkout>
+  local launcher="$HOME/.local/bin/dsh"
+  if [ -e "$launcher" ] && ! grep -q "^$LAUNCHER_MARK" "$launcher" 2>/dev/null; then
+    printf '%s is not this project'"'"'s; run the terminal as: node %s/dist/tui/main.js\n' "$launcher" "$1"
+    return 1
+  fi
+  mkdir -p "$HOME/.local/bin"
+  printf '#!/bin/sh\n%s (install.sh writes it; a rerun replaces it)\nexec node "%s/dist/tui/main.js" "$@"\n' "$LAUNCHER_MARK" "$1" >"$launcher"
+  chmod +x "$launcher"
+  printf '%s\n' "$launcher"
+}
+
+# The harness CLI: a dsh on the PATH unless it is this project's terminal, else the one in the app.
+harness_cli() {
+  local found
+  found="$(command -v dsh 2>/dev/null || true)"
+  if [ -n "$found" ] && ! grep -q -e "^$LAUNCHER_MARK" -e 'dsh: the bot in a terminal' "$found" 2>/dev/null; then
+    printf '%s\n' "$found"
+  else
+    printf '%s\n' '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
+  fi
 }
 
 # The services, the runner and the health probe read the harness's home at ~/.dsh. A DSH_HOME elsewhere
@@ -60,7 +95,7 @@ DEEPBOT_REPO="${DEEPBOT_REPO:-https://github.com/rlaope/deepseek-bot.git}"
 DEEPBOT_REF="${DEEPBOT_REF:-master}"
 check_dsh_home || exit 1
 DSH_HOME="$HOME/.dsh"
-DSH_BIN="${DSH_BIN:-$(command -v dsh 2>/dev/null || echo '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh')}"
+DSH_BIN="${DSH_BIN:-$(harness_cli)}"
 export DSH_HOME DSH_BIN DEEPBOT_HOME DEEPBOT_PROFILE
 
 blue=$'\033[38;5;33m'; dim=$'\033[2m'; bold=$'\033[1m'; red=$'\033[31m'; off=$'\033[0m'
@@ -155,10 +190,21 @@ put_key DEEPSEEK_API_KEY "DeepSeek API key:"
 
 if [ "$new_profile" -eq 1 ]; then
   patch="$profile_dir/cordis.patch.yml"
-  sed -i '' -e "s/^    platform: slack$/    platform: $platform/" -e "s/^    targetChannels: \['\*'\]$/    targetChannels: $list/" "$patch"
-  note "profile: platform $platform, channels $list"
+  list="$(with_terminal "$list")"
+  sed -i '' -e "s/^    platform: slack$/    platform: ['$platform', 'local']/" -e "s/^    targetChannels: \['\*'\]$/    targetChannels: $list/" "$patch"
+  note "profile: platform $platform and the terminal, channels $list"
 else
   note "profile $DEEPBOT_PROFILE already existed — its settings are kept"
+  grep -q "^    platform: .*'local'" "$profile_dir/cordis.patch.yml" 2>/dev/null \
+    || note "to use dsh, add 'local' to the deepbot row's platform (see docs/how-it-works.md, The terminal)"
+fi
+
+step "the terminal"
+if launcher="$(install_terminal "$DEEPBOT_DIR")"; then
+  note "dsh: $launcher"
+  case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) note "add ~/.local/bin to your PATH to run it as dsh" ;; esac
+else
+  note "$launcher"
 fi
 
 if [ "${DEEPBOT_SKIP_SERVICES:-0}" = "1" ]; then
@@ -178,7 +224,7 @@ step "done"
 node "$DSH_HOME/service/health-check.mjs" --status 2>/dev/null | sed 's/^/    /' || true
 cat <<NEXT
 
-    Next: invite the bot to a channel and mention it.
+    Next: invite the bot to a channel and mention it, or talk to it here: ${bold}dsh${off}
     Your agent's persona is ${bold}$DEEPBOT_HOME/SOUL.md${off} — edit it, it is yours.
     Update later by running the same curl line again.
 NEXT

@@ -13,6 +13,10 @@ the caveat about version numbers is at the bottom.
   The banner reads DEEPSEEK BOT, and the header shows a workspace under the home directory as `~`. The
   discovery and history paths under `$DSH_HOME` keep their `deepbot-tui` names. `docs/demo.gif` is a
   recording of it.
+- **`install.sh` sets up the terminal.** It writes `~/.local/bin/dsh` (leaving a `dsh` that is not its own
+  alone), a new profile serves the terminal beside the platform (`platform: ['slack', 'local']`, and
+  `tui` added to a list of channels), and it no longer takes its own `dsh` on the `PATH` for the
+  harness CLI. A rerun keeps an existing profile and says how to add the terminal to it.
 - **The suites, the tools and the runtime scripts are TypeScript.** The suites run as `.ts` under
   Node's type stripping (Node 22.18 or newer, no flag) and `pnpm run typecheck` checks them with
   `test/tsconfig.json`. The health probe, the watch runner and `tools/` are compiled into `dist/`;
