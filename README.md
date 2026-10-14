@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/deepseek-bot.svg" width="360" alt="deepseek-bot: a whale with Bot stamped across its lower corner">
+  <img src="docs/deepseek-bot.svg" width="300" alt="deepseek-bot: the DeepSeek whale with Bot stamped across its lower corner">
 </p>
 
 <h1 align="center">deepseek-bot</h1>
@@ -45,6 +45,11 @@ curl -fsSL https://raw.githubusercontent.com/rlaope/deepseek-bot/master/install.
 One line, and running it again updates. It needs macOS with Node.js 22+, the DeepSeek Harness app,
 a DeepSeek API key and a bot token for the platform you choose; it asks for the rest on the
 terminal. Creating the Slack, Telegram or Discord bot is in [docs/setup.md](docs/setup.md).
+
+<img src="docs/opengateway.svg" width="16" height="16" alt="OG"> **Fast on [OpenGateway](https://opengateway.ai).** It serves `deepseek/deepseek-v4.1-flash-ultrafast`
+on an OpenAI-compatible endpoint (`https://apis.opengateway.ai/v1`), which it lists at 12× the speed and
+1/30 the price of a Fable-class model. This bot is developed against it; the model route in
+[profile/cordis.patch.yml](profile/cordis.patch.yml) shows where the endpoint and the model go.
 
 ## What it does
 
@@ -116,4 +121,4 @@ and by scenarios run against a real model.
 ## License
 
 [MIT](LICENSE). deepseek-bot is an independent project, not affiliated with or endorsed by DeepSeek.
-The whale is drawn after the DeepSeek mark; the DeepSeek name and logo belong to their owner.
+The whale is the one in the DeepSeek logo; the DeepSeek name and logo belong to their owner.
