@@ -509,8 +509,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
     listModels: async (p) => p === 'og' ? [{ provider: p, id: 'm1', name: 'M1' }] : [{ provider: p, id: 'm2', name: 'M2' }],
     resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }),
   }
-  // Turns after the first resume the session: an agent that can be resumed, and keeps what it was told. A turn
-  // whose message says FAILTURN dies after its prompt was sent.
+  // Turns after the first resume the session: an agent that can be resumed, and keeps what it was told.
   // A turn answers, as the harness records one; one whose message says FAILTURN ends as a refused model call
   // does: no answer, a turn/end with an error reason, and whenIdle returning normally.
   const told = []
