@@ -24,6 +24,8 @@
   },
   "include": [
     "index.ts",
+    "messages.ts",
+    "i18n.ts",
     "notes.ts",
     "progress.ts",
     "usage.ts",

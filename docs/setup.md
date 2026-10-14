@@ -15,15 +15,15 @@ The install itself is one line, in the [README](../README.md).
    (attachments) and `files:write` (document uploads).
 4. **Event Subscriptions** → subscribe to `app_mention` (and `message.im` for DMs).
    **Interactivity & Shortcuts** → on (no request URL is needed in Socket Mode), for the approval
-   buttons; without it a press does nothing and the person types 허용 / 거부 instead.
+   buttons; without it a press does nothing and the person types allow / deny (or 허용 / 거부, 允许 / 拒绝) instead.
 5. Install it to the workspace and copy the bot token (`xoxb-…`).
 6. `/invite` the bot into every channel it should serve. **A bot cannot see a channel it has not
    been invited to** — the most common silent failure.
 
-The working status ("앱이 작업 중") uses `agents.sessions.setStatus`, or
+The working status ("Working…", in the deployment's `language`) uses `agents.sessions.setStatus`, or
 `assistant.threads.setStatus` where the workspace has not turned agent sessions on; both need only
 `chat:write` (Slack's method reference, checked 2026-10-13; the second also accepts `assistant:write`
-for now). If both are refused, a `⏳ … 작업 중…` message stands in and the reply replaces it. Not yet
+for now). If both are refused, a `⏳ … is working…` message stands in and the reply replaces it. Not yet
 observed in a live workspace: no turn has run on this code there.
 
 > One Socket Mode connection per app. A second one makes Slack split events across them and both

@@ -13,7 +13,7 @@ import './dist-fresh.ts'   // fails loudly on a stale dist
 import { App } from '../dist/tui/app.js'
 import { RESTORE } from '../dist/tui/render/terminal.js'
 import { fakeClock, fakeTerminal } from './tui-fakes.ts'
-import { COMMAND_INFO, COMMANDS, HELP } from '../dist/tui/cli.js'
+import { commandInfo, COMMANDS, help } from '../dist/tui/cli.js'
 import { appendHistory, loadHistory, HISTORY_KEEP } from '../dist/tui/history.js'
 import { fileFinder } from '../dist/tui/files.js'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -443,12 +443,12 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const remembered = []
   const files = ['src/', 'src/app.ts', 'src/apply.ts', 'README.md']
   const t = setup({ extra: {
-    commands: COMMAND_INFO,
+    commands: commandInfo(),
     files: (query) => files.filter((f) => f.toLowerCase().includes(query.toLowerCase())),
     intercept: (text) => { intercepted.push(text); return text.startsWith('/') },
     remember: (text) => remembered.push(text),
   } })
-  check('commands: every /command has a description for completion', COMMANDS.every((c) => COMMAND_INFO.some((i) => i.name === c)) && HELP.includes('/resume <n|id>'))
+  check('commands: every /command has a description for completion', COMMANDS.every((c) => commandInfo().some((i) => i.name === c)) && help().includes('/resume <n|id>'))
   t.key('/')
   check('complete: "/" lists the commands above the input box', t.term.screen.text().includes('/new') && t.term.screen.text().includes('/sessions') && t.term.screen.text().includes('/resume'))
   t.key('re')
@@ -555,7 +555,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
 {
   // Found in review. A list left open after the box was emptied took the next Tab or Enter.
   const intercepted = []
-  const t = setup({ extra: { commands: COMMAND_INFO, files: () => ['src/app.ts'], intercept: (text) => { intercepted.push(text); return text.startsWith('/') } } })
+  const t = setup({ extra: { commands: commandInfo(), files: () => ['src/app.ts'], intercept: (text) => { intercepted.push(text); return text.startsWith('/') } } })
   t.key('see @ap')
   t.key('\x03')   // ctrl+c empties the box
   let crashed = null
@@ -649,7 +649,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
 {
   // Found in review. Going up through history passes a /command entry (its list must not take the
   // arrows), and a list comes back for text still in the box when a question closes.
-  const t = setup({ extra: { commands: COMMAND_INFO } })
+  const t = setup({ extra: { commands: commandInfo() } })
   t.app.editor.load(['첫 질문', '/help', '둘째 질문'])
   const seen = []
   for (let i = 0; i < 3; i++) { t.key('\x1b[A'); seen.push(t.app.editor.text) }

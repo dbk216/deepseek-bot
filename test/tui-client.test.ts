@@ -21,8 +21,10 @@ process.env.DSH_HOME = DSH_HOME
 
 const { App } = await import('../dist/tui/app.js')
 const { Connection, discover } = await import('../dist/tui/client.js')
-const { bind, createCommands, parseArgs, resumeHint, route, USAGE } = await import('../dist/tui/cli.js')
+const { bind, createCommands, parseArgs, resumeHint, route, usage } = await import('../dist/tui/cli.js')
+const USAGE = usage()
 const { createLocalTransport } = await import('../dist/transports/local.js')
+const { setLanguage, t: words } = await import('../dist/tui/strings.js')
 const { fakeTerminal } = await import('./tui-fakes.ts')
 
 const results = []
@@ -141,6 +143,11 @@ async function until(predicate, ms = 3000) {
   check('connect: the gateway assigned a conversation, shown in the header', typeof conversation === 'string' && term.screen.text().includes(conversation.slice(0, 12)))
   bind(app, { type: 'panel', agents: [], jobs: [], usage: { tokens: 8100, contextPct: 23.4 } })
   bind(app, { type: 'ready', version: 1, conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
+  bind(app, { type: 'ready', version: 1, language: 'zh', conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
+  check('language: the gateway\'s language is the terminal\'s once ready', words().hints.idle(false).startsWith('↵ 发送') && await until(() => term.screen.text().includes('↵ 发送')))
+  bind(app, { type: 'ready', version: 1, language: 'en', conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
+  check('language: and back, when it says so', await until(() => term.screen.text().includes('↵ send')))
+  setLanguage('en')
   await until(() => term.screen.text().includes('8.1k tok'))
   check('usage: the conversation\'s tokens and context fill the status line', /ctx ▰▰▱▱▱▱▱▱ 23% · 8\.1k tok/.test(term.screen.text()), term.screen.text().split('\n').find((l) => l.includes('▸▸')))
   check('model: the gateway\'s model is named in the info line', term.screen.text().includes('deepseek-v4.1 · /home/agent'))

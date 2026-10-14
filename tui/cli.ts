@@ -7,6 +7,8 @@ import { NAME, type ClientFrame, type ConversationItem, type ServerFrame } from 
 import { interviewPrompt } from './interview.js'
 import type { CommandInfo } from './complete.js'
 import { stringWidth } from './render/width.js'
+import { languageOf } from '../i18n.js'
+import { setLanguage, t } from './strings.js'
 
 export interface Args { name?: string; socket?: string; tenant?: string; resume?: string; help: boolean }
 
@@ -17,24 +19,18 @@ export function parseArgs(argv: string[]): Args | { error: string } {
     if (flag === '-h' || flag === '--help') { args.help = true; continue }
     const value = argv[i + 1]
     const key = ({ '--name': 'name', '--socket': 'socket', '--tenant': 'tenant', '--resume': 'resume' } as const)[flag]
-    if (key === undefined) return { error: `unknown option: ${flag}` }
-    if (value === undefined || value.startsWith('--')) return { error: `${flag} needs a value` }
+    if (key === undefined) return { error: t().unknownOption(flag) }
+    if (value === undefined || value.startsWith('--')) return { error: t().needsValue(flag) }
     args[key] = value
     i++
   }
   return args
 }
 
-export const USAGE = `dsh — talk to deepseek-bot in the terminal
-
-  dsh [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
-  dsh <anything else>   handed to the DeepSeek Harness CLI (DSH_BIN, by default the dsh in the app)
-
-  --name     the gateway to connect to (tuiName in the deepbot config, by default default)
-  --socket   the gateway's socket path, given directly
-  --tenant   talk in a tenant's workspace (needs tenantIsolation on)
-  --resume   continue an earlier conversation (the id printed on exit)
-`
+/** The usage text, in the terminal's language. */
+export function usage(): string {
+  return t().usage
+}
 
 /** The terminal's own flags; `dsh` with anything else is the harness CLI's command line. */
 const OWN = new Set(['-h', '--help', '--name', '--socket', '--tenant', '--resume'])
@@ -48,7 +44,7 @@ export function route(argv: string[]): 'tui' | 'harness' {
 export const HARNESS_CLI = '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
 
 /** What is printed on the way out, so the conversation can be picked up again. */
-export const resumeHint = (conversation: string): string => `to continue this conversation: dsh --resume ${conversation}\n`
+export const resumeHint = (conversation: string): string => t().resumeHint(conversation)
 
 /** Frames from the gateway, onto the screen. */
 export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
@@ -74,10 +70,12 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       else app.jobOutput(frame.id, frame.text, frame.append, frame.status)
       return
     case 'ready':
+      // The gateway's language wins over the environment's, so the terminal speaks as the bot does.
+      if (frame.language !== undefined) setLanguage(languageOf(frame.language))
       commands?.ready()
       app.setBusy(frame.busy)
       app.setStatus({ connected: true, workspace: frame.workspace, session: frame.conversation, model: frame.model, preset: app.status.preset || 'ask' })
-      if (frame.tenant !== null) app.notice(`talking in the workspace of tenant ${frame.tenant}`, 'info')
+      if (frame.tenant !== null) app.notice(t().tenantTalking(frame.tenant), 'info')
       return
     case 'typing':
       if (frame.on) app.turnStarted()
@@ -113,45 +111,42 @@ export function parseCommand(text: string): { name: CommandName; args: string } 
   return { name: m[1] as CommandName, args: (m[2] ?? '').trim() }
 }
 
-/** What each command takes and does: the source of /help and of the completion list. */
-export const COMMAND_INFO: Array<CommandInfo & { name: CommandName }> = [
-  { name: 'new', hint: 'a new conversation (same workspace)', args: false },
-  { name: 'sessions', hint: 'the terminal conversations, with their tenant', args: false },
-  { name: 'resume', usage: '<n|id>', hint: 'continue a conversation from the list', args: true },
-  { name: 'tenant', usage: '[name]', hint: "a new conversation in that tenant's workspace (no name: the configured default, else home)", args: true },
-  { name: 'interview', usage: '<topic>', hint: 'deep interview: one question at a time until it is clear, then a spec', args: true },
-  { name: 'usage', hint: 'tokens used so far', args: false },
-  { name: 'clear', hint: 'clear the screen (the conversation stays)', args: false },
-  { name: 'help', hint: 'this help', args: false },
-  { name: 'quit', hint: 'quit (ctrl+c twice, or ctrl+d)', args: false },
-]
+/** Which commands take an argument. */
+const TAKES_ARGS: Record<CommandName, boolean> = { new: false, sessions: false, resume: true, tenant: true, interview: true, usage: false, clear: false, help: false, quit: false }
+
+/** What each command takes and does, in the terminal's language: the source of /help and of the completion list. */
+export function commandInfo(): Array<CommandInfo & { name: CommandName }> {
+  const words = t().commands
+  return COMMANDS.map((name) => {
+    const w: { usage?: string; hint: string } = words[name]
+    return { name, ...(w.usage !== undefined ? { usage: w.usage } : {}), hint: w.hint, args: TAKES_ARGS[name] }
+  })
+}
 
 const column = (text: string, width: number) => text + ' '.repeat(Math.max(1, width - stringWidth(text)))
 
-export const HELP = [
-  ...COMMAND_INFO.map((c) => `${column(`/${c.name}${c.usage ? ` ${c.usage}` : ''}`, 18)}${c.hint}`),
-  '',
-  '↵ send · alt+↵ newline · esc interrupt · wheel/PgUp/PgDn scroll · drag to copy',
-  '/ commands · @ files (tab inserts) · ctrl+r search what you typed · ctrl+o expand/fold thinking and tool output',
-].join('\n')
+/** /help: the commands, then the keys. */
+export function help(): string {
+  return [
+    ...commandInfo().map((c) => `${column(`/${c.name}${c.usage ? ` ${c.usage}` : ''}`, 18)}${c.hint}`),
+    '',
+    ...t().helpKeys,
+  ].join('\n')
+}
 
 function ago(ms: number, now: number): string {
-  const s = Math.max(0, Math.round((now - ms) / 1000))
-  if (s < 60) return `${s}s ago`
-  if (s < 3600) return `${Math.round(s / 60)}m ago`
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`
-  return `${Math.round(s / 86400)}d ago`
+  return t().ago(Math.max(0, Math.round((now - ms) / 1000)))
 }
 
 /** The /sessions list, numbered for /resume <n>. */
 export function formatSessions(items: Array<{ conversation: string; lastAt: number; turns: number; tenant: string | null; title: string }>, now: number, current: string | null): string {
-  if (items.length === 0) return 'no terminal conversation in this workspace yet'
+  if (items.length === 0) return t().noSessions
   return items.map((item, i) => {
     const mark = item.conversation === current ? '●' : ' '
     const where = item.tenant !== null ? ` · tenant ${item.tenant}` : ''
-    const title = item.title === '' ? '(untitled)' : item.title
-    return `${mark}${String(i + 1).padStart(2)}. ${title}\n     ${ago(item.lastAt, now)} · ${item.turns} turn${item.turns === 1 ? '' : 's'}${where} · ${item.conversation}`
-  }).join('\n') + '\n/resume <n> to continue one'
+    const title = item.title === '' ? t().untitled : item.title
+    return `${mark}${String(i + 1).padStart(2)}. ${title}\n     ${ago(item.lastAt, now)} · ${t().turns(item.turns)}${where} · ${item.conversation}`
+  }).join('\n') + `\n${t().resumeHow}`
 }
 
 /** What the commands need of the connection. */
@@ -179,7 +174,7 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
   const now = options.now ?? (() => Date.now())
   let listed: ConversationItem[] = []
   let wantHistory = options.resumeOnStart === true
-  const offline = () => app.notice('not connected to the gateway', 'error')
+  const offline = () => app.notice(t().notConnected, 'error')
 
   return {
     intercept(text) {
@@ -190,14 +185,14 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
         case 'new':
           app.clear()
           link.switchTo(null, link.tenant)
-          app.notice(`new conversation${link.tenant !== undefined ? ` · tenant ${link.tenant}` : ''}`, 'info')
+          app.notice(`${t().newConversation}${link.tenant !== undefined ? ` · tenant ${link.tenant}` : ''}`, 'info')
           break
         case 'tenant':
           // A conversation's workspace is fixed when it starts (a session resumes in the directory it
           // was created in), so changing tenant means a new conversation there.
           app.clear()
           link.switchTo(null, args === '' ? undefined : args)
-          app.notice(args === '' ? 'new conversation · default workspace' : `new conversation · tenant ${args}`, 'info')
+          app.notice(args === '' ? `${t().newConversation} · ${t().defaultWorkspace}` : `${t().newConversation} · tenant ${args}`, 'info')
           break
         case 'sessions':
           if (!link.send({ type: 'sessions' })) offline()
@@ -206,7 +201,7 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
           const n = Number(args)
           const item = Number.isInteger(n) && n >= 1 && n <= listed.length ? listed[n - 1] : listed.find((i) => i.conversation === args)
           const id = item?.conversation ?? args
-          if (!NAME.test(id)) { app.notice('/resume <n|id> — n is a number from /sessions', 'error'); break }
+          if (!NAME.test(id)) { app.notice(t().resumeUsage, 'error'); break }
           app.clear()
           // The listed conversation's own workspace; a bare id lets the gateway use the recorded one.
           link.switchTo(id, item?.tenant ?? undefined)
@@ -215,9 +210,9 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
           break
         }
         case 'interview':
-          if (args === '') { app.notice('/interview <topic> — what the interview is about', 'error'); break }
+          if (args === '') { app.notice(t().interviewUsage, 'error'); break }
           app.startInterview(args)
-          app.sendAs(`deep interview: ${args}`, interviewPrompt(args))
+          app.sendAs(`${t().interview}: ${args}`, interviewPrompt(args))
           break
         case 'usage':
           if (!link.send({ type: 'usage' })) offline()
@@ -226,7 +221,7 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
           app.clear()
           break
         case 'help':
-          app.notice(HELP, 'info')
+          app.notice(help(), 'info')
           break
         case 'quit':
           app.stop(0)
@@ -243,7 +238,7 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
     },
     rolledBack(message) {
       app.clear()
-      app.notice(`could not switch: ${message} — staying in this conversation`, 'error')
+      app.notice(t().couldNotSwitch(message), 'error')
       wantHistory = !link.send({ type: 'history' })
     },
   }

@@ -47,7 +47,7 @@ function tracker(options = {}) {
   tick(3000)
   await t.note('k', target, 'read')
   check('an update after the window edits the same message', posted.length === 2 && posted[1].replace === 'ts-1', JSON.stringify(posted[1]))
-  check('the edit counts the tools', /3개 도구/.test(posted[1].text), posted[1].text)
+  check('the edit counts the tools', /3 tools \(read\)/.test(posted[1].text), posted[1].text)
 }
 
 // 2. force ignores the throttle, which is how a slow turn first appears.

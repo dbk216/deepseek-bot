@@ -12,6 +12,8 @@
  * The factory takes the adapter's small host surface — config, logger, and the
  * one async value it needs, the session directory. Everything else is Slack's.
  */
+import { languageOf } from '../i18n.js'
+import { messages } from '../messages.js'
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import type {
@@ -250,6 +252,8 @@ export interface SlackTransport extends Transport {
 }
 
 export function createSlackTransport(host: SlackTransportHost): SlackTransport {
+  // What Slack shows under a thread while a turn runs, in the deployment's language.
+  const workingText = messages(languageOf(host.cfg.language)).working
   const { cfg, log, credential, onHealth } = host
   const WebSocketImpl = host.WebSocketImpl ?? WebSocket
 
@@ -652,12 +656,12 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
         showing(where, 'sessions')
       } else {
         if (sessions === false) sessionsStatus = false
-        const assistant = await attempt('assistant.threads.setStatus', '작업 중…', assistantStatus)
+        const assistant = await attempt('assistant.threads.setStatus', workingText, assistantStatus)
         if (assistant === true) {
           assistantStatus = true
           shown = 'assistant'
           showing(where, 'assistant')
-          refresh = setInterval(() => { void set('assistant.threads.setStatus', '작업 중…').catch(() => {}) }, ASSISTANT_REFRESH_MS)
+          refresh = setInterval(() => { void set('assistant.threads.setStatus', workingText).catch(() => {}) }, ASSISTANT_REFRESH_MS)
         } else {
           if (assistant === false) assistantStatus = false
           if (!over) onUnavailable?.()
@@ -682,7 +686,7 @@ export function createSlackTransport(host: SlackTransportHost): SlackTransport {
             if (!working.has(where)) return
             showing(where, again)
             if (again === 'sessions') void set('agents.sessions.setStatus', 'processing').catch(() => {})
-            else void set('assistant.threads.setStatus', '작업 중…').catch(() => {})
+            else void set('assistant.threads.setStatus', workingText).catch(() => {})
           }, REASSERT_MS).unref?.()
         }
         return

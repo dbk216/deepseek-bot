@@ -57,6 +57,8 @@ import { createDiscordTransport } from './transports/discord.js'
 import { createLocalTransport } from './transports/local.js'
 import { createCompositeTransport } from './transports/composite.js'
 import { createProgressTracker } from './progress.js'
+import { languageOf } from './i18n.js'
+import { defaultWords, messages } from './messages.js'
 import { writeInside } from './safeWrite.js'
 import { createUsageTracker, emptyUsageStore } from './usage.js'
 import { createRecallContext, recallIndexPath } from './recallContext.js'
@@ -105,6 +107,9 @@ const DEFAULTS = {
   telegramTokenRef: 'TELEGRAM_BOT_TOKEN',
   discordTokenRef: 'DISCORD_BOT_TOKEN',
   replyMode: 'mention',
+  // The language of what the bot itself says — approvals, stops, failures, the working message —
+  // and of the terminal: 'en', 'ko' or 'zh'. The model's answers follow the persona, not this.
+  language: 'en',
   maxConcurrency: 2,
   runTimeoutMs: 15 * 60 * 1000,
   maxPromptChars: 12000,
@@ -129,10 +134,10 @@ const DEFAULTS = {
   // Words that mean "stop what you are doing". A turn can run for minutes with no
   // way to interrupt it, which for a chat agent is the difference between a
   // colleague and a runaway process.
-  cancelWords: ['그만', '중단', '취소', '멈춰', 'stop', 'cancel'],
+  cancelWords: defaultWords('cancel'),
   // A whole message that asks what this has cost so far. Answered from the durable totals,
   // so it does not start a turn and does not depend on the model.
-  usageWords: ['사용량', '비용', '토큰', 'usage', '얼마나 썼어'],
+  usageWords: defaultWords('usage'),
   // A progress edit is a message edit against a rate-limited API, so the message
   // says roughly what is happening, not every step of it.
   progressUpdateMs: 2500,
@@ -184,12 +189,13 @@ const DEFAULTS = {
   // A thread is shared, so the person who typed 허용 is not necessarily the person who asked.
   // With this on, only the requester's decision counts; anybody else is told whose it is.
   approvalRequireSameUser: true,
-  approveWords: ['허용', '승인', '응', 'ㅇㅇ', 'yes', 'allow', 'ok', 'ㅇ'],
-  denyWords: ['거부', '아니', '안돼', 'no', 'deny', 'ㄴㄴ'],
+  approveWords: defaultWords('approve'),
+  denyWords: defaultWords('deny'),
   progressAfterMs: 8000,
-  // `{name}` is the persona's first heading ("아리"), else the bot's own name. A Unicode emoji, not
-  // Slack's `:hourglass_flowing_sand:`, which Discord and Telegram print as text.
-  progressText: '⏳ {name} 작업 중…',
+  // `{name}` is the persona's first heading ("아리"), else the bot's own name. Unset, it is the
+  // `language`'s own ("⏳ {name} is working…"). A Unicode emoji, not Slack's `:hourglass_flowing_sand:`,
+  // which Discord and Telegram print as text.
+  progressText: undefined,
   // Show at once that a message was taken: the platform's own typing where it has one, otherwise
   // the progress message above, posted immediately instead of after progressAfterMs.
   workingIndicator: true,
@@ -266,6 +272,9 @@ const DEFAULTS = {
   autoIndex: true,
 }
 
+/** What a person puts after a one-word message: "stop.", "그만~", "停止。". */
+const TRAILING = /[.!?~,\s。！？，～、]+$/u
+
 export function apply(ctx, config) {
   const cfg = { ...DEFAULTS, ...(config ?? {}) }
 
@@ -275,8 +284,13 @@ export function apply(ctx, config) {
     problems.push('targetChannels: at least one channel ID is required (this guard prevents answering everywhere)')
   }
   if (!['mention', 'all'].includes(cfg.replyMode)) problems.push(`replyMode: must be 'mention' or 'all' (got: ${String(cfg.replyMode)})`)
+  if (languageOf(cfg.language) === 'en' && !/^(en|eng|english)(?:$|[-_.@])/i.test(String(cfg.language).trim())) {
+    problems.push(`language: must be 'en', 'ko' or 'zh' (got: ${String(cfg.language)})`)
+  }
   if (problems.length > 0) throw new Error(`deepbot config error:\n  - ${problems.join('\n  - ')}`)
 
+  const language = languageOf(cfg.language)
+  const say = messages(language)
   const targetChannels = cfg.targetChannels.map((c) => c.trim()).filter(Boolean)
   // '*' means "every channel the bot has been invited to".
   const allChannels = targetChannels.includes('*')
@@ -585,7 +599,7 @@ export function apply(ctx, config) {
     await eachIndexRow(file, (row) => {
       if (row?.sessionId !== sessionId || (row.role !== 'user' && row.role !== 'assistant')) return
       const text = String(row.text)
-      rows.push({ role: row.role, text: text.length > 8000 ? `${text.slice(0, 8000)}… (${text.length - 8000}자 생략)` : text })
+      rows.push({ role: row.role, text: text.length > 8000 ? `${text.slice(0, 8000)}… ${say.charsLeftOut(text.length - 8000)}` : text })
       if (rows.length > limit) rows.shift()
     })
     return rows
@@ -906,8 +920,9 @@ export function apply(ctx, config) {
   const progress = createProgressTracker({
     post: (target, text, opts) => transport.post(target, text, opts),
     throttleMs: cfg.progressUpdateMs,
-    label: () => String(cfg.progressText).replace('{name}', workingName).replace(/\s{2,}/g, ' ').trim(),
+    label: () => String(cfg.progressText ?? say.progress).replace('{name}', workingName).replace(/\s{2,}/g, ' ').trim(),
     log,
+    tools: say.tools,
     onPosted: (key, ts) => {
       const record = state.inflight?.[key]
       if (record !== undefined) { record.placeholder = ts; saveStateNow() }
@@ -948,7 +963,7 @@ export function apply(ctx, config) {
       const target = { channel: record.channel, threadTs: record.threadTs }
       // The platform's status may still say "작업 중" from the process that died: raise and lower it.
       try { via(target).startTyping?.(target, () => {})?.() } catch { /* best effort */ }
-      await replyInPlaceOf(target, '재시작하느라 하던 작업이 끊겼어. 다시 말해줄래?', record.placeholder ?? null)
+      await replyInPlaceOf(target, say.restartLost, record.placeholder ?? null)
         .catch((e) => log(`inflight ${key}: notice failed: ${String((e as Error)?.message ?? e)}`))
       log(`inflight ${key}: told the conversation its turn was lost in a restart`)
       forget(key)
@@ -1103,7 +1118,7 @@ export function apply(ctx, config) {
   }>()
 
   function wordIn(text: string, words: string[]): boolean {
-    const normalised = text.trim().toLowerCase().replace(/[.!?~,\s]+$/u, '')
+    const normalised = text.trim().toLowerCase().replace(TRAILING, '')
     return normalised !== '' && words.some((word) => normalised === word.toLowerCase())
   }
 
@@ -1125,24 +1140,24 @@ export function apply(ctx, config) {
       log(pending === undefined
         ? `an approval button was pressed in ${key} but nothing is pending`
         : `an approval button for an earlier request was pressed in ${key} — ignored`)
-      await transport.post(targetFromKey(key), '이미 처리된 요청이야.')
+      await transport.post(targetFromKey(key), say.alreadyHandled)
       return
     }
     if (pending.user !== undefined && cfg.approvalRequireSameUser === true && action.user !== pending.user) {
       log(`approval in ${key} refused: ${action.user} is not the requester (${pending.user})`)
-      await transport.post(targetFromKey(key), '이 요청을 승인할 사람이 아니야 — 요청한 사람이 직접 답해줘.')
+      await transport.post(targetFromKey(key), say.notYours)
       return
     }
     pendingApprovals.delete(key)
     const allowed = decision === 'allow'
     log(`approval in ${key} answered by button: ${allowed ? 'allowed-once' : 'rejected'}`)
     pending.resolve(allowed ? 'allowed-once' : 'rejected')
-    await transport.post(targetFromKey(key), allowed ? '허용했어 — 계속할게.' : '거부했어.')
+    await transport.post(targetFromKey(key), allowed ? say.approved : say.denied)
   }
 
   /** A whole message that is only "stop": the shapes a person actually types. */
   function isCancelRequest(text: string): boolean {
-    const normalised = text.trim().toLowerCase().replace(/[.!?~,\s]+$/u, '')
+    const normalised = text.trim().toLowerCase().replace(TRAILING, '')
     return normalised !== '' && cfg.cancelWords.some((w: string) => normalised === w.toLowerCase())
   }
   let deliveryWatcher = null
@@ -1320,13 +1335,13 @@ export function apply(ctx, config) {
       const withButtons = via(target).supportsButtons === true
       const nonce = randomUUID().replace(/-/g, '').slice(0, 8)
       const asked = await transport.post(target, [
-        `⚠️ 권한이 필요해: ${reason}`,
-        withButtons ? `아래 버튼을 누르거나 *허용* / *거부* 라고 답해줘.` : `실행하려면 *허용*, 거부하려면 *거부* 라고 답해줘.`,
-        `(답이 없으면 ${Math.round(cfg.approvalTimeoutMs / 60000)}분 뒤 자동으로 거부돼.)`,
+        say.approvalNeeded(reason),
+        withButtons ? say.approvalHowButtons : say.approvalHowWords,
+        say.approvalTimeout(Math.round(cfg.approvalTimeoutMs / 60000)),
       ].join('\n'), withButtons
         ? { buttons: [
-            { id: `approval:allow:${key}#${nonce}`, label: '허용', style: 'primary' as const },
-            { id: `approval:deny:${key}#${nonce}`, label: '거부', style: 'danger' as const },
+            { id: `approval:allow:${key}#${nonce}`, label: say.allow, style: 'primary' as const },
+            { id: `approval:deny:${key}#${nonce}`, label: say.deny, style: 'danger' as const },
           ] }
         : undefined)
       if (asked === null) return 'unavailable'
@@ -2219,14 +2234,14 @@ export function apply(ctx, config) {
         // and approving somebody else's destructive command is not theirs to make.
         if (pending.user !== undefined && cfg.approvalRequireSameUser === true && message.user !== pending.user) {
           log(`approval in ${key} refused: ${message.user} is not the requester (${pending.user})`)
-          await transport.post({ channel, threadTs }, '이 요청을 승인할 사람이 아니야 — 요청한 사람이 직접 답해줘.')
+          await transport.post({ channel, threadTs }, say.notYours)
           return
         }
       const allowed = wordIn(prompt, cfg.approveWords)
       pendingApprovals.delete(key)
       log(`approval in ${key} answered: ${allowed ? 'allowed-once' : 'rejected'} after ${Math.round((Date.now() - pending.askedAt) / 1000)}s`)
       pending.resolve(allowed ? 'allowed-once' : 'rejected')
-      await transport.post({ channel, threadTs }, allowed ? '허용했어 — 계속할게.' : '거부했어.')
+      await transport.post({ channel, threadTs }, allowed ? say.approved : say.denied)
       return
     }
 
@@ -2234,7 +2249,7 @@ export function apply(ctx, config) {
     // totals, so it costs nothing and works even while the model is busy.
     if (wordIn(prompt, cfg.usageWords)) {
       log(`usage requested in ${key}`)
-      await transport.post({ channel, threadTs }, usageTracker.summary(key))
+      await transport.post({ channel, threadTs }, usageTracker.summary(key, say))
       return
     }
 
@@ -2250,7 +2265,7 @@ export function apply(ctx, config) {
       // its place — not "nothing is running" under a message that says "작업 중".
       if (stopped === 'none' && withdrawn > 0) {
         await progress.settle(key)
-        await replyInPlaceOf({ channel, threadTs }, `중단했어 — 기다리던 메시지 ${withdrawn}개를 취소했어.`, progress.take(key)?.ts ?? null)
+        await replyInPlaceOf({ channel, threadTs }, say.stoppedWithdrawn(withdrawn), progress.take(key)?.ts ?? null)
         settleInflight(key)
         return
       }
@@ -2265,9 +2280,9 @@ export function apply(ctx, config) {
         const turn = runningTurns.get(key)
         if (turn !== undefined) turn.reported = true
         await progress.settle(key)
-        await replyInPlaceOf({ channel, threadTs }, '중단했어 — 시작 중이던 작업을 멈췄어.', progress.take(key)?.ts ?? null)
+        await replyInPlaceOf({ channel, threadTs }, say.stoppedStarting, progress.take(key)?.ts ?? null)
       } else if (stopped === 'none') {
-        await transport.post({ channel, threadTs }, '지금 돌고 있는 작업이 없어.')
+        await transport.post({ channel, threadTs }, say.nothingRunning)
       }
       return
     }
@@ -2349,7 +2364,7 @@ export function apply(ctx, config) {
           await deliverDocuments(key, replyTarget, r.text, started)
             .catch((e) => log(`documents: delivery failed: ${String((e as Error)?.message ?? e)}`))
         } else if (r.reason?.kind === 'cancelled') {
-          const why = r.reason.cause === 'timed out' ? '시간이 초과돼서 멈췄어.' : '중단했어.'
+          const why = r.reason.cause === 'timed out' ? say.timedOut : say.stopped
           log(`turn cancelled cause=${String(r.reason.cause ?? '-')}${r.reported === true ? ' (already reported)' : ''}`)
           if (r.reported !== true) await replyInPlaceOf(replyTarget, why, placeholderTs)
           // Already reported: a working message put up since (the turn's own, when slow) is removed, not
@@ -2362,7 +2377,7 @@ export function apply(ctx, config) {
         } else {
           log(`turn ended abnormally reason=${JSON.stringify(r.reason)}`)
           // In the voice the bot speaks, and with no path on the host: the log is the operator's to read.
-          await replyInPlaceOf(replyTarget, `작업을 끝내지 못했어 (${r.reason?.kind ?? '이유 모름'}). 다시 말해줄래?`, placeholderTs)
+          await replyInPlaceOf(replyTarget, say.unfinished(r.reason?.kind ?? say.unknownReason), placeholderTs)
         }
       } catch (e) {
         log('turn failed', String(e?.stack ?? e))
@@ -2375,7 +2390,7 @@ export function apply(ctx, config) {
         leaveWaiting(key, ticket)   // a ticket left behind would be "withdrawn" by a later stop
         await progress.settle(key)
         const leftover = progress.take(key)?.ts ?? null
-        await replyInPlaceOf(replyTarget, `실행에 실패했어: ${withoutHome(String(e?.message ?? e)).slice(0, 300)}`, leftover)
+        await replyInPlaceOf(replyTarget, say.runFailed(withoutHome(String(e?.message ?? e)).slice(0, 300)), leftover)
       } finally {
         settleInflight(key)
       }
@@ -2464,7 +2479,7 @@ export function apply(ctx, config) {
       log(`documents: ${ok ? 'uploaded' : 'upload failed for'} ${basename(path)} to ${key}`)
       // The answer names a file nobody here received: Discord refuses one over its size limit, a Slack app
       // without files:write refuses them all.
-      if (!ok) await transport.post(target, `${basename(path)} 파일을 올리지 못했어.`).catch(() => {})
+      if (!ok) await transport.post(target, say.uploadFailed(basename(path))).catch(() => {})
     }
   }
 

@@ -133,6 +133,7 @@ function boot({ state = {}, config = {}, agent = 'throw', home = null, answer = 
   }
   apply(ctx, {
     targetChannels: ['C_ALLOWED'],
+    language: 'ko',   // these checks read the Korean messages; the English default has its own
     stateDir,
     transportFactory: () => transport,
     progressAfterMs: 50,
@@ -273,7 +274,7 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
 
 // 10. The shapes people actually type are recognised, and nothing else is.
 {
-  for (const word of ['중단', 'stop', 'Cancel!', '멈춰']) {
+  for (const word of ['중단', 'stop', 'Cancel!', '멈춰', '停止。', '取消']) {
     const t = boot()
     await sleep(60)
     t.transport.deliver(t.transport.message({ text: word }))
@@ -1102,6 +1103,31 @@ for (const remove of [false, true]) {
     `${t.followups.length} followup(s); second: ${second.slice(0, 60)}`)
   rmSync(home, { recursive: true, force: true })
   t.done()
+}
+
+// 38. The language setting: what the bot itself says follows it; what people type is understood in all three.
+{
+  const en = boot({ config: { language: 'en' }, state: { sessions: { 'C_ALLOWED:t1': 'slack-abc' } } })
+  await sleep(60)
+  const outcome = en.askApproval()
+  await sleep(100)
+  const asked = en.transport.posted.map((p) => p.text).join('\n')
+  check('language en: the approval request is English', /I need permission/.test(asked) && /\*allow\*/.test(asked) && /\*deny\*/.test(asked) && !/[\uac00-\ud7a3]/.test(asked), JSON.stringify(asked))
+  en.transport.deliver(en.transport.message({ text: '允许' }))
+  check('language en: a Chinese "allow" is still understood', await outcome === 'allowed-once', await outcome)
+  check('language en: and confirmed in English', en.transport.posted.some((p) => p.text === 'Allowed. Carrying on.'))
+  en.done()
+
+  const zh = boot({ config: { language: 'zh' } })
+  await sleep(60)
+  zh.transport.deliver(zh.transport.message({ text: 'stop' }))
+  await sleep(200)
+  check('language zh: a stop with nothing running is answered in Chinese', zh.transport.posted.some((p) => p.text === '当前没有正在进行的工作。'), JSON.stringify(zh.transport.posted.map((p) => p.text)))
+  zh.done()
+
+  let refused = ''
+  try { boot({ config: { language: 'fr' } }) } catch (e) { refused = String((e as Error).message) }
+  check('a language it has no words for is a config error, not a silent English', /language: must be 'en', 'ko' or 'zh' \(got: fr\)/.test(refused), refused.split('\n')[1] ?? refused)
 }
 
 const failed = results.filter((r) => !r.ok)

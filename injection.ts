@@ -32,20 +32,20 @@ interface Rule {
  * that flags ordinary conversation trains everyone to ignore it.
  */
 export const RULES: Rule[] = [
-  // "ignore your instructions", "이전 지시를 무시하고"
-  { kind: 'instruction override', pattern: /ignore (?:all |any |the )?(?:previous|prior|above|earlier) (?:instructions?|prompts?|rules?)|disregard (?:your |the )?(?:instructions?|rules?)|이전\s*지시(?:를|사항을|는)?\s*(?:무시|잊)|앞(?:의|서)\s*(?:지시|명령|규칙)(?:를|을)?\s*(?:무시|잊)|지시를?\s*(?:잊어|무시해)/iu },
+  // "ignore your instructions", "이전 지시를 무시하고", "忽略之前的指令"
+  { kind: 'instruction override', pattern: /ignore (?:all |any |the )?(?:previous|prior|above|earlier) (?:instructions?|prompts?|rules?)|disregard (?:your |the )?(?:instructions?|rules?)|이전\s*지시(?:를|사항을|는)?\s*(?:무시|잊)|앞(?:의|서)\s*(?:지시|명령|규칙)(?:를|을)?\s*(?:무시|잊)|지시를?\s*(?:잊어|무시해)|(?:忽略|无视|忘掉|忘记)(?:之前|以上|先前|前面)(?:的)?(?:所有)?(?:指令|指示|提示|规则)/iu },
   // A message pretending to be the system or the agent's own scaffolding.
   { kind: 'system prompt impersonation', pattern: /(?:^|\n)\s*(?:system|assistant|developer)\s*[:：]|<\s*system\s*>|\[INST\]|###\s*(?:instruction|system)/iu },
-  // "you are now …", "지금부터 너는 …"
+  // "you are now …", "지금부터 너는 …", "从现在起你是 …"
   // Narrowed after a false positive: "you are now on the list of reviewers" is an ordinary
   // sentence, and a detector that flags it teaches everyone to ignore the warning. A role
   // change names a role.
-  { kind: 'role reassignment', pattern: /you are (?:now |no longer )(?:a|an|the)\b|from now on,? you (?:are|will|must|answer)|지금부터\s*(?:너는|당신은|넌)\s*\S|이제부터\s*(?:너는|넌)\s*\S/iu },
+  { kind: 'role reassignment', pattern: /you are (?:now |no longer )(?:a|an|the)\b|from now on,? you (?:are|will|must|answer)|지금부터\s*(?:너는|당신은|넌)\s*\S|이제부터\s*(?:너는|넌)\s*\S|(?:从现在起|从现在开始)[，,]?\s*你(?:是|就是|将是)\S/iu },
   // Fake tool calls written as text: the exact failure this repository has already seen
   // from a model with no tools.
   { kind: 'tool call written as text', pattern: /<\s*(?:tool_calls?|invoke|function_calls?)\b|<\|tool▁calls?\|>|"tool_calls"\s*:/iu },
   // Asking for a secret, a file's contents, or an environment value.
-  { kind: 'credential or file exfiltration', pattern: /(?:cat|type|print|show|reveal|read)\s+(?:the\s+)?(?:contents?\s+of\s+)?[`'"~./]*[.\w/-]*(?:\.env|id_rsa|credentials?|secret|token)[\w./-]*|(?:토큰|비밀번호|자격\s*증명|\.env)[^\n]{0,24}(?:알려|출력|보여|읽어)/iu },
+  { kind: 'credential or file exfiltration', pattern: /(?:cat|type|print|show|reveal|read)\s+(?:the\s+)?(?:contents?\s+of\s+)?[`'"~./]*[.\w/-]*(?:\.env|id_rsa|credentials?|secret|token)[\w./-]*|(?:토큰|비밀번호|자격\s*증명|\.env)[^\n]{0,24}(?:알려|출력|보여|읽어)|(?:令牌|密码|凭证|密钥|\.env)[^\n]{0,24}(?:告诉|输出|显示|读出|发给)/iu },
   // A URL parameter or image alt text carrying an instruction.
   { kind: 'instruction hidden in data', pattern: /!\[[^\]]{20,}\]|<!--[\s\S]{20,}?-->/u },
 ]

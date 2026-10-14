@@ -66,15 +66,23 @@ export interface RecallOptions {
 
 export const DEFAULT_TRIGGER_WORDS = [
   '지난', '저번', '전에', '아까', '그때', '이전', '예전', '어제', '지난번', '기억',
+  '上次', '之前', '以前', '刚才', '那时', '昨天', '记得', '回忆',
   'last', 'earlier', 'before', 'previous', 'remember', 'recall', 'again',
 ]
 
 /** Words worth matching on: one-character particles match everything. */
 export function words(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[^0-9a-z가-힣]+/u)
-    .filter((w) => w.length > 1)
+  const out: string[] = []
+  for (const word of text.toLowerCase().split(/[^0-9a-z가-힣\u3400-\u9fff]+/u)) {
+    // Chinese is written without spaces, so a run of Han characters stands for its overlapping
+    // pairs: "回滚窗口" matches a passage that says "回滚" as well as one that says "窗口".
+    for (const part of word.split(/([\u3400-\u9fff]+)/u)) {
+      if (/^[\u3400-\u9fff]+$/u.test(part)) {
+        for (let i = 0; i + 2 <= part.length; i++) out.push(part.slice(i, i + 2))
+      } else if (part.length > 1) out.push(part)
+    }
+  }
+  return out
 }
 
 // Korean particles, longest first. A query word carries its particle ("롤백을") and a passage may not

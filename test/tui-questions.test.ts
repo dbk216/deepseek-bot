@@ -11,6 +11,7 @@ import './dist-fresh.ts'   // fails loudly on a stale dist
 
 import { QuestionFlow } from '../dist/tui/question.js'
 import { readState, stripState, interviewPrompt, AMBIGUITY_TARGET } from '../dist/tui/interview.js'
+import { setLanguage } from '../dist/tui/strings.js'
 
 const results = []
 function check(name, ok, detail = '') {
@@ -87,6 +88,10 @@ const multi = { id: 'checks', question: '어떤 검사를 돌릴까?', options: 
   check('state: a malformed block is ignored, an earlier good one still counts', readState('```interview-state\n{"round": 1, "ambiguity": 60}\n```\n```interview-state\n{oops}\n```')?.ambiguity === 60)
   const done = readState('```interview-state\n{"round": 6, "scores": {}, "ambiguity": 15, "done": true, "spec": "specs/tui.md"}\n```')
   check('state: done, with the spec it wrote', done?.done === true && done.spec === 'specs/tui.md')
+  setLanguage('ko')
+  const inKorean = interviewPrompt('TUI 설계')
+  setLanguage('en')
+  check('prompt: the gauges are named in the terminal\'s language', inKorean.includes('"목표": 0') && interviewPrompt('x').includes('"goal": 0'), inKorean.split('\n').find((l) => l.startsWith('{')))
   const prompt = interviewPrompt('TUI 설계')
   check('prompt: names the topic, one question per round, the block format and the stop rule', prompt.startsWith('Deep interview: TUI 설계') && prompt.includes('ask_user_question') && prompt.includes('```interview-state') && prompt.includes(`${AMBIGUITY_TARGET} or less`) && prompt.includes('specs/'))
 }

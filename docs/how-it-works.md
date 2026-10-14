@@ -10,15 +10,31 @@ its services are named `deepbot`.
 |---|---|
 | `@deepbot …` in a channel, or anything in a DM | answers in the thread, as the persona in `SOUL.md` |
 | a follow-up while it is still working | waits, then answers it next — one turn at a time per thread |
-| `그만` / `stop` | stops the running turn and withdraws what was waiting |
-| `사용량` / `usage` | token totals for the thread, without starting a turn |
-| `허용` / `거부`, or the buttons | answers its request to run something destructive |
-| "지난번에 … 어떻게 하기로 했지?" | recalls past threads **in this channel** and says what they imply |
-| "…가 바뀌면 알려줘" | sets up a watch: a command it runs on a schedule, in a read-only sandbox |
-| "보고서 docx로 만들어줘" | writes the document and uploads it to the conversation |
+| `stop` / `그만` / `停止` | stops the running turn and withdraws what was waiting |
+| `usage` / `사용량` / `用量` | token totals for the thread, without starting a turn |
+| `allow` / `deny` (`허용` / `거부`, `允许` / `拒绝`), or the buttons | answers its request to run something destructive |
+| "what did we decide last time about …?" | recalls past threads **in this channel** and says what they imply |
+| "tell me when … changes" | sets up a watch: a command it runs on a schedule, in a read-only sandbox |
+| "make the report a docx" | writes the document and uploads it to the conversation |
 
-While it works, the platform's own indicator shows — Slack's "앱이 작업 중" under the thread,
+While it works, the platform's own indicator shows — Slack's working status under the thread,
 Discord's and Telegram's "typing…" — so the answer is the only notification.
+
+### Its language
+
+`language` in the deepbot row — `en` (the default), `ko` or `zh` — sets what the bot itself says:
+approval requests and their buttons, stop and failure notices, the working message and Slack's
+status, the usage report, and everything `dsh` draws. `dsh` starts in its environment's language
+(`LC_ALL`, `LC_MESSAGES`, `LANG`, the first one set) and switches to the gateway's once connected.
+Any other value is a config error, not a quiet English. It does not set the language of the
+answers: the model follows the persona in `SOUL.md` and the person it is talking to.
+
+The words people type are understood in all three whatever it is set to — stop, usage, allow and
+deny above — and a one-word message may end in `.`, `!`, `?`, `~`, `。`, `！` or `？`. Recall reads
+Chinese, which has no spaces, by overlapping pairs of characters, and the check for text that tries
+to give orders knows the three languages' shapes. The installer asks for the language, offering the
+environment's. The catalogs are `messages.ts` (the bot) and `tui/strings.ts` (the terminal);
+`test/i18n.test.ts` fails when a language misses a key or is a copy of another.
 
 ## What it is
 

@@ -6,6 +6,7 @@
  * attempt is dropped from it, and the end replaces it with the committed text.
  */
 import { banner } from './render/banner.js'
+import { t } from './strings.js'
 import { sgr, theme, type ColorMode } from './render/style.js'
 import { layout, type Line, type Span } from './render/text.js'
 import { markdown, type MarkdownStyles } from './render/markdown.js'
@@ -84,7 +85,7 @@ const UNFOLDED = { thinking: 400, diff: 200, result: 40 }
 /** Lines past `limit` folded into one "… N more lines" line. */
 function fold(lines: Line[], limit: number, detail: Detail, style: string): Line[] {
   if (lines.length <= limit) return lines
-  return [...lines.slice(0, limit), { spans: [pad('    '), { text: `… ${lines.length - limit} more lines${detail.expanded ? '' : ' · ctrl+o'}`, style }], soft: false }]
+  return [...lines.slice(0, limit), { spans: [pad('    '), { text: `… ${t().moreLines(lines.length - limit)}${detail.expanded ? '' : ' · ctrl+o'}`, style }], soft: false }]
 }
 
 export interface ThinkingBlock extends Block {
@@ -114,7 +115,7 @@ export function thinkingBlock(detail: Detail, mode: ColorMode): ThinkingBlock {
     lines(width) {
       const text = block.text.trim()
       if (text === '') return []
-      const label = block.streaming ? 'thinking…' : `thought · ${[...text].length} chars${detail.expanded ? '' : ' · ctrl+o expand'}`
+      const label = block.streaming ? t().thinking : t().thought([...text].length, detail.expanded)
       const lines: Line[] = [{ spans: [pad('✻ ', head), { text: label, style: head }], soft: false }]
       if (!detail.expanded && !block.streaming) return lines
       const all = layout(text, width, body, { first: pad('  '), rest: pad('  ') })
@@ -179,16 +180,16 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
       const out = layout(title === '' || title === step.name ? step.name : `${step.name}  ${title}`, width, style, { first: pad('⏺ ', mark), rest: pad('  ') })
       const diff = changes.flatMap((d) => layout(d.text === '' ? ' ' : d.text, width, d.op === '-' ? removed : added, { first: pad(`  ${d.op} `, d.op === '-' ? removed : added), rest: pad('    ') }))
       out.push(...fold(diff, detail.expanded ? UNFOLDED.diff : FOLDED.diff, detail, style))
-      const note = uncompared ? '… too large to compare line by line'
+      const note = uncompared ? t().diffUncompared
         : !cut ? ''
-          : changes.length > 0 ? (withheld > 0 ? `… large change: only the lines that are certain, ${withheld} left out (truncated)` : '… large change: only the beginning (truncated)')
-            : withheld > 0 ? '… large change: no line is certain once cut (truncated)'
-              : '… large change: no difference in the part shown (truncated)'
+          : changes.length > 0 ? (withheld > 0 ? t().diffWithheld(withheld) : t().diffHead)
+            : withheld > 0 ? t().diffNoneCertain
+              : t().diffNoDifference
       if (note !== '') out.push({ spans: [pad('    '), { text: note, style }], soft: false })
       if (outcome !== null) {
         const shown = outcome.ok ? style : removed
         const text = outcome.text.replace(/\s+$/, '')
-        const rows = layout(text === '' ? '(no output)' : text, width, shown, { first: pad('  ⎿ ', shown), rest: pad('    ') })
+        const rows = layout(text === '' ? t().noOutput : text, width, shown, { first: pad('  ⎿ ', shown), rest: pad('    ') })
         out.push(...fold(rows, detail.expanded ? UNFOLDED.result : FOLDED.result, detail, style))
       }
       return out

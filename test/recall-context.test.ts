@@ -127,6 +127,20 @@ check('an untriggered block is empty', ctx.block('이거 요약해줘') === '')
   check('and the same home always gets the same one', recallIndexPath('/a/b-c', '/d') === recallIndexPath('/a/b-c/', '/d'))
 }
 
+// Chinese, written without spaces: matched by overlapping pairs of characters.
+{
+  const zhPath = join(dir, 'recall-zh.jsonl')
+  writeFileSync(zhPath, [
+    { ts: 1_700_000_000, role: 'user', sessionId: 'z1', text: '回滚窗口定为十五分钟' },
+    { ts: 1_700_100_000, role: 'user', sessionId: 'z2', text: '午饭吃饺子' },
+  ].map((r) => JSON.stringify(r)).join('\n'))
+  const zh = createRecallContext({ indexPath: zhPath })
+  check('zh: "上次" points at the past', zh.triggered('上次回滚窗口是怎么定的？') === true)
+  const block = zh.block('上次回滚窗口是怎么定的？')
+  check('zh: the passage that shares the subject is found', block.includes('回滚窗口定为十五分钟'), block.slice(0, 60))
+  check('zh: and the unrelated one is not', !block.includes('饺子'))
+}
+
 rmSync(dir, { recursive: true, force: true })
 const failed = results.filter((x) => !x.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)

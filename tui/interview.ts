@@ -7,6 +7,8 @@
  * The scores are the model's own judgement, not a measurement, and the screen says so.
  */
 
+import { t } from './strings.js'
+
 export interface InterviewState {
   round: number
   scores: Record<string, number>
@@ -53,7 +55,7 @@ export function interviewPrompt(topic: string): string {
     '- Each round, ask exactly one question with the ask_user_question tool, in the language the topic is written in. Two to four short options.',
     '- Right before calling the tool, write the clarity so far in exactly this form. The terminal reads this block into gauges and hides it from the text.',
     '```interview-state',
-    '{"round": 1, "scores": {"goal": 0, "constraints": 0, "success criteria": 0, "context": 0}, "ambiguity": 100}',
+    `{"round": 1, "scores": {${t().interviewScores.map((name) => `"${name}": 0`).join(', ')}}, "ambiguity": 100}`,
     '```',
     '- scores is the clarity of each item, 0 to 100; ambiguity is how unclear it still is, 0 to 100. Both are your judgement, not a measurement.',
     `- Once ambiguity is ${AMBIGUITY_TARGET} or less, stop asking and write the answers up as a spec at specs/<short-english-slug>.md in the working folder. Put "done": true and "spec": "specs/….md" in the last block.`,

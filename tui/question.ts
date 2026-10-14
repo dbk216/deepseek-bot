@@ -7,6 +7,7 @@
  * rule). Esc skips a question, which the harness accepts as `{ id, selected: [] }`.
  */
 import type { QuestionAnswer, QuestionItem } from '../types/transport.js'
+import { t } from './strings.js'
 
 export interface QuestionRow {
   kind: 'option' | 'custom'
@@ -51,7 +52,7 @@ export class QuestionFlow {
     if (q === undefined) return []
     return [
       ...q.options.map((o, i) => ({ kind: 'option' as const, label: o.label, ...(o.description ? { description: o.description } : {}), checked: this.picked.has(i) })),
-      { kind: 'custom' as const, label: 'type your own…', checked: false },
+      { kind: 'custom' as const, label: t().typeOwn, checked: false },
     ]
   }
 
@@ -101,7 +102,7 @@ export class QuestionFlow {
   describe(answer: QuestionAnswer): string {
     const parts = [...answer.selected]
     if (answer.custom !== undefined) parts.push(`"${answer.custom}"`)
-    return parts.length === 0 ? '(skipped)' : parts.join(', ')
+    return parts.length === 0 ? t().skipped : parts.join(', ')
   }
 
   private record(answer: QuestionAnswer): void {

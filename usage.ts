@@ -13,6 +13,7 @@
  * spend". A price table invented here would be a number nobody could check, so the summary
  * says tokens and says why.
  */
+import { messages, type Messages } from './messages.js'
 
 export interface TokenSnapshot {
   uncachedInputTokens?: number
@@ -107,17 +108,17 @@ export function createUsageTracker(options: UsageOptions) {
      * The reply. Cache-read is a share of input, because that is the number worth seeing:
      * it is what a stable prompt prefix buys.
      */
-    summary(key: string): string {
+    summary(key: string, say: Messages = messages('en')): string {
       const mine = this.totalsFor(key)
       const all = this.overall()
       const line = (label: string, t: { turns: number; uncached: number; cached: number; output: number }): string => {
         const input = t.uncached + t.cached
         const share = input > 0 ? Math.round((t.cached / input) * 100) : 0
-        return `${label}: ${t.turns}턴 · 입력 ${input.toLocaleString('en-US')} (캐시 ${share}%) · 출력 ${t.output.toLocaleString('en-US')}`
+        return say.usageLine(label, t.turns, input.toLocaleString('en-US'), share, t.output.toLocaleString('en-US'))
       }
-      const lines = [line('이 대화', mine ?? { turns: 0, uncached: 0, cached: 0, output: 0 })]
-      if (all.conversations > 1) lines.push(line(`전체 (${all.conversations}개 대화)`, all))
-      lines.push('금액은 하네스가 모델 단가를 노출하지 않아 계산하지 않습니다 — 토큰만 보고합니다.')
+      const lines = [line(say.usageThis, mine ?? { turns: 0, uncached: 0, cached: 0, output: 0 })]
+      if (all.conversations > 1) lines.push(line(say.usageAll(all.conversations), all))
+      lines.push(say.usageNoPrice)
       return lines.join('\n')
     },
   }

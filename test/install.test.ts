@@ -59,6 +59,18 @@ check('and slack when the profile names none', withHelpers(`profile_platform "${
 // The terminal: a new profile serves it beside the platform, and `dsh` goes on the PATH.
 writeFileSync(profile, 'plugins:\n  - id: deepbot\n    platform: [\'discord\', \'local\']\n')
 check('a profile that lists the terminal still reads back its platform', withHelpers(`profile_platform "${profile}"`).out === 'discord', withHelpers(`profile_platform "${profile}"`).out)
+
+// The language a new profile starts in: the environment's, by the POSIX order, English otherwise.
+const lang = (env) => withHelpers('env_language', { LC_ALL: '', LC_MESSAGES: '', LANG: '', ...env }).out
+check('language: LANG ko_KR is Korean', lang({ LANG: 'ko_KR.UTF-8' }) === 'ko', lang({ LANG: 'ko_KR.UTF-8' }))
+check('language: LC_ALL zh_CN wins over LANG', lang({ LC_ALL: 'zh_CN.UTF-8', LANG: 'ko_KR.UTF-8' }) === 'zh', lang({ LC_ALL: 'zh_CN.UTF-8', LANG: 'ko_KR.UTF-8' }))
+check('language: C is skipped, not English', lang({ LC_ALL: 'C', LANG: 'zh_TW.UTF-8' }) === 'zh')
+check('language: en_US, an unknown one, and none are English', lang({ LANG: 'en_US.UTF-8' }) === 'en' && lang({ LANG: 'fr_FR.UTF-8' }) === 'en' && lang({}) === 'en' && lang({ LANG: 'kok_IN' }) === 'en')
+const template = readFileSync(new URL('../profile/cordis.patch.yml', import.meta.url), 'utf8')
+check('language: the template names it, for the installer to fill', /^    language: en$/m.test(template))
+writeFileSync(join(dir, 'lang.yml'), template)
+check('language: the installer writes the chosen one into the profile', withHelpers(`set_profile_language "${join(dir, 'lang.yml')}" zh`).code === 0
+  && /^    language: zh$/m.test(readFileSync(join(dir, 'lang.yml'), 'utf8')) && !/^    language: en$/m.test(readFileSync(join(dir, 'lang.yml'), 'utf8')))
 check('every channel already includes the terminal\'s', withHelpers(`with_terminal "['*']"`).out === "['*']", withHelpers(`with_terminal "['*']"`).out)
 check('a list of channels gets the terminal\'s, tui', withHelpers(`with_terminal "['C01', 'C02']"`).out === "['C01', 'C02', 'tui']", withHelpers(`with_terminal "['C01', 'C02']"`).out)
 const launcher = join(dir, '.local', 'bin', 'dsh')

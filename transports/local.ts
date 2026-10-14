@@ -15,6 +15,8 @@ import { connect as dial, createServer, type Server, type Socket } from 'node:ne
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createBridge, type Services } from '../tui/bridge.js'
+import { stringsFor } from '../tui/strings.js'
+import { languageOf } from '../i18n.js'
 import { discoveryDir, encode, FrameReader, MAX_FRAME_BYTES, NAME, PROTOCOL_VERSION, type ConversationItem, type ServerFrame } from '../tui/protocol.js'
 import type { ActionButton, ActionEvent, InboundMessage, PostedMessage, QuestionAnswer, QuestionItem, StreamFrame, Target, Transport, TransportStatus } from '../types/transport.js'
 
@@ -88,6 +90,9 @@ interface Client {
 
 export function createLocalTransport(host: LocalHost): LocalTransport {
   const { cfg, log } = host
+  // The deployment's language: the words this sends, and the one the terminal switches to.
+  const language = languageOf(cfg.language)
+  const say = stringsFor(language).gateway
   const name = typeof cfg.tuiName === 'string' && NAME.test(cfg.tuiName) ? cfg.tuiName : 'default'
   const discoveryFile = join(discoveryDir(), `${name}.json`)
   let server: Server | null = null
@@ -99,7 +104,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
   let seq = 0
   /** Questions waiting for the person, by id; re-sent to a terminal that reconnects. */
   const questions = new Map<string, { conversation: string; items: QuestionItem[]; finish: (answers: QuestionAnswer[] | null) => void }>()
-  const bridge = host.services !== undefined ? createBridge(host.services, log) : null
+  const bridge = host.services !== undefined ? createBridge(host.services, log, say) : null
   let unwatch: (() => void) | null = null
   let panelTimer: ReturnType<typeof setTimeout> | null = null
   let heartbeat: ReturnType<typeof setInterval> | null = null
@@ -170,7 +175,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
     if (client.socket.destroyed) return
     let line = encode(frame)
     // The terminal refuses a line over MAX_FRAME_BYTES; say what was too big rather than send it.
-    if (Buffer.byteLength(line) > MAX_FRAME_BYTES) line = encode({ type: 'error', code: 'too-large', message: `${frame.type} frame too large to send` })
+    if (Buffer.byteLength(line) > MAX_FRAME_BYTES) line = encode({ type: 'error', code: 'too-large', message: say.frameTooLarge(frame.type) })
     client.socket.write(line)
     if (client.socket.writableLength > MAX_UNSENT_BYTES) {
       log(`local: a terminal stopped reading (${client.socket.writableLength} bytes unsent); disconnecting it`)
@@ -208,15 +213,15 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         const tenant = typeof frame.tenant === 'string' ? frame.tenant.normalize('NFC') : null
         if (tenant !== null) {
           // A tenant is a separate workspace; without isolation there is no such thing to join.
-          if (cfg.tenantIsolation !== true) return refuse(client, 'tenant-isolation-off', 'tenant isolation is not enabled in this deployment', true)
-          if (!(host.validTenant?.(tenant) ?? NAME.test(tenant))) return refuse(client, 'bad-frame', 'a tenant name is one directory name: not empty, not . or .., no /', true)
+          if (cfg.tenantIsolation !== true) return refuse(client, 'tenant-isolation-off', say.tenantOff, true)
+          if (!(host.validTenant?.(tenant) ?? NAME.test(tenant))) return refuse(client, 'bad-frame', say.badTenant, true)
         }
         const conversation = asked ?? randomUUID()
         // A conversation stays in the workspace it started in. A different tenant is refused; asking for
         // none (a plain --resume) gets the recorded one.
         const bound = host.boundTenant?.(`${LOCAL_CHANNEL}:${conversation}`)
         if (bound !== undefined && tenant !== null && tenant !== bound) {
-          return refuse(client, 'tenant-mismatch', `this conversation belongs to ${bound === null ? 'the home workspace' : `tenant ${bound}`}`, true)
+          return refuse(client, 'tenant-mismatch', say.tenantMismatch(bound), true)
         }
         // Not recorded yet: a tenant asked for now, or one another terminal already chose for it.
         const effective = bound !== undefined ? bound : tenant ?? tenants.get(conversation) ?? null
@@ -224,7 +229,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         client.conversation = conversation
         const workspace = await (host.workspaceFor?.(`${LOCAL_CHANNEL}:${conversation}`) ?? host.sessionCwd()).catch(() => '')
         send(client, {
-          type: 'ready', version: PROTOCOL_VERSION, conversation, workspace,
+          type: 'ready', version: PROTOCOL_VERSION, language, conversation, workspace,
           tenant: host.tenantOf?.(`${LOCAL_CHANNEL}:${conversation}`) ?? effective, model: host.model?.() ?? '',
           busy: host.busy?.(`${LOCAL_CHANNEL}:${conversation}`) ?? 0,
         })
@@ -239,7 +244,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
       }
       case 'answer': {
         const pending = typeof frame.id === 'string' ? questions.get(frame.id) : undefined
-        if (pending === undefined || pending.conversation !== client.conversation) return refuse(client, 'question-closed', 'that question is already closed')
+        if (pending === undefined || pending.conversation !== client.conversation) return refuse(client, 'question-closed', say.questionClosed)
         if (frame.answers === null) { pending.finish(null); return }
         const answers = validAnswers(pending.items, frame.answers)
         if (answers === null) return refuse(client, 'bad-frame', 'one answer per question, with labels from its options')
@@ -251,23 +256,23 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         if (frame.kind === 'agent' && typeof frame.id === 'string' && client.offered.agents.has(frame.id)) client.view = { kind: 'agent', id: frame.id, last: '' }
         else if (frame.kind === 'job' && typeof frame.id === 'string' && client.offered.jobs.get(frame.id) === frame.owner) client.view = { kind: 'job', id: frame.id, owner: frame.owner as string, cursor: 0, status: '' }
         else if (frame.kind === 'main') client.view = null
-        else return refuse(client, 'not-offered', "not in this conversation's panel")
+        else return refuse(client, 'not-offered', say.notInPanel)
         await refreshView(client)
         return
       }
       case 'agent.send':
       case 'agent.interrupt': {
         const root = rootOf(client)
-        if (bridge === null || root === null || typeof frame.id !== 'string' || !client.offered.agents.has(frame.id)) return refuse(client, 'agent-unavailable', 'not a subagent of this conversation')
+        if (bridge === null || root === null || typeof frame.id !== 'string' || !client.offered.agents.has(frame.id)) return refuse(client, 'agent-unavailable', say.notSubagent)
         if (frame.type === 'agent.interrupt') { await bridge.interrupt(root, frame.id); schedulePanels(); return }
-        if (typeof frame.text !== 'string' || frame.text === '') return refuse(client, 'bad-frame', 'a message needs text')
+        if (typeof frame.text !== 'string' || frame.text === '') return refuse(client, 'bad-frame', say.needsText)
         const error = await bridge.send(root, frame.id, frame.text)
         if (error !== null) return refuse(client, 'agent-send', error)
         schedulePanels()
         return
       }
       case 'job.kill': {
-        if (bridge === null || typeof frame.id !== 'string' || typeof frame.owner !== 'string' || client.offered.jobs.get(frame.id) !== frame.owner) return refuse(client, 'not-offered', 'not a job of this conversation')
+        if (bridge === null || typeof frame.id !== 'string' || typeof frame.owner !== 'string' || client.offered.jobs.get(frame.id) !== frame.owner) return refuse(client, 'not-offered', say.notJob)
         bridge.killJob(frame.owner, frame.id)
         schedulePanels()
         return
@@ -280,7 +285,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         const words = frame.type === 'cancel' ? cfg.cancelWords : frame.type === 'usage' ? cfg.usageWords : null
         const text = words === null ? frame.text : (Array.isArray(words) ? words[0] : undefined)
         if (typeof text !== 'string' || text === '') {
-          return refuse(client, words === null ? 'bad-frame' : `${frame.type}-unsupported`, words === null ? 'a message needs text' : `no ${frame.type} word is configured`)
+          return refuse(client, words === null ? 'bad-frame' : `${frame.type}-unsupported`, words === null ? say.needsText : `no ${frame.type} word is configured`)
         }
         handlers?.onMessage({
           eventId: `local-${randomUUID()}`,
@@ -310,7 +315,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         // A button of this conversation's own messages: an approval for its own key, nothing else.
         // The core's buttons carry the request they were posted with (#<8 hex>); the conversation is what is checked here.
         const own = new RegExp(`^approval:(allow|deny):${LOCAL_CHANNEL}:${client.conversation.replace(/[.]/g, '\\.')}(#[0-9a-f]{8})?$`)
-        if (typeof frame.id !== 'string' || !own.test(frame.id)) return refuse(client, 'not-offered', 'not a button of this conversation')
+        if (typeof frame.id !== 'string' || !own.test(frame.id)) return refuse(client, 'not-offered', say.notButton)
         handlers?.onAction?.({ id: frame.id, target: { channel: LOCAL_CHANNEL, threadTs: client.conversation }, user: 'local' })
         return
       }
@@ -335,7 +340,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
   }
 
   function attach(socket: Socket): void {
-    if (clients.size >= MAX_CLIENTS) { socket.end(encode({ type: 'error', code: 'busy', message: 'too many terminals attached' })); return }
+    if (clients.size >= MAX_CLIENTS) { socket.end(encode({ type: 'error', code: 'busy', message: say.tooManyTerminals })); return }
     const client: Client = { socket, conversation: null, view: null, panel: '', offered: { agents: new Set(), jobs: new Map() } }
     const reader = new FrameReader()
     clients.add(client)

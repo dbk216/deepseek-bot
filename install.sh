@@ -48,6 +48,27 @@ with_terminal() {
   if [ "$1" = "['*']" ]; then printf '%s\n' "$1"; else printf '%s\n' "${1%]}, 'tui']"; fi
 }
 
+# The language a new profile starts in: the environment's, read in the POSIX order (LC_ALL, LC_MESSAGES,
+# LANG), the first one set deciding. English when it names none of the three. The plugin reads the same way.
+env_language() {
+  local v
+  for v in "${LC_ALL:-}" "${LC_MESSAGES:-}" "${LANG:-}"; do
+    case "$v" in ''|C|POSIX) continue ;; esac
+    v="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
+    case "$v" in
+      ko|ko[_.@-]*|kor|kor[_.@-]*|korean|korean[_.@-]*) echo ko ;;
+      zh|zh[_.@-]*|chi|chi[_.@-]*|zho|zho[_.@-]*|chinese|chinese[_.@-]*) echo zh ;;
+      *) echo en ;;
+    esac
+    return 0
+  done
+  echo en
+}
+
+set_profile_language() {   # set_profile_language <patch> <en|ko|zh>
+  sed -i '' -e "s/^    language: en$/    language: $2/" "$1"
+}
+
 # The first line after the shebang marks a launcher this installer wrote, so a rerun knows it may
 # replace it, and harness_cli knows not to take it for the harness.
 LAUNCHER_MARK='# deepseek-bot terminal launcher'
@@ -167,6 +188,8 @@ if [ "$new_profile" -eq 1 ]; then
   ask platform "platform (slack / telegram / discord)?" slack
   case "$platform" in slack|telegram|discord) ;; *) die "unknown platform: $platform" ;; esac
   if [ "$platform" != telegram ]; then ask channels "channels to answer in (* = every channel it is invited to, or ids separated by spaces)?" '*'; fi
+  ask language "language of the bot's own messages and of dsh (en / ko / zh)?" "$(env_language)"
+  case "$language" in en|ko|zh) ;; *) die "unknown language: $language (en, ko or zh)" ;; esac
   list="$(channel_list "$channels")" || die "channel ids are letters, digits, - and _ (got: $channels)"
 fi
 DEEPBOT_INSTALLER=1 DSH_BIN="$DSH_BIN" "$DEEPBOT_DIR/init.sh" --home "$DEEPBOT_HOME" --profile "$DEEPBOT_PROFILE" | sed 's/^/    /'
@@ -192,11 +215,14 @@ if [ "$new_profile" -eq 1 ]; then
   patch="$profile_dir/cordis.patch.yml"
   list="$(with_terminal "$list")"
   sed -i '' -e "s/^    platform: slack$/    platform: ['$platform', 'local']/" -e "s/^    targetChannels: \['\*'\]$/    targetChannels: $list/" "$patch"
-  note "profile: platform $platform and the terminal, channels $list"
+  set_profile_language "$patch" "$language"
+  note "profile: platform $platform and the terminal, channels $list, language $language"
 else
   note "profile $DEEPBOT_PROFILE already existed — its settings are kept"
   grep -q "^    platform: .*'local'" "$profile_dir/cordis.patch.yml" 2>/dev/null \
     || note "to use dsh, add 'local' to the deepbot row's platform (see docs/how-it-works.md, The terminal)"
+  grep -q "^    language: " "$profile_dir/cordis.patch.yml" 2>/dev/null \
+    || note "the bot speaks English; for Korean or Chinese add language: ko or zh to the deepbot row"
 fi
 
 step "the terminal"

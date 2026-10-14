@@ -79,7 +79,7 @@ for (const file of FILES) {
     if (undated.length > 0) warnings.push(`${file.name}: ${undated.length} line(s) without a leading date, e.g. ${JSON.stringify(undated[0].slice(0, 60))}`)
   }
   for (const line of factLines(text)) {
-    const key = line.toLowerCase().replace(/[^a-z0-9가-힣 ]+/g, '').replace(/\s+/g, ' ').trim()
+    const key = line.toLowerCase().replace(/[^a-z0-9가-힣\u3400-\u9fff ]+/gu, '').replace(/\s+/g, ' ').trim()
     if (key.length < 30) continue
     if (seen.has(key)) warnings.push(`same fact in ${seen.get(key)} and ${file.name}: ${JSON.stringify(line.slice(0, 70))} — it will be injected twice`)
     else seen.set(key, file.name)

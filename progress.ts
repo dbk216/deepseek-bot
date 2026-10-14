@@ -11,6 +11,7 @@
  * once, throttle the rest, never leave a message behind — and none of those rules
  * need an agent, a platform, or a turn to exercise.
  */
+import { messages } from './messages.js'
 
 export interface ProgressTarget {
   channel: string
@@ -26,10 +27,12 @@ export interface ProgressOptions {
   post: ProgressPoster['post']
   /** Everything but the first update waits at least this long between edits. */
   throttleMs: number
-  /** Prefix for the message, e.g. "⏳ 아리 작업 중…". A function is read at each render. */
+  /** Prefix for the message, e.g. "⏳ Ari is working…". A function is read at each render. */
   label: string | (() => string)
   now?: () => number
   log?: (...parts: unknown[]) => void
+  /** How the tools so far are counted, in the deployment's language: "2 tools (bash)". */
+  tools?: (n: number, last: string) => string
   /** Called once a conversation's message exists, with its id: the core records it for a restart. */
   onPosted?: (key: string, ts: string) => void
 }
@@ -49,12 +52,12 @@ export function createProgressTracker(options: ProgressOptions) {
   const now = options.now ?? (() => Date.now())
   const log = options.log ?? (() => {})
 
-  /** "2개 도구 · 34s" — enough to see it is moving, short enough to read. */
+  /** "2 tools (bash) · 34s" — enough to see it is moving, short enough to read. */
   function summary(entry: Entry): string {
     const parts: string[] = []
     if (entry.tools.length > 0) {
       const last = entry.tools[entry.tools.length - 1]
-      parts.push(`${entry.tools.length}개 도구 (${last})`)
+      parts.push((options.tools ?? messages('en').tools)(entry.tools.length, last))
     }
     const seconds = Math.round((now() - entry.startedAt) / 1000)
     if (seconds >= 5) parts.push(`${seconds}s`)

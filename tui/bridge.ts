@@ -9,6 +9,7 @@
  * informative, never an exception.
  */
 import { randomUUID } from 'node:crypto'
+import { stringsFor, type Strings } from './strings.js'
 
 export interface AgentItem {
   id: string
@@ -53,8 +54,6 @@ const MAX_CHILDREN = 20
 const MAX_LINE_CHARS = 8000
 const MAX_OUTPUT_CHARS = 200_000
 
-const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max)}… (${text.length - max} chars left out)`)
-
 function textOf(content: unknown): string {
   if (!Array.isArray(content)) return ''
   return content.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('')
@@ -78,7 +77,8 @@ function tokensOf(usage: any): number {
     .reduce((sum, k) => sum + (Number.isFinite(usage[k]) ? Number(usage[k]) : 0), 0)
 }
 
-export function createBridge(services: Services, log: (...parts: unknown[]) => void) {
+export function createBridge(services: Services, log: (...parts: unknown[]) => void, words: Strings['gateway'] = stringsFor('en').gateway) {
+  const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max)}… ${words.charsLeftOut(text.length - max)}`)
   const seen = new Set<string>()
   /** The first time a shape is met, it goes to the log — the contract is not published. */
   const firstSight = (what: string, value: unknown) => {
@@ -213,7 +213,7 @@ export function createBridge(services: Services, log: (...parts: unknown[]) => v
      */
     async send(root: string, child: string, text: string): Promise<string | null> {
       const subagents = services.get('subagents')
-      if (typeof subagents?.prompt !== 'function') return 'this deployment cannot message a subagent'
+      if (typeof subagents?.prompt !== 'function') return words.noSubagentMessaging
       const running = services.get('agents')?.get?.(child)?.status === 'running'
       try {
         await subagents.prompt({
@@ -223,9 +223,9 @@ export function createBridge(services: Services, log: (...parts: unknown[]) => v
         return null
       } catch (e) {
         const code = String((e as { code?: string })?.code ?? '')
-        if (code.includes('parent-unavailable')) return 'not sent: the parent conversation has no turn running — only possible while one runs'
-        if (code.includes('not-resumable') || code.includes('unauthorized')) return 'this subagent takes no messages (it is one-shot, or not a direct child)'
-        return `not sent: ${String((e as Error)?.message ?? e).slice(0, 160)}`
+        if (code.includes('parent-unavailable')) return words.parentNotRunning
+        if (code.includes('not-resumable') || code.includes('unauthorized')) return words.notResumable
+        return words.notSent(String((e as Error)?.message ?? e).slice(0, 160))
       }
     },
 
@@ -247,7 +247,7 @@ export function createBridge(services: Services, log: (...parts: unknown[]) => v
         const job = service.get?.(id, owner)
         const all = (read?.chunks ?? []).map((c: { text?: string }) => String(c?.text ?? '')).join('')
         // The newest output is what a person watching wants; a huge first read keeps its tail.
-        const text = all.length <= MAX_OUTPUT_CHARS ? all : `… (${all.length - MAX_OUTPUT_CHARS} chars left out)\n${all.slice(-MAX_OUTPUT_CHARS)}`
+        const text = all.length <= MAX_OUTPUT_CHARS ? all : `… ${words.charsLeftOut(all.length - MAX_OUTPUT_CHARS)}\n${all.slice(-MAX_OUTPUT_CHARS)}`
         return { text, next: Number(read?.next ?? from), status: String(job?.status ?? 'unknown') }
       } catch {
         return null

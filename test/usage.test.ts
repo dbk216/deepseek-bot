@@ -9,6 +9,7 @@
  * Run: node test/usage.test.ts
  */
 import { createUsageTracker, emptyUsageStore } from '../dist/usage.js'
+import { messages } from '../dist/messages.js'
 
 const results = []
 function check(name, ok, detail = '') {
@@ -71,11 +72,14 @@ function tracker() {
   const { t } = tracker()
   t.record('a', 's1', { uncachedInputTokens: 3000, cacheReadTokens: 7000, outputTokens: 500 })
   const text = t.summary('a')
-  check('the summary names the conversation', /이 대화: 1턴/.test(text), text.split('\n')[0])
-  check('it reports input and the cache share', /입력 10,000 \(캐시 70%\)/.test(text), text.split('\n')[0])
-  check('it reports output', /출력 500/.test(text), text.split('\n')[0])
-  check('it says why there is no price', /단가|금액/.test(text) && /토큰만/.test(text), text.split('\n').slice(-1)[0])
-  check('a single conversation is not double-reported', !/전체/.test(text))
+  check('the summary names the conversation', /^This conversation: 1 turn /.test(text), text.split('\n')[0])
+  check('it reports input and the cache share', /input 10,000 \(70% cached\)/.test(text), text.split('\n')[0])
+  check('it reports output', /output 500/.test(text), text.split('\n')[0])
+  check('it says why there is no price', /prices/.test(text) && /tokens only/.test(text), text.split('\n').slice(-1)[0])
+  check('a single conversation is not double-reported', !/^All /m.test(text))
+  const ko = t.summary('a', messages('ko')), zh = t.summary('a', messages('zh'))
+  check('in Korean, the same figures', /^이 대화: 1턴 · 입력 10,000 \(캐시 70%\) · 출력 500/.test(ko) && /토큰만/.test(ko), ko.split('\n')[0])
+  check('in Chinese, the same figures', /^本对话：1 轮 · 输入 10,000（缓存 70%） · 输出 500/.test(zh) && /token/.test(zh), zh.split('\n')[0])
 }
 
 // 6. With several conversations the summary adds the overall line.
@@ -84,14 +88,14 @@ function tracker() {
   t.record('a', 's1', { uncachedInputTokens: 100, outputTokens: 1 })
   t.record('b', 's2', { uncachedInputTokens: 200, outputTokens: 2 })
   const text = t.summary('a')
-  check('the overall line appears with a conversation count', /전체 \(2개 대화\)/.test(text), text.split('\n')[1])
+  check('the overall line appears with a conversation count', /^All \(2 conversations\): 2 turns/m.test(text), text.split('\n')[1])
 }
 
 // 7. A conversation with no turns says zero rather than failing.
 {
   const { t } = tracker()
   const text = t.summary('never-used')
-  check('an unused conversation reports zero', /0턴/.test(text), text.split('\n')[0])
+  check('an unused conversation reports zero', /: 0 turns /.test(text), text.split('\n')[0])
 }
 
 // 8. A missing or empty snapshot records nothing.

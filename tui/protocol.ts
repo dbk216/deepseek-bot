@@ -38,7 +38,7 @@ export type ClientFrame =
   | { type: 'answer'; id: string; answers: QuestionAnswer[] | null }
 
 export type ServerFrame =
-  | { type: 'ready'; version: number; conversation: string; workspace: string; tenant: string | null; model: string; busy: number }
+  | { type: 'ready'; version: number; language?: string; conversation: string; workspace: string; tenant: string | null; model: string; busy: number }
   | { type: 'post'; ts: string; text: string; replace: string | null; buttons: ActionButton[]; answer: boolean }
   | ({ type: 'stream' } & StreamFrame)
   | { type: 'remove'; ts: string }

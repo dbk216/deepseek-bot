@@ -240,7 +240,7 @@ function hostFor(stateDir, cfg = {}) {
     await sleep(300)
     unload()
     await sleep(50)
-    return fake.posted.filter((p) => p.target?.threadTs === 't5' && /끊겼어/.test(p.text))
+    return fake.posted.filter((p) => p.target?.threadTs === 't5' && /A restart cut off/.test(p.text))
   }
   const first = await boot()
   check('restart: a record the previous process kept unreported is reported', first.length === 1 && first[0].replace === 'ts-left', JSON.stringify(first))
@@ -297,7 +297,7 @@ function hostFor(stateDir, cfg = {}) {
   const lost = client(join(stateDir, 'tui.sock'))
   await lost.opened
   lost.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-lost' })
-  check('slack down: a terminal turn lost in the restart is still reported', (await lost.waitFor((f) => f.type === 'post' && /끊겼어/.test(f.text))) !== null)
+  check('slack down: a terminal turn lost in the restart is still reported', (await lost.waitFor((f) => f.type === 'post' && /A restart cut off/.test(f.text))) !== null)
   await lost.close()
   check('slack down: and, reported, its record is gone, so no retry reports it again', JSON.parse(readFileSync(join(stateDir, 'sessions.json'), 'utf8')).restartLost?.['tui:conv-lost'] === undefined)
   const stateNow = () => JSON.parse(readFileSync(join(stateDir, 'sessions.json'), 'utf8'))
@@ -310,14 +310,14 @@ function hostFor(stateDir, cfg = {}) {
   const failuresBefore = logs.filter((l) => /startup failed/.test(l)).length
   for (let i = 0; i < 400 && logs.filter((l) => /startup failed/.test(l)).length === failuresBefore; i++) await sleep(10)
   await sleep(150)   // a notice the retry sent is on the socket by now
-  const told = () => c.frames.some((f) => f.type === 'post' && /끊겼어/.test(f.text))
+  const told = () => c.frames.some((f) => f.type === 'post' && /A restart cut off/.test(f.text))
   check('slack down: a failed retry does not report this process\'s running turn as lost', made === 1 && logs.filter((l) => /startup failed/.test(l)).length > failuresBefore && !told(), `${made} turn(s), ${logs.filter((l) => /startup failed/.test(l)).length - failuresBefore} more failure(s)`)
   check('slack down: and its record stays, for a real restart to report', stateNow().inflight?.[`tui:${ready.conversation}`] !== undefined, JSON.stringify(stateNow().inflight))
   authOk = true
   for (let i = 0; i < 500 && slackConnects === 0; i++) await sleep(10)
   check('slack down: once it can, Slack is connected by the retry', slackConnects === 1)
   await sleep(200)
-  check('slack down: and then its lost turn is reported', slack.posted.some((p) => p.target?.threadTs === 't9' && /끊겼어/.test(p.text)), JSON.stringify(slack.posted.map((p) => p.text.slice(0, 20))))
+  check('slack down: and then its lost turn is reported', slack.posted.some((p) => p.target?.threadTs === 't9' && /A restart cut off/.test(p.text)), JSON.stringify(slack.posted.map((p) => p.text.slice(0, 20))))
   check('slack down: the retry that connects does not report the running turn either', !told())
   release()
   if (up) await c.close()
@@ -379,13 +379,13 @@ function boot({ state = {}, config = {} } = {}) {
   const typingOn = await c.waitFor((f) => f.type === 'typing' && f.on === true)
   await sleep(300)
   check('core: a terminal message starts a session named tui-…', t.created.length === 1 && /^tui-[0-9a-f-]{36}$/.test(t.created[0]?.sessionId ?? ''), t.created[0]?.sessionId)
-  check('core: the terminal gets typing, not a working message', typingOn !== null && !c.frames.some((f) => f.type === 'post' && /작업 중/.test(f.text)))
+  check('core: the terminal gets typing, not a working message', typingOn !== null && !c.frames.some((f) => f.type === 'post' && /is working/.test(f.text)))
   check('core: the turn\'s reply reaches the terminal', (await c.waitFor((f) => f.type === 'post', 2000)) !== null)
 
   t.slack.deliver(t.slack.message({ text: 'ping', target: { channel: 'C_ALLOWED', threadTs: 't1' } }))
   await sleep(400)
   check('core: a Slack message still starts a slack-… session', t.created.length === 2 && /^slack-/.test(t.created[1]?.sessionId ?? ''), t.created[1]?.sessionId)
-  check('core: Slack still gets a working message (it has no typing)', t.slack.posted.some((p) => p.target.channel === 'C_ALLOWED' && /작업 중/.test(p.text)), JSON.stringify(t.slack.posted.map((p) => p.text.slice(0, 30))))
+  check('core: Slack still gets a working message (it has no typing)', t.slack.posted.some((p) => p.target.channel === 'C_ALLOWED' && /is working/.test(p.text)), JSON.stringify(t.slack.posted.map((p) => p.text.slice(0, 30))))
   check('core: nothing for Slack went to the terminal, nothing for the terminal went to Slack', !c.frames.some((f) => f.type === 'post' && /ping/.test(f.text)) && t.slack.posted.every((p) => p.target.channel !== LOCAL_CHANNEL))
   void ready
   await c.close()
@@ -408,8 +408,8 @@ function boot({ state = {}, config = {} } = {}) {
   check('approval: pressing a button decides it', (await Promise.race([tuiAsk, sleep(2000).then(() => 'still pending')])) === 'rejected')
   const slackAsk = t.askApproval('slack-bbbb')
   await sleep(100)
-  const slackPost = t.slack.posted.find((p) => /권한이 필요/.test(p.text))
-  check('approval: a platform without buttons (this fake Slack) is asked in words', slackPost !== undefined && slackPost.buttons === null && /허용/.test(slackPost.text), JSON.stringify(t.slack.posted.map((p) => p.text.slice(0, 30))))
+  const slackPost = t.slack.posted.find((p) => /need permission/.test(p.text))
+  check('approval: a platform without buttons (this fake Slack) is asked in words', slackPost !== undefined && slackPost.buttons === null && /\*allow\*/.test(slackPost.text), JSON.stringify(t.slack.posted.map((p) => p.text.slice(0, 30))))
   t.slack.deliver(t.slack.message({ text: '거부', target: { channel: 'C_ALLOWED', threadTs: 't1' } }))
   await slackAsk
   await c.close()
@@ -575,7 +575,7 @@ function boot({ state = {}, config = {} } = {}) {
   check('tools: a line replaced where the final newline went shows the two lines only', sent('c16') !== undefined && drawn(sent('c16')).some((row) => row.includes('- y')) && drawn(sent('c16')).some((row) => row.includes('+ z')) && !blankRow(sent('c16')), JSON.stringify(sent('c16') === undefined ? [] : drawn(sent('c16'))))
   check('tools: a presenter that answers with a promise is not waited for: the first argument is the title', later.find((f) => f.callId === 'c4')?.title === '/w/x')
   check('tools: another session\'s tool call is not shown in this conversation', !later.some((f) => f.callId === 'c5'))
-  check('stream: a terminal turn posts no progress message (the steps are already on screen)', !c.frames.some((f) => f.type === 'post' && /작업 중/.test(f.text)))
+  check('stream: a terminal turn posts no progress message (the steps are already on screen)', !c.frames.some((f) => f.type === 'post' && /is working/.test(f.text)))
   release()
   const reply = await c.waitFor((f) => f.type === 'post', 2000)
   check('stream: the turn\'s reply is marked as the answer', reply !== null && reply.answer === true && reply.text === '첫 줄 둘째 줄', JSON.stringify(reply))
@@ -638,7 +638,7 @@ function boot({ state = {}, config = {} } = {}) {
     { role: 'user', text: '배포 일정 정리해줘' }, { role: 'assistant', text: 'staging 먼저.' }, { role: 'user', text: '롤백 기준은?' },
   ]), JSON.stringify(history?.items))
   c.send({ type: 'usage' })
-  const usage = await c.waitFor((f) => f.type === 'post' && /이 대화: 4턴/.test(f.text))
+  const usage = await c.waitFor((f) => f.type === 'post' && /This conversation: 4 turns/.test(f.text))
   check('usage: answered by the core\'s usage summary, without a turn', usage !== null, JSON.stringify(c.frames.filter((f) => f.type === 'post').map((f) => f.text.slice(0, 40))))
   await c.close()
   unload()
@@ -1021,13 +1021,14 @@ function boot({ state = {}, config = {} } = {}) {
   }
   let unload = () => {}
   apply({ get: (n) => stubs[n], effect: (fn) => { unload = fn() }, on: () => () => {}, logger: { info: () => {} } },
-    { platform: 'local', targetChannels: [LOCAL_CHANNEL], stateDir, tenantIsolation: true, tenantDefault: '한국어 팀', autoIndex: false })
+    { platform: 'local', targetChannels: [LOCAL_CHANNEL], stateDir, tenantIsolation: true, tenantDefault: '한국어 팀', autoIndex: false, language: 'ko' })
   await sleep(150)
   const c = client(join(stateDir, 'tui.sock'))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await c.waitFor((f) => f.type === 'ready')
   check('default tenant: a terminal that asks for none is in the configured default, Korean name and all', ready?.tenant === '한국어 팀' && ready.workspace.endsWith('/tenants/한국어 팀'), JSON.stringify(ready))
+  check('language: ready names the deployment\'s language, for the terminal to speak', ready?.language === 'ko', String(ready?.language))
   c.send({ type: 'message', text: '안녕' })
   for (let i = 0; i < 100 && created.length === 0; i++) await sleep(10)
   check('default tenant: its turn runs there', String(created[0]?.meta?.cwd ?? '').endsWith('/tenants/한국어 팀'), String(created[0]?.meta?.cwd))
@@ -1113,7 +1114,7 @@ function boot({ state = {}, config = {} } = {}) {
     await sleep(50)
     slack.deliver(slack.message({ text: '그만' }))
     await sleep(500)
-    const reports = slack.posted.filter((p) => /중단/.test(p.text))
+    const reports = slack.posted.filter((p) => /Stopped/.test(p.text))
     check('composite core: a stop while the agent is created is reported once', reports.length === 1, JSON.stringify(slack.posted.map((p) => [p.text.slice(0, 30), p.replace])))
     check('composite core: and the working message is removed through the platform', slack.removed.some((r) => r.target?.threadTs === 't1'), JSON.stringify(slack.removed))
   })

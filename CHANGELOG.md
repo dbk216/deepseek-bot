@@ -5,8 +5,21 @@ the caveat about version numbers is at the bottom.
 
 ## Unreleased
 
+### Added
+
+- **English, Korean and Chinese.** A `language` setting in the deepbot row (`en` by default, `ko`,
+  `zh`) sets what the bot itself says on every platform (approvals and their buttons, stops,
+  failures, the working message, Slack's status, the usage report) and everything `dsh` draws; `dsh`
+  starts in its environment's language and takes the gateway's once connected. Stop, usage, allow and
+  deny are understood in all three whatever the setting, recall reads Chinese by pairs of
+  characters, and the injection check knows Chinese shapes. The installer asks, offering the
+  environment's language; an existing profile is told how to set it. An unknown value is a config
+  error. The model's answers still follow the persona.
+
 ### Changed
 
+- **The bot's own words default to English.** They were Korean. A Korean deployment keeps them by
+  setting `language: ko`; the Korean wording is unchanged.
 - **The terminal speaks English.** Its status line, hints, notices, `/help`, usage and exit line were
   Korean in a project whose README and docs are English. The `/interview` instructions to the model
   are English too and ask it to question in the topic's language. The adapter's own messages on the

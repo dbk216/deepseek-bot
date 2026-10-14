@@ -62,6 +62,9 @@ Never say just "home".
 
 ## Showing work, asking, delivering
 
+- **language** — the deployment's `language` setting (`en`, `ko`, `zh`): the words the bot itself
+  says and everything the terminal draws. Not the language of the model's answers, which follows the
+  persona and the person.
 - **working status** — the platform's own sign that the bot is busy: Slack's status under a thread,
   "typing" elsewhere. The **working message** is the bot's own placeholder message, used only where
   the status is refused.

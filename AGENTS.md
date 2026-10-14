@@ -144,6 +144,7 @@ Define success criteria. Loop until verified.
 | `recallContext.ts` | ranking and injecting passages from the recall index; `recallIndexPath` |
 | `recall/` | the indexer that builds the recall index from session logs, and its launchd job |
 | `notes.ts`, `usage.ts`, `injection.ts` | note hygiene, token totals, flagging instruction-like text |
+| `i18n.ts`, `messages.ts` | the `language` setting (en, ko, zh) and what the bot itself says in each; the terminal's words are `tui/strings.ts` |
 | `safeWrite.ts` | writes that never follow a link the agent left in its home |
 | `service/` | launcher, sandbox runner, health probe, log rotation, scenario schedule, their installers |
 | `watch/` | the watch runner and its installer |

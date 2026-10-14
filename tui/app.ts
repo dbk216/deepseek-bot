@@ -15,6 +15,7 @@ import type { AgentItem, JobItem, ViewLine } from './bridge.js'
 import { formatTokens, panelCounts, panelRows, panelWindow, rowStatus, type PanelRow } from './panel.js'
 import { AMBIGUITY_TARGET, readState, type InterviewState } from './interview.js'
 import { QuestionFlow } from './question.js'
+import { t } from './strings.js'
 import { wrapPlain } from './render/text.js'
 import type { QuestionAnswer, QuestionItem } from '../types/transport.js'
 import { copy as systemCopy, type CopyMethod } from './render/clipboard.js'
@@ -83,7 +84,8 @@ export interface AppOptions {
   /** A typed line the app should not send (a /command): return true when it was handled. */
   intercept?: (text: string) => boolean
   /** The /commands to complete, with what they take. */
-  commands?: readonly CommandInfo[]
+  /** The /commands for completion; a function is read each time, so a change of language shows. */
+  commands?: readonly CommandInfo[] | (() => readonly CommandInfo[])
   /** The workspace's files matching a query, for @ completion. */
   files?: (query: string) => string[]
   /** Keep a sent line for the next run's history. */
@@ -104,7 +106,7 @@ export class App {
   readonly editor = new Editor()
   readonly terminal: Terminal
   readonly status: AppStatus = {
-    connected: false, link: 'connecting…', workspace: '', session: '', model: '', preset: '',
+    connected: false, link: t().connecting, workspace: '', session: '', model: '', preset: '',
     running: false, startedAt: 0, tokens: 0, contextPct: null,
   }
   private readonly o: AppOptions
@@ -358,7 +360,7 @@ export class App {
   ask(id: string, items: QuestionItem[]): void {
     for (const item of items) {
       if (item.intent?.kind === 'plan-review' && typeof item.detail === 'string') {
-        this.transcript.push(noticeBlock('plan review requested', 'warn', this.mode))
+        this.transcript.push(noticeBlock(t().planReviewRequested, 'warn', this.mode))
         const plan = answerBlock(this.mode)
         plan.finish(item.detail)
         this.transcript.push(plan)
@@ -379,7 +381,7 @@ export class App {
     this.question = null
     // The keys are the input box's again: a command still typed there gets its list back.
     this.refreshCompletion()
-    this.notice('question closed', 'info')
+    this.notice(t().questionClosed, 'info')
   }
 
   /** After each answer: record it, and send the batch when the last one is in. */
@@ -420,12 +422,12 @@ export class App {
   /** Earlier messages of a resumed conversation, as they were said. */
   history(items: Array<{ role: 'user' | 'assistant'; text: string }>): void {
     if (items.length === 0) return
-    this.notice(`earlier in this conversation · last ${items.length} messages`, 'info')
+    this.notice(t().earlier(items.length), 'info')
     for (const item of items) {
       if (item.role === 'user') { this.transcript.push(userBlock(item.text, this.mode)); this.transcript.push(spacerBlock()) }
       else { const block = answerBlock(this.mode); block.finish(item.text); this.transcript.push(block) }
     }
-    this.notice('── continued from here ──', 'info')
+    this.notice(t().continuedHere, 'info')
     this.terminal.requestRender()
   }
 
@@ -497,8 +499,8 @@ export class App {
     if (this.view.kind !== 'job' || this.view.id !== id) return
     if (!append) { this.side.clear(); this.side.push(noticeBlock(`shell · ${this.view.id} · ${this.view.label}`, 'info', this.mode)) }
     if (text !== '') { const block = answerBlock(this.mode); block.finish(text.replace(/\n$/, '')); this.side.push(block) }
-    if (status === 'removed') this.side.push(noticeBlock('removed · cleaned up when the turn that started it ended', 'warn', this.mode))
-    else if (status !== 'running' && status !== 'stopping') this.side.push(noticeBlock(`ended · ${status}`, status === 'completed' ? 'ok' : 'warn', this.mode))
+    if (status === 'removed') this.side.push(noticeBlock(t().jobRemoved, 'warn', this.mode))
+    else if (status !== 'running' && status !== 'stopping') this.side.push(noticeBlock(t().jobEnded(status), status === 'completed' ? 'ok' : 'warn', this.mode))
     this.terminal.requestRender()
   }
 
@@ -509,11 +511,11 @@ export class App {
     this.side.clear()
     if (row.kind === 'agent') {
       this.view = { kind: 'agent', id: row.agent.id, label: row.agent.label, mode: row.agent.mode }
-      this.side.push(noticeBlock(`subagent · ${row.agent.label} · loading`, 'info', this.mode))
+      this.side.push(noticeBlock(`subagent · ${row.agent.label} · ${t().loading}`, 'info', this.mode))
       this.o.backend.view?.('agent', row.agent.id)
     } else {
       this.view = { kind: 'job', id: row.job.id, owner: row.job.owner, label: row.job.label }
-      this.side.push(noticeBlock(`shell · ${row.job.id} · loading`, 'info', this.mode))
+      this.side.push(noticeBlock(`shell · ${row.job.id} · ${t().loading}`, 'info', this.mode))
       this.o.backend.view?.('job', row.job.id, row.job.owner)
     }
     this.focus = 'editor'
@@ -533,7 +535,7 @@ export class App {
     if (event.type === 'paste') {
       this.clearSelection()
       const text = event.text.length > MAX_PASTE_CHARS ? event.text.slice(0, MAX_PASTE_CHARS) : event.text
-      if (text !== event.text) this.showToast(`paste too long: kept the first ${MAX_PASTE_CHARS.toLocaleString('en-US')} characters`)
+      if (text !== event.text) this.showToast(t().pasteCut(MAX_PASTE_CHARS.toLocaleString('en-US')))
       this.search = null
       this.editor.insert(text)
       this.refreshCompletion()
@@ -561,8 +563,8 @@ export class App {
       switch (key.ch) {
         case 'c': return this.ctrlC()
         case 'x':
-          if (this.view.kind === 'agent') { this.o.backend.agentInterrupt?.(this.view.id); this.showToast(`asked ${this.view.label} to stop`) }
-          else if (this.view.kind === 'job') { this.o.backend.jobKill?.(this.view.id, this.view.owner); this.showToast(`asked ${this.view.id} to end`) }
+          if (this.view.kind === 'agent') { this.o.backend.agentInterrupt?.(this.view.id); this.showToast(t().askedToStop(this.view.label)) }
+          else if (this.view.kind === 'job') { this.o.backend.jobKill?.(this.view.id, this.view.owner); this.showToast(t().askedToEnd(this.view.id)) }
           return
         case 'd': if (this.editor.text === '') { this.stop(0); return } break
         case 'a': this.editor.home(); break
@@ -623,7 +625,7 @@ export class App {
     if (this.dismissed !== null && this.dismissed !== this.editor.text) this.dismissed = null
     // Not for an earlier entry being walked through: its list would take the arrows that walk on.
     const usable = this.view.kind === 'main' && this.question === null && this.search === null && this.dismissed === null && !this.editor.browsingHistory
-    const found = usable ? complete(this.editor.text, this.editor.cursor, this.o.commands ?? [], this.o.files) : null
+    const found = usable ? complete(this.editor.text, this.editor.cursor, typeof this.o.commands === 'function' ? this.o.commands() : this.o.commands ?? [], this.o.files) : null
     if (found === null) { this.completion = null; return }
     const same = this.completion !== null && this.completion.items.map((i) => i.label).join('\n') === found.items.map((i) => i.label).join('\n')
     this.completion = { ...found, index: same ? this.completion!.index : 0, text: this.editor.text }
@@ -747,13 +749,13 @@ export class App {
     // Kept for the next run only where it went somewhere: a command run, a message sent.
     if (this.o.intercept?.(text.trim()) === true) { this.o.remember?.(text); return }
     if (this.view.kind === 'agent') {
-      if (this.view.mode !== 'continuable') { this.showToast('this subagent is one-shot and takes no messages'); return }
+      if (this.view.mode !== 'continuable') { this.showToast(t().oneShot); return }
       this.o.remember?.(text)
       this.o.backend.agentSend?.(this.view.id, text)
-      this.showToast(`→ sent to ${this.view.label}`)
+      this.showToast(t().sentTo(this.view.label))
       return
     }
-    if (this.view.kind === 'job') { this.showToast('a shell takes no input · esc back to main'); return }
+    if (this.view.kind === 'job') { this.showToast(t().shellNoInput); return }
     this.o.remember?.(text)
     this.transcript.push(userBlock(text, this.mode))
     this.transcript.push(spacerBlock())   // one blank line between a question and what answers it
@@ -774,7 +776,7 @@ export class App {
     const now = this.clock.now()
     if (this.quitArmed !== 0 && now - this.quitArmed < TOAST_MS) { this.stop(0); return }
     this.quitArmed = now
-    this.showToast('press Ctrl+C again to quit')
+    this.showToast(t().ctrlCAgain)
   }
 
   private onMouse(m: MouseEvent): void {
@@ -834,7 +836,7 @@ export class App {
       const text = pane.selectedText()
       if (text === '') { this.clearSelection(); return }
       const method = (this.o.copy ?? ((t: string) => systemCopy(t, { env: this.o.env, platform: this.o.platform, write: (d) => this.o.io.write(d) })))(text)
-      this.showToast(`copied · ${[...text].length} chars${method === 'osc52' ? ' (OSC 52)' : ''}`)
+      this.showToast(t().copied([...text].length, method === 'osc52'))
     }
   }
 
@@ -895,7 +897,7 @@ export class App {
         choiceSpans.push({ from, to: x })
         x = screen.put(x, choiceRow, '  ')
       })
-      screen.put(x + 2, choiceRow, '←→ choose · ↵ confirm · click', s(theme.dim))
+      screen.put(x + 2, choiceRow, t().choiceHint, s(theme.dim))
     }
     this.geometry = { transcriptTop, transcriptHeight, dividerRow, editorTop, choiceRow, choiceSpans, panelTop, panelFirst: panel.first, panelShown, questionTop, questionRowsAt }
     if (panelTop >= 0) this.drawPanel(screen, panelTop, panel.rows, panel.first)
@@ -927,7 +929,7 @@ export class App {
     // Divider, with the "new lines below" marker when scrolled away.
     screen.put(0, dividerRow, '─'.repeat(cols), s(theme.border))
     if (pane.unseen > 0) {
-      const tag = ` ↓ ${pane.unseen} new `
+      const tag = t().newLines(pane.unseen)
       screen.put(Math.max(0, cols - stringWidth(tag) - 2), dividerRow, tag, s(theme.accent))
     }
 
@@ -950,15 +952,15 @@ export class App {
 
     // Hint line: what the keys do here.
     const search = this.search
-    const hint = search !== null ? `(history search) ${search.query}${search.found ? '' : ' · no match'} · ctrl+r older · ↵ pick · esc cancel`
-      : this.completion !== null ? '↑↓ pick · tab insert · ↵ run · esc close'
-      : this.question?.typing ? 'type, then ↵ · esc back to the options'
-      : this.question !== null ? `↑↓ move${this.question.current?.multiSelect ? ' · space select' : ''} · ↵ confirm · esc skip · type to answer in your own words`
-      : this.focus === 'panel' ? '↑↓ move · ↵ open · esc back to the input'
-      : this.view.kind === 'agent' ? `↵ send to ${this.view.label} · ctrl+x stop · esc back to main`
-        : this.view.kind === 'job' ? 'ctrl+x end · wheel scroll · esc back to main'
-          : this.status.running ? 'esc interrupt · wheel scroll · drag to copy'
-            : `↵ send · alt+↵ newline · drag to copy${allRows.length > 0 ? ' · tab panel' : ''} · /help · ctrl+c quit`
+    const hint = search !== null ? t().hints.search(search.query, search.found)
+      : this.completion !== null ? t().hints.completion
+      : this.question?.typing ? t().hints.typing
+      : this.question !== null ? t().hints.question(this.question.current?.multiSelect === true)
+      : this.focus === 'panel' ? t().hints.panel
+      : this.view.kind === 'agent' ? t().hints.agent(this.view.label)
+        : this.view.kind === 'job' ? t().hints.job
+          : this.status.running ? t().hints.running
+            : t().hints.idle(allRows.length > 0)
     screen.put(1, editorTop + 2 + editorRows, hint, s(theme.dim))
   }
 
@@ -984,7 +986,7 @@ export class App {
     const s = (style) => sgr(style, this.mode)
     const out: Array<{ text: string; style: string; optionRow: boolean }> = []
     const where = q.items.length > 1 ? ` (${q.index + 1}/${q.items.length})` : ''
-    const kind = current.intent?.kind === 'plan-review' ? 'plan review' : current.header ?? 'question'
+    const kind = current.intent?.kind === 'plan-review' ? t().planReview : current.header ?? t().question
     out.push({ text: `? ${kind}${where}`, style: s({ ...theme.warn, bold: true }), optionRow: false })
     for (const line of wrapPlain(current.question, Math.max(10, cols - 6)).slice(0, 3)) out.push({ text: `  ${line}`, style: s(theme.text), optionRow: false })
     q.rows().forEach((row, i) => {
@@ -1002,11 +1004,11 @@ export class App {
     const s = (style) => sgr(style, this.mode)
     const iv = this.interview!
     const st = iv.state
-    let x = screen.put(1, y, `deep interview · ${iv.topic}`, s({ ...theme.accent, bold: true }))
+    let x = screen.put(1, y, `${t().interview} · ${iv.topic}`, s({ ...theme.accent, bold: true }))
     if (st !== null && st.round > 0) x = screen.put(x, y, ` · round ${st.round}`, s(theme.muted))
-    const right = st === null ? 'preparing the first question'
-      : st.done ? `done${st.spec ? ` · spec: ${st.spec}` : ''}`
-        : `ambiguity ${st.ambiguity}% → target ${AMBIGUITY_TARGET}% or less`
+    const right = st === null ? t().interviewPreparing
+      : st.done ? `${t().interviewDone}${st.spec ? ` · spec: ${st.spec}` : ''}`
+        : t().interviewAmbiguity(st.ambiguity, AMBIGUITY_TARGET)
     screen.put(Math.max(x + 2, cols - 1 - stringWidth(right)), y, right, st?.done ? s(theme.ok) : s(theme.muted))
     let gx = 1
     for (const [name, value] of Object.entries(st?.scores ?? {})) {
@@ -1015,7 +1017,7 @@ export class App {
       if (gx + stringWidth(piece) > cols - 1) break
       gx = screen.put(gx, y + 1, piece, value >= 80 ? s(theme.ok) : value >= 50 ? s(theme.accent) : s(theme.warn))
     }
-    screen.put(1, y + 2, "clarity is the model's own estimate, not a measurement", s(theme.dim))
+    screen.put(1, y + 2, t().interviewEstimate, s(theme.dim))
   }
 
   private drawPanel(screen: Screen, top: number, rows: PanelRow[], first: number): void {

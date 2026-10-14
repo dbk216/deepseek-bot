@@ -210,7 +210,7 @@ function transportFor(api) {
   stop2()
   await settle()
   const assistant = calls(api2, 'assistant.threads.setStatus')
-  check('a workspace without agent sessions gets the assistant status', assistant[0]?.status === '작업 중…' && assistant[0]?.thread_ts === 't1', JSON.stringify(assistant[0]))
+  check('a workspace without agent sessions gets the assistant status', assistant[0]?.status === 'Working…' && assistant[0]?.thread_ts === 't1', JSON.stringify(assistant[0]))
   check('which is cleared when the turn is over', assistant[1]?.status === '', JSON.stringify(assistant[1]))
   api2.restore()
 

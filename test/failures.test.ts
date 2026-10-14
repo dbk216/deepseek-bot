@@ -83,7 +83,7 @@ function boot({ state = {}, config = {}, agent = 'throw' }: {
     },
   }
   const ctx = { get: (n) => stubs[n], effect: (fn) => fn(), on: (n, h) => { (listeners[n] ??= []).push(h); return () => {} }, logger: { info: (l) => logs.push(String(l)) } }
-  apply(ctx, { targetChannels: ['C_ALLOWED'], stateDir, transportFactory: () => transport, progressAfterMs: 50, ...config })
+  apply(ctx, { targetChannels: ['C_ALLOWED'], language: 'ko', stateDir, transportFactory: () => transport, progressAfterMs: 50, ...config })
   return {
     transport, logs, created, events,
     read: () => JSON.parse(readFileSync(join(stateDir, 'sessions.json'), 'utf8')),

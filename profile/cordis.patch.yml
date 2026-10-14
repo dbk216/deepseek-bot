@@ -166,9 +166,12 @@
 # the platform and the channels.
 #   targetChannels: ['*'] answers in every channel the bot is invited to; a list of ids narrows it.
 #   replyMode: mention answers @-mentions in channels; DMs are always answered.
+#   language: what the bot itself says (approvals, stops, failures) and the terminal: en, ko or zh. The
+#   model's own answers follow the persona in SOUL.md, not this.
 - id: deepbot
   config:
     platform: slack
+    language: en
     targetChannels: ['*']
     replyMode: mention
     stateDir: !!js dshHomePath('slack-state')
