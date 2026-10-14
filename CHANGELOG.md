@@ -5,6 +5,16 @@ the caveat about version numbers is at the bottom.
 
 ## Unreleased
 
+### Security
+
+- **The agent's commands could read most of the harness home.** The sandbox runner denied a list of
+  names in `~/.dsh` — credentials, sessions, the recall index, profiles, the gateway's logs — and the
+  harness keeps more there: its session index (every conversation's text, with its WAL), the
+  adapter's state and log, reminders, a session cache, attachments, the terminal's input history,
+  the watch list. Measured with the deployed runner: those were readable. The runner now denies the
+  harness home as a whole and allows only its runtimes (`dsh-runtimes`, where the office skill's node
+  is), and an agent home or workspace placed inside it.
+
 ### Fixed
 
 - **`dsh gateway` sees a harness that was set up before it.** It read only `~/.dsh/.env`. A key

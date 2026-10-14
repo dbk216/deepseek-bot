@@ -152,7 +152,7 @@
 
 # ── Sandbox runner ───────────────────────────────────────────
 # Commands run under service/confined-runner.sh: writes fenced to the agent's home, no reads of other
-# agent homes, the deployment's credentials, the session store or the gateway's logs, no ssh-agent.
+# agent homes or of the harness home (all but its runtimes), no ssh-agent.
 # install-service.sh copies it next to the launcher; this points at that copy, so an edit in the
 # repository does not reach the live agent until the next install.
 - id: sandbox
