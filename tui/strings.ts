@@ -25,6 +25,8 @@ const en = {
   usage: `dsh — talk to deepseek-bot in the terminal
 
   dsh [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
+  dsh gateway <command>  connect a messenger, run the service: setup, remove, start, stop, restart,
+                         status, manifest (dsh gateway setup --help)
   dsh <anything else>   handed to the DeepSeek Harness CLI (DSH_BIN, by default the dsh in the app)
 
   --name     the gateway to connect to (tuiName in the deepbot config, by default default)
@@ -44,6 +46,8 @@ const en = {
     clear: { hint: 'clear the screen (the conversation stays)' },
     help: { hint: 'this help' },
     quit: { hint: 'quit (ctrl+c twice, or ctrl+d)' },
+    exit: { hint: 'the same as /quit' },
+    model: { usage: '[n|provider/model] [effort]', hint: "the models; with one, this conversation's from its next turn" },
   },
   helpKeys: [
     '↵ send · alt+↵ newline · esc interrupt · wheel/PgUp/PgDn scroll · drag to copy',
@@ -56,6 +60,12 @@ const en = {
   turns: (n: number) => `${n} turn${n === 1 ? '' : 's'}`,
   resumeHow: '/resume <n> to continue one',
   newConversation: 'new conversation',
+  modelNow: (model: string, effort: string | null) => `this conversation runs on ${model}${effort !== null ? ` · effort ${effort}` : ''} from its next turn`,
+  modelEfforts: (effort: string | null, efforts: string[]) => `effort: ${effort ?? 'the model\'s default'} (it takes ${efforts.join(', ')})`,
+  modelHow: '/model <n> [effort] switches this conversation · /model default goes back to the configured one',
+  modelListFirst: 'list the models first: /model',
+  modelUsage: '/model, /model <n|provider/model> [effort], or /model default',
+  effortLabel: (effort: string) => `effort ${effort}`,
   defaultWorkspace: 'default workspace',
   resumeUsage: '/resume <n|id> — n is a number from /sessions',
   interviewUsage: '/interview <topic> — what the interview is about',
@@ -105,6 +115,12 @@ const en = {
   runningTool: (name: string) => `running ${name}…`,
   queued: 'queued',
   queuedCount: (n: number) => `${n} queued`,
+  shells: (n: number) => `${n} shell${n === 1 ? '' : 's'}`,
+  agents: (n: number) => `← ${n} agent${n === 1 ? '' : 's'}`,
+  panelTokens: (count: string) => `↓ ${count} tokens`,
+  jobRunning: (elapsed: string) => `running · ${elapsed}`,
+  /** A subagent's or a shell's state, as the harness names it; one it does not know is shown as it is. */
+  status: (status: string) => String(status),
   thought: (n: number, expanded: boolean) => `thought · ${n} chars${expanded ? '' : ' · ctrl+o expand'}`,
   diffUncompared: '… too large to compare line by line',
   diffWithheld: (n: number) => `… large change: only the lines that are certain, ${n} left out (truncated)`,
@@ -130,6 +146,9 @@ const en = {
     needsText: 'a message needs text',
     notJob: 'not a job of this conversation',
     notButton: 'not a button of this conversation',
+    noModels: 'this deployment lists no models',
+    unknownModel: (m: string) => `not a model the providers list: ${m}`,
+    noSuchEffort: (m: string, effort: string, efforts: string[]) => `${m} takes no effort "${effort}"${efforts.length > 0 ? ` (it takes ${efforts.join(', ')})` : ' (it takes none)'}`,
   },
 }
 
@@ -155,6 +174,8 @@ const ko: Strings = {
   usage: `dsh — 터미널에서 deepseek-bot과 대화
 
   dsh [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
+  dsh gateway <명령>   메신저 연결과 서비스 실행: setup, remove, start, stop, restart, status,
+                       manifest (dsh gateway setup --help)
   dsh <그 외 인자>   DeepSeek Harness CLI로 그대로 넘김 (DSH_BIN, 기본은 앱 안의 dsh)
 
   --name     연결할 gateway 이름 (deepbot 설정의 tuiName, 기본 default)
@@ -174,6 +195,8 @@ const ko: Strings = {
     clear: { hint: '화면 비우기 (대화는 그대로)' },
     help: { hint: '이 도움말' },
     quit: { hint: '종료 (ctrl+c 두 번, ctrl+d도 같음)' },
+    exit: { hint: '/quit과 같음' },
+    model: { usage: '[번호|provider/model] [effort]', hint: '모델 목록; 하나를 고르면 이 대화의 다음 turn부터 그 모델' },
   },
   helpKeys: [
     '↵ 전송 · alt+↵ 줄바꿈 · esc 중단 · 휠/PgUp/PgDn 스크롤 · 드래그 복사',
@@ -185,6 +208,12 @@ const ko: Strings = {
   turns: (n) => `${n}턴`,
   resumeHow: '/resume <번호>로 이어가기',
   newConversation: '새 대화',
+  modelNow: (model, effort) => `이 대화는 다음 turn부터 ${model}${effort !== null ? ` · effort ${effort}` : ''}`,
+  modelEfforts: (effort, efforts) => `effort: ${effort ?? '모델 기본값'} (가능: ${efforts.join(', ')})`,
+  modelHow: '/model <번호> [effort]로 이 대화의 모델 변경 · /model default로 설정된 모델로',
+  modelListFirst: '먼저 모델 목록을 보기: /model',
+  modelUsage: '/model, /model <번호|provider/model> [effort], 또는 /model default',
+  effortLabel: (effort) => `effort ${effort}`,
   defaultWorkspace: '기본 workspace',
   resumeUsage: '/resume <번호|id> — 번호는 /sessions 목록의 것',
   interviewUsage: '/interview <주제> — 무엇에 대해 인터뷰할지',
@@ -233,6 +262,11 @@ const ko: Strings = {
   runningTool: (name) => `${name} 실행 중…`,
   queued: '대기 중',
   queuedCount: (n) => `${n}개 대기 중`,
+  shells: (n) => `셸 ${n}개`,
+  agents: (n) => `← agent ${n}개`,
+  panelTokens: (count) => `↓ ${count} 토큰`,
+  jobRunning: (elapsed) => `실행 중 · ${elapsed}`,
+  status: (status) => ({ idle: '대기', running: '실행 중', stopping: '멈추는 중', completed: '완료', failed: '실패', cancelled: '취소됨', removed: '정리됨' } as Record<string, string>)[String(status)] ?? String(status),
   thought: (n, expanded) => `생각함 · ${n}자${expanded ? '' : ' · ctrl+o 펼치기'}`,
   diffUncompared: '… 변경이 커서 줄 단위로 비교하지 않음',
   diffWithheld: (n) => `… 큰 변경: 확실한 줄만 표시, ${n}줄 생략 (잘림)`,
@@ -257,6 +291,9 @@ const ko: Strings = {
     needsText: '메시지에 내용이 필요함',
     notJob: '이 대화의 job이 아님',
     notButton: '이 대화의 버튼이 아님',
+    noModels: '이 배포에서 볼 수 있는 모델이 없음',
+    unknownModel: (m) => `provider 목록에 없는 모델: ${m}`,
+    noSuchEffort: (m, effort, efforts) => `${m}에는 "${effort}" effort가 없음${efforts.length > 0 ? ` (가능: ${efforts.join(', ')})` : ' (effort 없음)'}`,
   },
 }
 
@@ -280,6 +317,8 @@ const zh: Strings = {
   usage: `dsh — 在终端中与 deepseek-bot 对话
 
   dsh [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
+  dsh gateway <命令>   连接消息平台、运行服务：setup、remove、start、stop、restart、status、
+                       manifest（dsh gateway setup --help）
   dsh <其他参数>   原样交给 DeepSeek Harness CLI（DSH_BIN，默认为应用内的 dsh）
 
   --name     要连接的 gateway 名称（deepbot 配置中的 tuiName，默认 default）
@@ -299,6 +338,8 @@ const zh: Strings = {
     clear: { hint: '清空屏幕（对话保留）' },
     help: { hint: '本帮助' },
     quit: { hint: '退出（按两次 ctrl+c，或 ctrl+d）' },
+    exit: { hint: '与 /quit 相同' },
+    model: { usage: '[编号|provider/model] [effort]', hint: '模型列表；选一个则本对话从下一轮起使用它' },
   },
   helpKeys: [
     '↵ 发送 · alt+↵ 换行 · esc 中断 · 滚轮/PgUp/PgDn 滚动 · 拖动复制',
@@ -310,6 +351,12 @@ const zh: Strings = {
   turns: (n) => `${n} 轮`,
   resumeHow: '用 /resume <编号> 继续',
   newConversation: '新对话',
+  modelNow: (model, effort) => `本对话从下一轮起使用 ${model}${effort !== null ? ` · effort ${effort}` : ''}`,
+  modelEfforts: (effort, efforts) => `effort：${effort ?? '模型默认'}（可用：${efforts.join(', ')}）`,
+  modelHow: '/model <编号> [effort] 切换本对话的模型 · /model default 恢复配置的模型',
+  modelListFirst: '请先列出模型：/model',
+  modelUsage: '/model、/model <编号|provider/model> [effort]，或 /model default',
+  effortLabel: (effort) => `effort ${effort}`,
   defaultWorkspace: '默认 workspace',
   resumeUsage: '/resume <编号|id> — 编号来自 /sessions 列表',
   interviewUsage: '/interview <主题> — 要访谈的内容',
@@ -358,6 +405,11 @@ const zh: Strings = {
   runningTool: (name) => `正在运行 ${name}…`,
   queued: '排队中',
   queuedCount: (n) => `${n} 条排队中`,
+  shells: (n) => `${n} 个 shell`,
+  agents: (n) => `← ${n} 个 agent`,
+  panelTokens: (count) => `↓ ${count} token`,
+  jobRunning: (elapsed) => `运行中 · ${elapsed}`,
+  status: (status) => ({ idle: '空闲', running: '运行中', stopping: '正在停止', completed: '已完成', failed: '失败', cancelled: '已取消', removed: '已清理' } as Record<string, string>)[String(status)] ?? String(status),
   thought: (n, expanded) => `已思考 · ${n} 个字符${expanded ? '' : ' · ctrl+o 展开'}`,
   diffUncompared: '… 变更过大，不逐行比较',
   diffWithheld: (n) => `… 大变更：只显示能确定的行，省略 ${n} 行（已截断）`,
@@ -382,6 +434,9 @@ const zh: Strings = {
     needsText: '消息需要内容',
     notJob: '不是此对话的 job',
     notButton: '不是此对话的按钮',
+    noModels: '此部署没有可用的模型列表',
+    unknownModel: (m) => `provider 列表中没有这个模型：${m}`,
+    noSuchEffort: (m, effort, efforts) => `${m} 不支持 "${effort}" effort${efforts.length > 0 ? `（可用：${efforts.join(', ')}）` : '（不支持 effort）'}`,
   },
 }
 

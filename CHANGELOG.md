@@ -12,7 +12,34 @@ the caveat about version numbers is at the bottom.
   terminal) and the language of its notices; what it may change in its home (persona files, notes,
   watches, skills in `.dsh/skills/`); and what only the operator can (model, provider, platforms,
   channels, language, keys, approvals, sandbox), which it points to instead of trying. It was told only
-  that it is "a coding agent".
+  that it is "a coding agent". The sandbox runner now also denies reading `~/.dsh/profiles`, which
+  that section says the agent cannot read.
+- **`/model` in the terminal.** It lists the models the registered providers advertise, numbered,
+  with this conversation's marked and the reasoning efforts it takes; `/model <n>` or
+  `/model <provider>/<model> [effort]` moves this conversation to another from its next turn (the same
+  session), and `/model default` moves it back. Unlisted models and unsupported efforts are refused.
+  The choice is kept per conversation; nothing else changes. The status line shows the effort.
+- **`/exit` in the terminal**, the same as `/quit`.
+- **`dsh gateway`: connecting a messenger, and running the service.** The installer set up one
+  platform, once; adding another meant editing the profile by hand, and starting or stopping meant
+  `launchctl`. `dsh gateway setup <slack|telegram|discord|local>` saves the tokens to `~/.dsh/.env`
+  (mode 600), checks them with the platform (`auth.test` and `apps.connections.open`, `getMe`,
+  `users/@me`; for Slack, that both tokens are from one app), adds the platform, channels and people
+  to the profile's deepbot row without touching any other line, restarts the gateway and waits for
+  it to connect — with several platforms, a few seconds more for another reporting an error. `*` for
+  the channels, which the platforms share, needs `--yes` when another platform is served. `remove`,
+  `start`, `stop` (with the health probe, which would otherwise alert), `restart`, `status [--json]`
+  and `manifest slack` (an app manifest) go with it. Every answer can come without a terminal — a
+  token from the environment variable of its name, `--channels`, `--users` — so an agent can run it;
+  a missing one is exit 2 with nothing written. `dsh gateway` alone still boots a harness profile
+  named gateway: only `gateway` followed by one of these commands is taken.
+- **`allowedUsers`: who may talk to it.** A Telegram private chat always reaches the bot and the
+  installer answers in every Telegram chat, so anyone who found the bot could run turns in the
+  agent's workspace; Discord direct messages likewise. The deepbot row now takes a list of user ids;
+  someone not in it is ignored without a reply, their button presses too. Empty, the default, keeps
+  the old behaviour. The terminal's user is always allowed, in the terminal's own channel. An id
+  written unquoted, which YAML reads as a number, is a config error that says to quote it. The
+  installer says so for Telegram and Discord, and `dsh gateway setup` asks.
 - **English, Korean and Chinese.** A `language` setting in the deepbot row (`en` by default, `ko`,
   `zh`) sets what the bot itself says on every platform (approvals and their buttons, stops,
   failures, the working message, Slack's status, the usage report) and everything `dsh` draws; `dsh`
@@ -29,6 +56,18 @@ the caveat about version numbers is at the bottom.
   gateway an empty agents home of its own (`DSH_AGENTS_HOME=~/.dsh/deepbot/agents-home`). Takes effect
   when `install-service.sh` is run again. The agent template points skills at `.dsh/skills/`, the
   directory the harness reads, instead of `skills/`, which it never did, and names the terminal.
+- **The deployment's reasoning effort reaches a turn.** `agent-default-model`'s `reasoningEffort` was
+  read and dropped: only the provider and model were passed to the session. It is passed now, for the
+  deployment's own model and only when that model declares the effort — the harness refuses a call
+  with one it does not, so it is left out and logged instead. A conversation's `/model` choice carries
+  its own; a tenant's model takes none.
+- **The health file says when a platform fails to start, and when a Telegram poll recovers.** A
+  startup failure was only in the log, so with another platform connected the file read healthy;
+  it now carries the error as `lastError`, and the start that works after it clears it. A Telegram
+  poll error stayed in `lastError` after polling worked again; the next poll that works clears it.
+  The platforms share that field, so each clears only the error it wrote, never another's.
+- **`docs/setup.md` asks for `im:history`.** The Slack steps subscribed to `message.im` for direct
+  messages without the scope that event needs; the manifest and the steps now include it.
 - **A service that fails to install fails the install.** On an account with no
   `~/Library/LaunchAgents`, all four installers failed to write their plist and `install.sh` still
   said "done" and exited 0. The installers make the directory; `install.sh` says which service failed,
@@ -104,6 +143,13 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **`permissionPreset` is applied, and attaching sessions to their workspace is a setting.** Both
+  calls sat after a `throw`, inside the branch for an agent that did not come back, since the emptied
+  `index.ts` was restored (a0e847e): `permissionPreset` was a setting that did nothing, and no session
+  was ever attached. The branch now closes after its `throw`. Attaching is `attachSessions`, off by
+  default: it rewrites `~/.dsh/storages/workspace.json`, which the desktop app writes too (last write
+  wins), and it only groups the bot's sessions in the desktop sidebar. An unknown `permissionPreset` is
+  refused with its name whether or not an agent preset is named.
 - **The persona reaches the model again**: `SOUL.md`, `USER.md` and `MEMORY.md` are sent by the
   adapter (the harness's loader reads only `AGENTS.md`), with the speaker named.
 - **One turn at a time per conversation**; a stop withdraws what is waiting, and is reported once.

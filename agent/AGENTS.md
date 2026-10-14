@@ -144,6 +144,9 @@ Rules for watches, learned the hard way:
 - Do not create or edit `.env` in the agent home. It is refused: the harness would
   read it in place of the deployment's credentials. Ask the user to change
   credentials themselves.
+- Connecting you to another messenger, or replacing a token, is
+  `dsh gateway setup <slack|telegram|discord>`, run outside your sandbox, which
+  cannot write it. Give the user that command; do not try it yourself.
 - Destructive actions (delete, overwrite, send externally, deploy, anything that
   costs money) require confirmation first. Never proceed on an assumption.
 - If a task will take a while, say so before starting, and report when done.

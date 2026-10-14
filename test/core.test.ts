@@ -41,7 +41,7 @@ interface BootOptions {
 }
 
 /** Boot the plugin with a fake transport and a state file we control. */
-function boot({ state = {}, config = {}, agent = 'throw', home = null, answer = null }: BootOptions = {}) {
+function boot({ state = {}, config = {}, agent = 'throw', home = null, answer = null, workspace = false }: BootOptions & { workspace?: boolean } = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), 'deepbot-core-'))
   writeFileSync(join(stateDir, 'sessions.json'), JSON.stringify({
     sessions: {}, seen: {}, standing: {}, history: {}, ...state,
@@ -54,6 +54,8 @@ function boot({ state = {}, config = {}, agent = 'throw', home = null, answer = 
   // throw where a real service would do work, so a test still sees the failure.
   const created = []
   const permissionSets = []
+  // Sessions a workspace was attached to, when the test composes a workspace registry.
+  const attached = []
   // What the model was handed: the prompt is only visible here, in the ready-agent mode.
   const followups = []
   const stubs: Record<string, unknown> = {
@@ -125,6 +127,7 @@ function boot({ state = {}, config = {}, agent = 'throw', home = null, answer = 
   // The agent's home. Without an `fs` service the plugin falls back to process.cwd(), which is this
   // repository and has no persona files, so a test that needs them points the home at its own directory.
   if (home !== null) stubs.fs = { resolve: async () => home, processPath: (path) => path }
+  if (workspace) stubs.workspaceRegistry = { create: async (cwd) => ({ path: cwd, attachSession: async (id) => { attached.push(id) } }) }
   const ctx = {
     get: (name) => stubs[name],
     effect: (fn) => fn(),
@@ -151,7 +154,7 @@ function boot({ state = {}, config = {}, agent = 'throw', home = null, answer = 
   /** Fire an approval request the way the harness would, and get the outcome back. */
   const askApproval = (sessionId = 'slack-abc', reason = 'escalate sandbox to danger-full-access') =>
     listeners['approval/request'][0]({ agent: { session: { header: { id: sessionId } } }, reason })
-  return { transport, logs, stateDir, read, askApproval, gate, created, permissionSets, followups, done: () => rmSync(stateDir, { recursive: true, force: true }) }
+  return { transport, logs, stateDir, read, askApproval, gate, created, permissionSets, attached, followups, done: () => rmSync(stateDir, { recursive: true, force: true }) }
 }
 /** The text of a user message the core handed to the agent. */
 const textOf = (message) => (message?.content ?? []).map((block) => block?.text ?? '').join('')
@@ -683,9 +686,9 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   await sleep(500)
   check('a tenant gets its own agent preset', t.created[0]?.meta?.agentPreset === 'read-only', JSON.stringify(t.created[0]?.meta))
   check('and its own model', t.created[0]?.agentOptions?.provider === 'acme-llm' && t.created[0]?.agentOptions?.model === 'acme-model', JSON.stringify(t.created[0]?.agentOptions))
-  // Not a check yet, because it does not work: the call is written and typechecks, but it never
-  // runs — see PLAN. A failing check would keep CI red, and a passing one would be a lie.
-  console.log(`  TODO  a tenant permission preset is not applied to its session yet (${JSON.stringify(t.permissionSets)})`)
+  // A tenant's own `permission` is not a setting (it was removed); only the deployment's permissionPreset is
+  // applied, and this deployment names none — so the `permission` above imposes nothing.
+  check('a tenant\'s `permission` imposes nothing: it is not a setting', t.permissionSets.length === 0, JSON.stringify(t.permissionSets))
   check('the choice is logged', t.logs.some((l) => /tenant acme: model acme-llm\/acme-model/.test(l)), t.logs.filter((l) => /tenant acme/.test(l)).join(' | ').slice(0, 130))
   t.done()
 
@@ -1125,12 +1128,15 @@ for (const remove of [false, true]) {
   check('language zh: a stop with nothing running is answered in Chinese', zh.transport.posted.some((p) => p.text === '当前没有正在进行的工作。'), JSON.stringify(zh.transport.posted.map((p) => p.text)))
   zh.done()
 
+  let empty = 'started'
+  try { boot({ config: { language: null } }).done() } catch (e) { empty = String((e as Error).message) }
+  check('an empty language (language: with nothing after it) is English, not a refusal', empty === 'started', empty)
   let refused = ''
   try { boot({ config: { language: 'fr' } }) } catch (e) { refused = String((e as Error).message) }
   check('a language it has no words for is a config error, not a silent English', /language: must be 'en', 'ko' or 'zh' \(got: fr\)/.test(refused), refused.split('\n')[1] ?? refused)
 }
 
-// 39. Who the agent is: every session's setup tells it it is deepseek-bot, where this conversation is, and which
+// 40. Who the agent is: every session's setup tells it it is deepseek-bot, where this conversation is, and which
 // settings are its own and which are the operator's — it was told only that it is "a coding agent".
 {
   const t = boot({ agent: 'answer', answer: { text: '응' } })
@@ -1155,6 +1161,38 @@ for (const remove of [false, true]) {
   try { await selfTest.created[0]?.setup?.({ systemPrompt: { section: (s) => { own.push(s); return () => {} } } }) } catch (e) { threw = String((e as Error).message) }
   check('identity: a turn outside any conversation is set up, and told so', threw === '' && /not in any conversation/.test(String(own.find((s) => s.name === 'deepbot:identity')?.text ?? '')), threw || String(own[0]?.text ?? '').split('\n')[1])
   selfTest.done()
+}
+
+// 39. The steps after the agent exists run. They sat after a throw, inside the branch for an agent that
+// did not come back (a0e847e, when the emptied index.ts was restored): no session was ever attached to its
+// workspace, and permissionPreset was a setting that did nothing.
+{
+  const t = boot({ agent: 'ready', workspace: true, config: { permissionPreset: 'read-only', attachSessions: true } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: 'hello' }))
+  await sleep(400)
+  const sessionId = t.created[0]?.sessionId
+  check('setup: with attachSessions, the session is attached to its workspace', sessionId !== undefined && JSON.stringify(t.attached) === JSON.stringify([sessionId]), JSON.stringify({ sessionId, attached: t.attached }))
+  check('setup: the deployment\'s permission preset is applied to the session', t.permissionSets.length === 1 && t.permissionSets[0].name === 'read-only' && t.permissionSets[0].session?.header?.id === sessionId, JSON.stringify(t.permissionSets.map((p) => p.name)))
+  t.done()
+
+  // Off by default: attaching rewrites ~/.dsh/storages/workspace.json, which the desktop app writes too,
+  // last write winning — and all it buys is the desktop sidebar's grouping.
+  const plain = boot({ agent: 'ready', workspace: true })
+  await sleep(60)
+  plain.transport.deliver(plain.transport.message({ text: 'hello' }))
+  await sleep(400)
+  check('setup: by default no session is attached', plain.created.length === 1 && plain.attached.length === 0, JSON.stringify(plain.attached))
+  plain.done()
+
+  // A permission preset that does not exist is refused at the turn, with its name, also without an agent
+  // preset; it used to be checked only when one was named, and then failed inside set() on every turn.
+  const bogus = boot({ agent: 'ready', config: { agentPreset: '', permissionPreset: 'no-such-preset' } })
+  await sleep(60)
+  bogus.transport.deliver(bogus.transport.message({ text: 'hello' }))
+  await sleep(400)
+  check('setup: an unknown permission preset is named, not set', bogus.permissionSets.length === 0 && bogus.transport.posted.some((p) => /unknown permission preset "no-such-preset"/.test(p.text)), JSON.stringify(bogus.transport.posted.map((p) => p.text.slice(0, 60))))
+  bogus.done()
 }
 
 const failed = results.filter((r) => !r.ok)
