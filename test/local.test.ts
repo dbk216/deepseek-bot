@@ -444,6 +444,63 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
 }
 
 {
+  // shift+tab: the next effort the conversation's model takes, worked out by the gateway, and every terminal on
+  // the conversation told. A /model switch used to reach only the terminal that made it.
+  let resolves = 0
+  const llm = {
+    listProviders: () => [{ id: 'og' }, { id: 'plain' }],
+    listModels: async (p) => p === 'og' ? [{ provider: p, id: 'm', name: 'M' }] : [{ provider: p, id: 'n', name: 'N' }],
+    resolveModelInfo: async (p) => { resolves++; return p === 'og' ? { reasoning: { efforts: [{ id: 'off', name: 'Off' }, { id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } } : {} },
+  }
+  const t = boot({ services: { llm, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm', reasoningEffort: 'low' }) } } })
+  await sleep(100)
+  const a = client(join(t.stateDir, 'tui.sock'))
+  await a.opened
+  a.send({ type: 'hello', version: PROTOCOL_VERSION })
+  const ready = await a.waitFor((f) => f.type === 'ready')
+  const b = client(join(t.stateDir, 'tui.sock'))
+  await b.opened
+  b.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: ready.conversation })
+  await b.waitFor((f) => f.type === 'ready')
+  a.send({ type: 'models' })
+  const listed = await a.waitFor((f) => f.type === 'models')
+  const efforts = Object.fromEntries((listed?.items ?? []).map((i) => [`${i.provider}/${i.id}`, (i.efforts ?? []).join()]))
+  check('models: each listed model carries the efforts it takes', efforts['og/m'] === 'off,low,high' && efforts['plain/n'] === '', JSON.stringify(listed?.items))
+  // Read once: /model again asks the provider only about the model the conversation is on.
+  const asked = resolves
+  a.frames.length = 0
+  a.send({ type: 'models' })
+  await a.waitFor((f) => f.type === 'models')
+  check('models: a listed model\'s efforts are read once, not on every /model', resolves - asked <= 1, `${resolves - asked} more`)
+  a.send({ type: 'effort', step: 1 })
+  const stepped = await a.waitFor((f) => f.type === 'model')
+  check('effort: a step moves to the next effort the model takes, marked as an effort change', stepped?.current?.effort === 'high' && stepped.cause === 'effort', JSON.stringify(stepped))
+  const told = await b.waitFor((f) => f.type === 'model')
+  check('effort: the other terminal on the conversation is told too', told?.current?.effort === 'high', JSON.stringify(told))
+  check('effort: kept for the conversation', JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`]?.reasoningEffort === 'high')
+  a.send({ type: 'effort', step: 1 })
+  a.send({ type: 'effort', step: 1 })
+  await sleep(300)
+  const steps = a.frames.filter((f) => f.type === 'model').map((f) => f.current.effort)
+  check('effort: steps sent together are answered one after another, each with its own effort, and wrap around', steps.join() === 'high,off,low', steps.join())
+  b.send({ type: 'model', provider: 'plain', model: 'n' })
+  const switched = await a.waitFor((f) => f.type === 'model' && f.current.provider === 'plain')
+  check('model: a switch made in one terminal reaches the other, not as an effort change', switched !== null && switched.cause === undefined, JSON.stringify(switched))
+  a.send({ type: 'effort', step: 1 })
+  const none = await a.waitFor((f) => f.type === 'error' && f.code === 'effort')
+  check('effort: a model that takes none says so', none !== null && /plain\/n/.test(none.message), JSON.stringify(none))
+  a.send({ type: 'effort', step: 7 })
+  const bad = await a.waitFor((f) => f.type === 'error' && f.code === 'bad-frame')
+  check('effort: a step other than 1 or -1 is refused', bad !== null)
+  a.send({ type: 'no-such-frame' })
+  const unknown = await a.waitFor((f) => f.type === 'error' && f.code === 'unknown-frame')
+  check('protocol: an unknown frame type is refused with its own code, which a terminal can explain', unknown !== null && /no-such-frame/.test(unknown.message), JSON.stringify(unknown))
+  await a.close()
+  await b.close()
+  await t.done()
+}
+
+{
   // Chosen with no effort, on the route it already runs on, by a model that declares efforts but no default
   // (the live OpenGateway route): it keeps the effort it runs with, instead of storing none while the
   // harness goes on reusing it and the terminal says "the model's default".

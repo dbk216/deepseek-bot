@@ -25,6 +25,17 @@ the caveat about version numbers is at the bottom.
   replaces the messenger there (the guided setup asks first); the old one's tokens stay, its channel
   ids give way to every channel and its people to the ones given. `--yes`, which guarded a `*` that
   opened several messengers at once, is gone.
+- **The terminal uses its bottom as Claude Code does.** On a short conversation the input box sat at
+  the last rows with the conversation at the top, so `/model`'s list appeared far from where one types.
+  The box now follows the conversation and stays at the bottom once the screen is full. `/model` and
+  `/sessions` open a picker just above it (`↑↓`, a digit, `↵` or a click; `←→` sets the highlighted
+  model's effort) instead of printing a list into the transcript.
+- **`shift+tab` steps the reasoning effort**, shown at the left of the status line where `▸▸ ask` used
+  to be. That label was never sent by the gateway: it was a default the terminal drew. The model the
+  conversation runs on is at the right of the status line. A click on the effort steps it too.
+- **The mouse works where the keys do**: a click in the input box puts the cursor there, a click on a
+  completion runs or inserts it as `↵` would, and the wheel over a picker or a completion list moves
+  its highlight.
 
 ### Fixed
 
@@ -32,7 +43,11 @@ the caveat about version numbers is at the bottom.
   health file's `connected`, so a terminal-only gateway read as down, and the health probe restarted
   it every five minutes. `install-service.sh` likewise looked for Slack's "Socket Mode connected" in
   the log; it now reads the health file.
-
+- **A `/model` switch reached only the terminal that made it.** Every terminal on the conversation is
+  told now; an effort step updates their status lines without a line in the transcript. Two steps sent
+  together are taken one after the other.
+- **A `dsh` newer than its gateway showed "unknown frame type …".** It now says the gateway is older
+  and how to update it; a gateway refuses an unknown frame with its own code, `unknown-frame`.
 - **`dsh gateway` sees a harness that was set up before it.** It read only `~/.dsh/.env`. A key
   entered in the DeepSeek Harness app sits in the app's store (`~/.dsh/.credentials.yaml`), which
   the harness reads first. So `status` called the model key missing on a working deployment, and
