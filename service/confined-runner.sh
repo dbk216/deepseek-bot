@@ -89,20 +89,13 @@ profile() {
   fi
   # Reads: everything the harness already allows, minus other instances' data.
   # DEEPBOT_DENY_READ adds a deployment's own (colon-separated) — a retired bot's data, say.
-  echo ";; read confinement: other agent homes, and DEEPBOT_DENY_READ"
-  extra=()
-  IFS=':' read -r -a extra <<< "${DEEPBOT_DENY_READ:-}"
-  for candidate in "$HOME"/dsh-agent* ${extra[@]+"${extra[@]}"}; do
-    [ -n "$candidate" ] && [ -e "$candidate" ] || continue
-    [ "$candidate" = "$workspace_root" ] && continue
-    printf '(deny file-read* (subpath %s))\n' "$(sbpl "$candidate")"
-  done
   # Reads: the harness home as a whole. What it keeps there is every conversation's — its session index
   # (with the WAL that holds the newest), the adapter's state and log, reminders, a session cache,
   # attachments, the terminal's input history — and it adds more as it grows: a list of names to deny
   # was a step behind it, and these were readable. Its runtimes stay readable (the office skill runs its
-  # node from there), and so does an agent home or a workspace someone put inside it. The denies below
-  # come after, so they hold inside whatever is allowed here.
+  # node from there), and so does an agent home or a workspace someone put inside it (not the harness
+  # home itself). Every deny after this block — other agent homes, DEEPBOT_DENY_READ, the credentials —
+  # holds inside whatever is allowed here.
   echo ";; read confinement: the harness home"
   for dir in "$HOME/.dsh" ${DSH_HOME:+"$DSH_HOME"}; do
     [ -d "$dir" ] || continue
@@ -112,15 +105,32 @@ profile() {
     for name in "${names[@]}"; do
       printf '(deny file-read* (subpath %s))\n' "$(sbpl "$name")"
       printf '(allow file-read* (subpath %s))\n' "$(sbpl "$name/dsh-runtimes")"
+      # Its own entry stays visible (not its contents): node lstat-s every directory of a script's path,
+      # and a harness home that is a link must still be followed to reach the runtimes.
+      printf '(allow file-read-metadata (literal %s))\n' "$(sbpl "$name")"
     done
     for own in "$HOME_DIR" ${workspace_names[@]+"${workspace_names[@]}"}; do
       for name in "${names[@]}"; do
         # The home's own name, and its resolved one, inside either name of the harness home.
         own_real="$(cd "$own" 2>/dev/null && pwd -P || printf '%s' "$own")"
-        case "$own/" in "$name"/*) printf '(allow file-read* (subpath %s))\n' "$(sbpl "$own")" ;; esac
-        case "$own_real/" in "$name"/*) printf '(allow file-read* (subpath %s))\n' "$(sbpl "$own_real")" ;; esac
+        case "$own/" in "$name"/?*) printf '(allow file-read* (subpath %s))\n' "$(sbpl "$own")" ;; esac
+        case "$own_real/" in "$name"/?*) printf '(allow file-read* (subpath %s))\n' "$(sbpl "$own_real")" ;; esac
       done
     done
+  done
+  echo ";; read confinement: other agent homes, and DEEPBOT_DENY_READ"
+  extra=()
+  IFS=':' read -r -a extra <<< "${DEEPBOT_DENY_READ:-}"
+  for candidate in "$HOME"/dsh-agent* ${extra[@]+"${extra[@]}"}; do
+    [ -n "$candidate" ] && [ -e "$candidate" ] || continue
+    [ "$candidate" = "$workspace_root" ] && continue
+    printf '(deny file-read* (subpath %s))\n' "$(sbpl "$candidate")"
+    # And by its resolved name: Seatbelt matches that, so an entry under a link (/var → /private/var)
+    # denied nothing.
+    if [ -d "$candidate" ]; then resolved="$(cd "$candidate" && pwd -P)"; else resolved="$(cd "$(dirname "$candidate")" && pwd -P)/$(basename "$candidate")"; fi
+    if [ "$resolved" != "$candidate" ] && [ "$resolved" != "${workspace_real:-}" ]; then
+      printf '(deny file-read* (subpath %s))\n' "$(sbpl "$resolved")"
+    fi
   done
   # Reads: the deployment's credentials. No command needs them, and a command's output reaches
   # Slack — as a reply or a watch alert — where nothing redacts a token. Measured before this: a

@@ -19,7 +19,7 @@ if (process.platform !== 'darwin') {
   process.exit(0)
 }
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -174,7 +174,38 @@ for (const resolved of [false, true]) {
   writeFileSync(join(inner, 'note.md'), 'inner-4b5\n')
   const innerRead = (() => { try { return execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--bind', inner, inner, '--', '/bin/cat', join(inner, 'note.md')], { encoding: 'utf8', env, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}` } })()
   check('a workspace inside the harness home stays readable' + as, innerRead.includes('inner-4b5'), innerRead.slice(0, 40))
+  // Review of the deny. node resolves a script's path by lstat-ing every directory on the way, the harness
+  // home among them: a script in the runtimes failed with EPERM while cat of the same file passed.
+  writeFileSync(join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'run.js'), "console.log('ran-5c6')\n")
+  const ran = (() => { try { return execFileSync(RUNNER, [...READ_ONLY, '--', process.execPath, join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'run.js')], { encoding: 'utf8', env, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}: ${String(e.stderr ?? '').slice(0, 80)}` } })()
+  check('node runs a script from the runtimes' + as, ran.includes('ran-5c6'), ran.slice(0, 100))
+  // An agent home set to the harness home itself is not an allow for all of it.
+  const whole = (() => { try { return execFileSync(RUNNER, [...READ_ONLY, '--', '/bin/cat', join(fakeHome, '.dsh', 'agent-session-index.db')], { encoding: 'utf8', env: { ...env, DEEPBOT_HOME: join(fakeHome, '.dsh') }, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}` } })()
+  check('an agent home set to the harness home itself opens none of it' + as, !whole.includes('canary-index-1a2'), whole.slice(0, 40))
+  // DEEPBOT_DENY_READ holds inside what the harness-home block allows.
+  writeFileSync(join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'secret'), 'canary-deny-6d7\n')
+  const extra = (() => { try { return execFileSync(RUNNER, [...READ_ONLY, '--', '/bin/cat', join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'secret')], { encoding: 'utf8', env: { ...env, DEEPBOT_DENY_READ: join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'secret') }, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}` } })()
+  check('DEEPBOT_DENY_READ still holds inside the runtimes' + as, !extra.includes('canary-deny-6d7'), extra.slice(0, 40))
+  // With DSH_HOME set the runner still runs commands: a refusal of everything would pass the denies above.
+  mkdirSync(join(alt, 'dsh-runtimes', 'rt'), { recursive: true })
+  writeFileSync(join(alt, 'dsh-runtimes', 'rt', 'tool'), 'alt-runtime-8e9\n')
+  check('with DSH_HOME set, its runtimes stay readable' + as, readAlt(join('dsh-runtimes', 'rt', 'tool')).includes('alt-runtime-8e9'), readAlt(join('dsh-runtimes', 'rt', 'tool')).slice(0, 40))
   rmSync(made, { recursive: true, force: true })
+}
+
+// A harness home that is itself a link (~/.dsh -> elsewhere). The deny on the link's name blocked reading
+// the link, so every path through it failed — the office skill's node, named through ~/.dsh, could not start.
+{
+  const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'runner-linked-')))
+  mkdirSync(join(fakeHome, 'dsh-real', 'dsh-runtimes', 'rt'), { recursive: true })
+  symlinkSync(join(fakeHome, 'dsh-real'), join(fakeHome, '.dsh'))
+  writeFileSync(join(fakeHome, 'dsh-real', 'agent-session-index.db'), 'canary-linked-index-9f0\n')
+  writeFileSync(join(fakeHome, 'dsh-real', 'dsh-runtimes', 'rt', 'run.js'), "console.log('linked-ran-0a1')\n")
+  const env = { ...process.env, HOME: fakeHome }
+  const run = (cmd) => { try { return execFileSync(RUNNER, [...READ_ONLY, '--', ...cmd], { encoding: 'utf8', env, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}: ${String(e.stderr ?? '').slice(0, 80)}` } }
+  check('a linked harness home: node runs a script from its runtimes by the link\'s name', run([process.execPath, join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'run.js')]).includes('linked-ran-0a1'), run([process.execPath, join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'run.js')]).slice(0, 100))
+  check('a linked harness home: its index is denied by either name', !run(['/bin/cat', join(fakeHome, '.dsh', 'agent-session-index.db')]).includes('canary-linked') && !run(['/bin/cat', join(fakeHome, 'dsh-real', 'agent-session-index.db')]).includes('canary-linked'))
+  rmSync(fakeHome, { recursive: true, force: true })
 }
 
 // The profile reaches sandbox-exec inline. It used to be written to a file in TMPDIR — a directory
