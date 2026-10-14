@@ -36,10 +36,12 @@ channel_list() {
 }
 
 # The platform an existing profile names, so a rerun asks for that platform's tokens; slack if none.
-# A profile written by this installer lists the terminal beside it: platform: ['slack', 'local'].
+# A profile written by this installer lists the terminal beside it — platform: ['slack', 'local'] — and
+# `dsh gateway setup` adds others after it, so it is the first messenger on the line.
 profile_platform() {
-  local found
-  found="$(sed -n -E "s/^    platform: \[?'?(slack|telegram|discord)'?(, 'local'\])?$/\1/p" "$1" 2>/dev/null | head -1 || true)"
+  local line found
+  line="$(grep -m1 -E '^    platform: ' "$1" 2>/dev/null || true)"
+  found="$(printf '%s\n' "$line" | grep -o -E 'slack|telegram|discord' | head -1 || true)"
   printf '%s\n' "${found:-slack}"
 }
 
@@ -359,7 +361,7 @@ if [ "$new_profile" -eq 1 ]; then
 else
   note "profile $DEEPBOT_PROFILE already existed — its settings are kept"
   grep -q "^    platform: .*'local'" "$profile_dir/cordis.patch.yml" 2>/dev/null \
-    || note "to use dsh, add 'local' to the deepbot row's platform (see docs/how-it-works.md, The terminal)"
+    || note "to use dsh, add the terminal to the profile: dsh gateway setup local"
   grep -q "^    language: " "$profile_dir/cordis.patch.yml" 2>/dev/null \
     || note "the bot speaks English; for Korean or Chinese add language: ko or zh to the deepbot row"
 fi
@@ -392,8 +394,11 @@ cat <<NEXT
 
     Next: invite the bot to a channel and mention it, or talk to it here: ${bold}dsh${off}
     Your agent's persona is ${bold}$DEEPBOT_HOME/SOUL.md${off} — edit it, it is yours.
+    Another messenger, or a new token, later: ${bold}dsh gateway setup <slack|telegram|discord>${off}
     Update later by running the same curl line again.
 NEXT
+# A direct message always reaches a Telegram or Discord bot, so with no allowedUsers anyone who finds it may use it.
+case "$platform" in telegram|discord) note "anyone who finds the bot on $platform can message it; to limit who: dsh gateway setup $platform --users <your id>" ;; esac
 }
 
 # The last line, so a download cut short defines functions and runs nothing.

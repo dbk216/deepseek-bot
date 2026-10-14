@@ -54,6 +54,43 @@ async function until(predicate, ms = 3000) {
   check('usage: the command is dsh', USAGE.includes('\n  dsh [--name <gateway>]') && !USAGE.includes('deepbot-tui'), USAGE.split('\n')[2])
   check('exit: the resume hint names dsh', resumeHint('c-1') === 'to continue this conversation: dsh --resume c-1\n', JSON.stringify(resumeHint('c-1')))
 
+  // /exit is /quit by another name: both leave with status 0.
+  const stops = []
+  const fakeApp = { stop: (code) => stops.push(code), notice: () => {}, clear: () => {} }
+  const quit = createCommands(fakeApp, { conversation: null, tenant: undefined, switchTo: () => {}, send: () => true })
+  check('/exit: leaves like /quit', quit.intercept('/exit') === true && quit.intercept('/quit') === true && JSON.stringify(stops) === '[0,0]', JSON.stringify(stops))
+
+  // /model: lists, then switches by number or by provider/model, with an effort; default goes back.
+  const sent = []
+  const notices = []
+  const statusSeen = []
+  const modelApp = { stop: () => {}, notice: (text, kind) => notices.push([kind, text]), clear: () => {}, setStatus: (s) => statusSeen.push(s), status: {} }
+  const link = { conversation: 'c-1', tenant: undefined, switchTo: () => {}, send: (f) => { sent.push(f); return true } }
+  const cmds = createCommands(modelApp, link)
+  cmds.intercept('/model 1')
+  check('/model <n> before a list: says to list first, sends nothing', sent.length === 0 && notices.some(([k, s]) => k === 'error' && s === 'list the models first: /model'), JSON.stringify(notices))
+  cmds.intercept('/model')
+  check('/model: asks the gateway for the models', JSON.stringify(sent) === JSON.stringify([{ type: 'models' }]), JSON.stringify(sent))
+  const items = [{ provider: 'deepseek-official', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }, { provider: 'og', id: 'deepseek/deepseek-v4.1-flash-ultrafast', name: 'Ultrafast' }]
+  const current = { provider: 'og', model: 'deepseek/deepseek-v4.1-flash-ultrafast', effort: 'medium', efforts: ['off', 'low', 'medium', 'high'] }
+  bind(modelApp, { type: 'models', current, items }, cmds)
+  const list = notices.at(-1)?.[1] ?? ''
+  check('/model: the list is numbered, provider/model, the current one marked, its efforts named', /^ {2}1\. deepseek-official\/deepseek-v4-flash {2}DeepSeek V4 Flash$/m.test(list) && /^● 2\. og\/deepseek\/deepseek-v4\.1-flash-ultrafast {2}Ultrafast$/m.test(list) && list.includes('medium') && list.includes('off, low, medium, high'), list)
+  check('/model: the list also brings the status up to date', statusSeen.at(-1)?.model === current.model && statusSeen.at(-1)?.effort === 'medium')
+  cmds.intercept('/model 1')
+  cmds.intercept('/model og/deepseek/deepseek-v4.1-flash-ultrafast high')
+  cmds.intercept('/model default')
+  check('/model: by number, by provider/model with a slash in the model, with an effort, and default', JSON.stringify(sent.slice(1)) === JSON.stringify([
+    { type: 'model', provider: 'deepseek-official', model: 'deepseek-v4-flash', effort: null },
+    { type: 'model', provider: 'og', model: 'deepseek/deepseek-v4.1-flash-ultrafast', effort: 'high' },
+    { type: 'model', provider: null },
+  ]), JSON.stringify(sent.slice(1)))
+  const before = sent.length
+  cmds.intercept('/model nonsense')
+  check('/model: something that is neither is refused, not sent', sent.length === before && notices.at(-1)?.[0] === 'error')
+  bind(modelApp, { type: 'model', current: { ...current, effort: 'high' } }, cmds)
+  check('/model: the gateway\'s answer is said, and the status shows the effort', notices.at(-1)?.[0] === 'ok' && notices.at(-1)?.[1].includes('effort high') && statusSeen.at(-1)?.effort === 'high', JSON.stringify(notices.at(-1)))
+
   // End to end: the arguments reach the harness CLI unchanged, and its exit status comes back.
   const bin = mkdtempSync(join(tmpdir(), 'deepbot-dshbin-'))
   const fake = join(bin, 'dsh'), seen = join(bin, 'seen')

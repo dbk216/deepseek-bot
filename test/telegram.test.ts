@@ -232,6 +232,34 @@ function groupMessage(overrides = {}) {
   check('the loop keeps running after a failure', attempts >= 1 && t.hasSocket() === false)
 }
 
+// 11b. The error a failed poll reported is cleared by the next poll that works: left in the health file,
+// it read as a platform still failing, and failed `dsh gateway setup` on a blip that had passed.
+{
+  let attempts = 0
+  const api = fakeApi()
+  const flaky = async (url, init) => {
+    if (String(url).includes('getUpdates') && attempts++ === 0) throw new Error('network down')
+    return api.fetchImpl(url, init)
+  }
+  const health = []
+  const t = createTelegramTransport({
+    cfg: { telegramTokenRef: 'TELEGRAM_BOT_TOKEN' },
+    log: () => {},
+    sessionCwd: async () => mkdtempSync(join(tmpdir(), 'tg-')),
+    credential: async () => 'telegram-token',
+    onHealth: (patch) => health.push(patch),
+    fetchImpl: flaky,
+  })
+  await t.connect({ onMessage: () => {} })
+  const failedAt = () => health.findIndex((p) => p.lastError === 'network down')
+  const clearedAt = () => health.findIndex((p, i) => i > failedAt() && 'lastError' in p && p.lastError === null)
+  // The first retry waits 2 s; wait for the clear rather than a fixed time, with a deadline.
+  for (const deadline = Date.now() + 8000; Date.now() < deadline && !(failedAt() !== -1 && clearedAt() > failedAt());) await sleep(50)
+  await t.close()
+  check('a poll that works after a failure clears the error it reported', failedAt() !== -1 && clearedAt() > failedAt(), JSON.stringify(health))
+  check('and names it, so another platform\'s error is left alone', health[clearedAt()]?.ifLastError === 'network down', JSON.stringify(health[clearedAt()]))
+}
+
 // 12. Typing is a chat action. It lapses after five seconds, so it is repeated until stopped.
 {
   const api = fakeApi()

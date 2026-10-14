@@ -38,6 +38,12 @@
 #             # reaches the model as a filename. The resolver reads `input`; a key named
 #             # inputModalities is accepted by the schema and silently ignored.
 #             input: [text, image]
+#             # Only for a model that takes them. A reasoningEffort the model does not declare is
+#             # refused by the harness; the plugin then sends none (and logs it).
+#             reasoningEfforts:
+#               low: low
+#               medium: medium
+#               high: high
 #
 # - id: agent-default-model
 #   config:

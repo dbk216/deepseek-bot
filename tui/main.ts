@@ -3,6 +3,7 @@
  * dsh: the bot in a terminal.
  *
  *   dsh [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
+ *   dsh gateway <command>  connect a messenger and run the service (service/gateway.ts)
  *   dsh <anything else>   handed to the DeepSeek Harness CLI, whose name this shares
  *
  * Connects to a running gateway whose deepbot row serves `platform: 'local'` (alone or in a list
@@ -20,6 +21,7 @@ import { setLanguage, t } from './strings.js'
 import { fileFinder } from './files.js'
 import { appendHistory, historyFile, loadHistory } from './history.js'
 import { processIO, restoreOnExit } from './render/terminal.js'
+import { gateway, processIO as gatewayIO } from '../service/gateway.js'
 
 /** `dsh <harness arguments>`: run the harness CLI with them, and leave with its status. */
 function forward(argv: string[]): never {
@@ -36,7 +38,15 @@ function main(): void {
   // Until the gateway says its language, the terminal speaks the environment's.
   setLanguage(envLanguage(process.env))
   const argv = process.argv.slice(2)
-  if (route(argv) === 'harness') forward(argv)
+  const where = route(argv)
+  if (where === 'harness') forward(argv)
+  if (where === 'gateway') {
+    gateway(argv.slice(1), gatewayIO()).then(
+      (code) => process.exit(code),
+      (e) => { process.stderr.write(`dsh gateway: ${(e as Error)?.message ?? e}\n`); process.exit(1) },
+    )
+    return
+  }
   const parsed = parseArgs(argv)
   if ('error' in parsed) { process.stderr.write(`${parsed.error}\n\n${usage()}`); process.exit(2) }
   if (parsed.help) { process.stdout.write(usage()); return }

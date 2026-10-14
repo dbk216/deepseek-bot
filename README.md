@@ -35,8 +35,10 @@ dsh
 The first line installs it, and running it again updates; `dsh` opens it in the terminal. It needs
 macOS with Node.js 22+, the DeepSeek Harness app, a DeepSeek API key and a bot token for the platform
 you choose; it asks for the rest on the terminal. DeepSeek's own API is the default and needs nothing
-else; OpenGateway or another OpenAI-compatible endpoint is an option the installer offers. Creating the Slack, Telegram or Discord bot is in
-[docs/setup.md](docs/setup.md).
+else; OpenGateway or another OpenAI-compatible endpoint is an option the installer offers. Creating
+the Slack, Telegram or Discord bot is in [docs/setup.md](docs/setup.md). To add another platform later,
+or replace a token: `dsh gateway setup <slack|telegram|discord>`. It also runs without a terminal, so an
+agent can do it for you; `dsh gateway status` says whether it is up.
 
 <img src="docs/opengateway-logo.svg" height="16" alt="OpenGateway"> **Optional: faster on [OpenGateway](https://opengateway.ai).** It serves `deepseek/deepseek-v4.1-flash-ultrafast`
 on an OpenAI-compatible endpoint (`https://apis.opengateway.ai/v1`), which it lists at 12× the speed and
@@ -104,12 +106,15 @@ and by scenarios run against a real model.
 - Recall matches words, not meaning. A paraphrase that shares no distinctive word can miss.
 - Reading a link is a plain fetch: a page that renders in the browser comes back empty.
 - Slack is used live. Discord and Telegram are tested against mocked APIs, not yet a live server.
+- On Telegram and Discord anyone who finds the bot can message it. List who may:
+  `dsh gateway setup telegram --users <your id>` ([who may talk to it](docs/setup.md#connecting-a-messenger-dsh-gateway)).
 - Its built-in notices and button labels are in Korean; what it says otherwise follows its persona.
 - DeepSeek Harness is a release candidate, and this project leans on its internals. Pin your version.
 
 ## More
 
-- [Setup and operations](docs/setup.md): creating the bot on each platform, running the services
+- [Setup and operations](docs/setup.md): connecting a messenger (`dsh gateway`), creating the bot on
+  each platform, running the services
 - [How it works](docs/how-it-works.md): the design, and the evidence behind each claim
 - [Limitations](docs/limitations.md) · [Changelog](CHANGELOG.md) · [Plan](PLAN.md)
 - For contributors and agents: [working rules](AGENTS.md) · [vocabulary](CONTEXT.md)

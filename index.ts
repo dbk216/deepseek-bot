@@ -34,10 +34,10 @@
  *   SessionSeq(n)           -> a plain number
  *   summarize()             -> same fold the one-shot runner performs
  *
- * The one thing that cannot be inlined is `installModelSelection`, which the
- * shipped runners call inside `setup` to pin the model selection. This plugin
- * passes `agentOptions` instead and reports a loud error if bootstrapping
- * fails. See MODEL_SELECTION below.
+ * `installModelSelection`, which the shipped runners call inside `setup` to pin
+ * the model selection, is not copied: this plugin passes `agentOptions` (provider,
+ * model, reasoning effort) on every create and resume, and each turn starts a
+ * fresh agent instance that takes its route from them. See MODEL_SELECTION below.
  *
  * Sanity check for the message identity: a user message needs an `id`. Without
  * it, the persisted log is rejected on the next read with
@@ -54,7 +54,7 @@ import { fileURLToPath } from 'node:url'
 import { createSlackTransport } from './transports/slack.js'
 import { createTelegramTransport } from './transports/telegram.js'
 import { createDiscordTransport } from './transports/discord.js'
-import { createLocalTransport } from './transports/local.js'
+import { createLocalTransport, LOCAL_CHANNEL } from './transports/local.js'
 import { createCompositeTransport } from './transports/composite.js'
 import { createProgressTracker } from './progress.js'
 import { languageOf } from './i18n.js'
@@ -68,7 +68,7 @@ import type { SlackHistoryResponse } from './types/slack.js'
 import type { InboundMessage, StreamFrame } from './types/transport.js'
 import type { Origin, TurnOutcome, TurnSummary } from './types/core.js'
 import type {
-  AgentDefaultModelService, AgentsService, AgentPresetsService, AttachmentsService,
+  AgentDefaultModelService, AgentsService, LlmService, AgentPresetsService, AttachmentsService,
   CredentialsService, FileSystemService, PermissionPresetsService, SessionProjectionsService,
   SessionQueryService, SessionsService, WorkspaceRegistryService,
 } from './types/dsh.js'
@@ -110,6 +110,10 @@ const DEFAULTS = {
   // The language of what the bot itself says — approvals, stops, failures, the working message —
   // and of the terminal: 'en', 'ko' or 'zh'. The model's answers follow the persona, not this.
   language: 'en',
+  // Who may talk to it: user ids, from any of the platforms. Empty means anyone who can reach the bot
+  // in an allowed channel — on Telegram and Discord that is anyone who finds it, since a direct
+  // message always reaches it. The terminal's user is always allowed: it is whoever can open the socket.
+  allowedUsers: [],
   maxConcurrency: 2,
   runTimeoutMs: 15 * 60 * 1000,
   maxPromptChars: 12000,
@@ -254,6 +258,8 @@ const DEFAULTS = {
   // overrule a permission decision the deployment made on purpose.
   permissionPreset: undefined,
   attachWorkspace: true,
+  // Attach each session to its workspace (the desktop app's sidebar grouping). Off: see where it is used.
+  attachSessions: false,
   // Diagnostic: run a single turn with this prompt at startup, log the result,
   // and never touch Slack. This is the only way to exercise in-process session
   // creation without opening a Socket Mode connection.
@@ -284,8 +290,15 @@ export function apply(ctx, config) {
     problems.push('targetChannels: at least one channel ID is required (this guard prevents answering everywhere)')
   }
   if (!['mention', 'all'].includes(cfg.replyMode)) problems.push(`replyMode: must be 'mention' or 'all' (got: ${String(cfg.replyMode)})`)
-  if (languageOf(cfg.language) === 'en' && !/^(en|eng|english)(?:$|[-_.@])/i.test(String(cfg.language).trim())) {
+  // Unset or empty (`language:` with nothing after it) is the default; anything else must be one of the three.
+  if (cfg.language != null && String(cfg.language).trim() !== '' && languageOf(cfg.language) === 'en' && !/^(en|eng|english)(?:$|[-_.@])/i.test(String(cfg.language).trim())) {
     problems.push(`language: must be 'en', 'ko' or 'zh' (got: ${String(cfg.language)})`)
+  }
+  if (!Array.isArray(cfg.allowedUsers) || cfg.allowedUsers.some((u) => typeof u !== 'string')) {
+    // Telegram and Discord ids are digits: unquoted, YAML reads a number, and a Discord id loses digits on the way.
+    problems.push(Array.isArray(cfg.allowedUsers) && cfg.allowedUsers.some((u) => typeof u === 'number')
+      ? "allowedUsers: quote each id ('123456789') — unquoted, YAML reads a number, and a long one loses digits"
+      : 'allowedUsers: a list of user ids (empty: anyone who can reach the bot)')
   }
   if (problems.length > 0) throw new Error(`deepbot config error:\n  - ${problems.join('\n  - ')}`)
 
@@ -294,6 +307,9 @@ export function apply(ctx, config) {
   const targetChannels = cfg.targetChannels.map((c) => c.trim()).filter(Boolean)
   // '*' means "every channel the bot has been invited to".
   const allChannels = targetChannels.includes('*')
+  const allowedUsers = new Set<string>(cfg.allowedUsers.map((u) => u.trim()).filter(Boolean))
+  // The terminal's user may always: it is whoever can open the socket. Only in the terminal's own channel.
+  const mayTalk = (user: string, channel: string) => allowedUsers.size === 0 || (user === 'local' && channel === LOCAL_CHANNEL) || allowedUsers.has(user)
   // Channel ID prefixes: C=public, G=legacy private, D=DM, U=MPDM member.
 
   const stateDir = cfg.stateDir ?? join(process.cwd(), 'slack-state')
@@ -357,7 +373,7 @@ export function apply(ctx, config) {
   }
   let saveTimer = null
   function loadState() {
-    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, usage: emptyUsageStore() }
+    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, usage: emptyUsageStore() }
     try {
       const raw = JSON.parse(readFileSync(STATE, 'utf8'))
       return {
@@ -373,6 +389,8 @@ export function apply(ctx, config) {
         // --tenant): null for the home. Recorded once and authoritative, because a session resumes
         // in the directory it was created in, and it must not be handed another tenant's notes.
         tenantOf: raw.tenantOf ?? {},
+        // A conversation's own model, from /model.
+        models: raw.models ?? {},
         usage: raw.usage ?? emptyUsageStore(),
         // Conversations with a turn accepted and not yet answered, so a restart can say what it lost.
         // This process's own start empty: what the previous one left is set aside below.
@@ -382,7 +400,7 @@ export function apply(ctx, config) {
         // this process's running turns for lost ones; and a new turn never finds an old record in its way.
         restartLost: { ...(raw.restartLost ?? {}), ...(raw.inflight ?? {}) },
       }
-    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, usage: emptyUsageStore() } }
+    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, usage: emptyUsageStore() } }
   }
   /**
    * Drop what has gone quiet.
@@ -411,9 +429,14 @@ export function apply(ctx, config) {
       delete state.standing[key]
       delete state.history[key]
       if (state.tenantOf) delete state.tenantOf[key]
+      if (state.models) delete state.models[key]
       if (state.touched) delete state.touched[key]
       delete conversations[key]
       dropped++
+    }
+    // A /model choice in a conversation that never ran a turn has no session or touch to go with: its own time.
+    for (const [key, choice] of Object.entries(state.models ?? {}) as Array<[string, { at?: number }]>) {
+      if (state.sessions[key] === undefined && state.touched?.[key] === undefined && Number(choice?.at ?? 0) < retentionCutoff) delete state.models[key]
     }
     // Usage snapshots are keyed by session, so they can only be pruned against the sessions the
     // surviving conversations still point at.
@@ -1131,6 +1154,7 @@ export function apply(ctx, config) {
    * 허용 answered whatever request was pending in that conversation now.
    */
   async function handleAction(action: { id: string; target: { channel: string; threadTs: string | null }; user: string }) {
+    if (!mayTalk(action.user, action.target.channel)) { log(`button ignored: ${action.user} is not in allowedUsers`); return }
     const match = /^approval:(allow|deny):([^#]+)(?:#([0-9a-f]{8}))?$/.exec(action.id)
     if (match === null) { log(`unhandled action id: ${action.id}`); return }
     const decision = match[1]
@@ -1773,18 +1797,12 @@ export function apply(ctx, config) {
     const defaultModel = ctx.get('agentDefaultModel') as AgentDefaultModelService | undefined
     if (!agents || !sessions || !defaultModel) throw new Error('deepbot: agents/sessions/agentDefaultModel missing')
 
-    // The same selection is used for create and resume.
+    // The same selection is used for create and resume: the conversation's own (/model), else its
+    // tenant's, else the deployment's — with the reasoning effort that goes with it.
     const selection = defaultModel.currentSelection()
-    // The same selection is used for create and resume — unless this conversation's tenant
-    // names its own, which is what a per-tenant policy is for.
-    const tenantForModel = tenantOf(sessionKey)
-    const policyForModel = tenantPolicy(tenantForModel)
-    if (policyForModel.model?.provider !== undefined || policyForModel.model?.model !== undefined) {
-      log(`tenant ${tenantForModel}: model ${policyForModel.model?.provider ?? selection.provider}/${policyForModel.model?.model ?? selection.model} instead of the deployment default ${selection.provider}/${selection.model}`)
-    }
-    const agentOptions = {
-      provider: policyForModel.model?.provider ?? selection.provider,
-      model: policyForModel.model?.model ?? selection.model,
+    const agentOptions = await turnModel(sessionKey)
+    if (agentOptions.provider !== selection.provider || agentOptions.model !== selection.model) {
+      log(`${state.models?.[sessionKey] !== undefined ? 'conversation' : `tenant ${tenantOf(sessionKey)}`}: model ${agentOptions.provider}/${agentOptions.model} instead of the deployment default ${selection.provider}/${selection.model}`)
     }
     // The conversation's own directory — the tenant's when isolation is on.
       const tenant = tenantOf(sessionKey)
@@ -1809,16 +1827,17 @@ export function apply(ctx, config) {
     const presetName = policy.preset ?? cfg.agentPreset
     const permissionName = cfg.permissionPreset
     let presetId = null
+    // Only validate a preset this deployment actually named. Passing `undefined`
+    // through resolve() looks up the literal string "undefined" and throws, and
+    // leaving permissionPreset unset is the documented way to accept the
+    // deployment's own default. Checked whether or not an agent preset is named:
+    // without one it used to reach set() unchecked, and fail there on every turn.
+    if (permissionName !== undefined) {
+      try { permissionPresets?.resolve?.(permissionName) }
+      catch (e) { throw new Error(`deepbot: unknown permission preset ${JSON.stringify(permissionName)}${tenant !== null ? ` for tenant ${tenant}` : ''} — ${String(e?.message ?? e)}`) }
+    }
     if (presetName) {
       if (!agentPresets) throw new Error('deepbot: agentPreset is configured but the agentPresets service is not composed — the agent would have no tools')
-      // Only validate a preset this deployment actually named. Passing `undefined`
-      // through resolve() looks up the literal string "undefined" and throws, and
-      // leaving permissionPreset unset is the documented way to accept the
-      // deployment's own default.
-      if (permissionName !== undefined) {
-        try { permissionPresets?.resolve?.(permissionName) }
-        catch (e) { throw new Error(`deepbot: unknown permission preset ${JSON.stringify(permissionName)}${tenant !== null ? ` for tenant ${tenant}` : ''} — ${String(e?.message ?? e)}`) }
-      }
       try {
         const record = await agentPresets.resolve(presetName)
         presetId = record?.id ?? presetName
@@ -1902,9 +1921,12 @@ export function apply(ctx, config) {
       activeTurns.delete(sessionId)
       liveOrigins.delete(sessionId)
       throw new Error('deepbot: agents.create/resume did not return an Agent')
+    }
 
     // Post-attach steps, in the reference implementation's order.
-    if (workspace?.attachSession && sessionId) {
+    // Attaching is opt-in: it rewrites ~/.dsh/storages/workspace.json, which the desktop app writes too, the
+    // last write winning, and all it buys is grouping the bot's sessions in the desktop sidebar.
+    if (cfg.attachSessions === true && workspace?.attachSession && sessionId) {
       try { await workspace.attachSession(sessionId) }
       catch (e) {
         // Reported loudly: the message it throws is about a cwd mismatch, which is
@@ -1921,9 +1943,6 @@ export function apply(ctx, config) {
     // Register before the turn starts, so a message arriving a second later can
     // stop it. The timeout uses the same path: a timeout that only stops the
     // *waiting* leaves the agent running, writing to the session, and eventually
-        runningTurns.delete(turnKey)
-    }
-
     // delivering an answer nobody is waiting for any more.
       // The agent exists now, so cancellation can reach it — and the turn may have been
       // stopped while the agent was being created, which is a stop a human asked for.
@@ -2072,12 +2091,107 @@ export function apply(ctx, config) {
   // Socket Mode connection and its reconnect loop, event parsing, rendering,
   // history deltas, attachments. The core keeps mapping, the turn loop, policy,
   // watches and reminders.
+  // ── The model, per conversation ─────────────────────────────────────────
+  /** What a conversation runs on: its own choice (/model), else its tenant's, else the deployment's. */
+  function modelFor(key: string): { provider: string; model: string; reasoningEffort?: string } {
+    const selection = (ctx.get('agentDefaultModel') as AgentDefaultModelService | undefined)?.currentSelection() ?? {}
+    const policy = tenantPolicy(tenantOf(key)).model ?? {}
+    const own = state.models?.[key] as { provider: string; model: string; reasoningEffort?: string } | undefined
+    const provider = own?.provider ?? policy.provider ?? selection.provider
+    const model = own?.model ?? policy.model ?? selection.model
+    // An effort belongs to the model it was chosen with: the deployment's applies to its own model only.
+    const effort = own !== undefined ? own.reasoningEffort
+      : provider === selection.provider && model === selection.model ? selection.reasoningEffort : undefined
+    return { provider, model, ...(effort !== undefined ? { reasoningEffort: effort } : {}) }
+  }
+
+  const llm = () => ctx.get('llm') as LlmService | undefined
+  const providerId = (p: { id?: string; provider?: string }) => String(p.id ?? p.provider ?? '')
+
+  /** Every model the registered providers advertise, provider by provider. One that fails to list is left out, and logged. */
+  async function listModels(): Promise<Array<{ provider: string; id: string; name: string; description?: string }>> {
+    const service = llm()
+    if (service === undefined) return []
+    const out = []
+    for (const p of service.listProviders()) {
+      const id = providerId(p)
+      if (id === '') continue
+      try { out.push(...await service.listModels(id)) } catch (e) { log(`models: ${id} could not list: ${String((e as Error)?.message ?? e).slice(0, 160)}`) }
+    }
+    return out
+  }
+
+  /** What a route's efforts were the last time they were read, so a display need not ask the provider. */
+  const knownEfforts = new Map<string, string[]>()
+  /** The efforts a model takes and its default one; none when it has none, or they cannot be read. */
+  async function modelInfo(provider: string, model: string): Promise<{ efforts: string[]; defaultEffort: string | null }> {
+    try {
+      const reasoning = (await llm()?.resolveModelInfo(provider, model))?.reasoning
+      const info = { efforts: (reasoning?.efforts ?? []).map((e) => e.id), defaultEffort: reasoning?.defaultEffort ?? null }
+      knownEfforts.set(`${provider}/${model}`, info.efforts)
+      return info
+    } catch { return { efforts: [], defaultEffort: null } }
+  }
+  const effortsOf = async (provider: string, model: string) => (await modelInfo(provider, model)).efforts
+
+  const effortRefusals = new Set<string>()
+  /**
+   * The route a turn runs on. A conversation's own choice was checked when it was made; the deployment's
+   * or a tenant's effort is sent only when its model takes it — the harness refuses a call with an effort
+   * the model does not declare, so every turn would fail (the template's by-hand route set one).
+   */
+  /** The effort to show for a conversation: none for a deployment's or tenant's effort its model is known not to take. */
+  function shownEffort(key: string): string | null {
+    const route = modelFor(key)
+    if (route.reasoningEffort === undefined) return null
+    if (state.models?.[key] !== undefined) return route.reasoningEffort
+    const known = knownEfforts.get(`${route.provider}/${route.model}`)
+    return known !== undefined && !known.includes(route.reasoningEffort) ? null : route.reasoningEffort
+  }
+
+  async function turnModel(key: string): Promise<{ provider: string; model: string; reasoningEffort?: string }> {
+    const route = modelFor(key)
+    if (route.reasoningEffort === undefined || state.models?.[key] !== undefined) return route
+    if ((await effortsOf(route.provider, route.model)).includes(route.reasoningEffort)) return route
+    const said = `${route.provider}/${route.model}:${route.reasoningEffort}`
+    if (!effortRefusals.has(said)) { effortRefusals.add(said); log(`models: ${route.provider}/${route.model} takes no reasoning effort "${route.reasoningEffort}" — sent without one`) }
+    return { provider: route.provider, model: route.model }
+  }
+
+  /**
+   * A conversation's own model, from the terminal's /model: only one the providers list, with an
+   * effort that model takes. The next turn runs on it; a running one keeps its own. null clears it.
+   */
+  async function setModel(key: string, choice: { provider: string; model: string; effort?: string | null } | null): Promise<null | { code: 'unknown-model' } | { code: 'effort'; efforts: string[] }> {
+    if (choice === null) { if (state.models) delete state.models[key]; saveStateNow(); return null }
+    const known = await listModels()
+    if (!known.some((m) => m.provider === choice.provider && m.id === choice.model)) return { code: 'unknown-model' }
+    const { efforts, defaultEffort } = await modelInfo(choice.provider, choice.model)
+    if (choice.effort != null && !efforts.includes(choice.effort)) return { code: 'effort', efforts }
+    // No effort named: stored explicitly, so what runs is what the terminal shows — left unnamed, the
+    // harness keeps the effort the session last ran with on the same route. The model's declared default;
+    // else, on the route it is already on, the effort it runs with now; else none (a new route's own default).
+    const current = modelFor(key)
+    const kept = current.provider === choice.provider && current.model === choice.model && current.reasoningEffort !== undefined && efforts.includes(current.reasoningEffort) ? current.reasoningEffort : null
+    const effort = choice.effort ?? (defaultEffort !== null && efforts.includes(defaultEffort) ? defaultEffort : kept)
+    // `at`: when it was chosen, so a choice in a conversation that never runs a turn is pruned in time,
+    // without counting as activity (which would move the conversation up /sessions).
+    state.models = { ...(state.models ?? {}), [key]: { provider: choice.provider, model: choice.model, ...(effort !== null ? { reasoningEffort: effort } : {}), at: Date.now() } }
+    saveStateNow()
+    log(`models: ${key} now runs on ${choice.provider}/${choice.model}${effort !== null ? ` (${effort})` : ''}`)
+    return null
+  }
+
   const transportHost = {
     cfg, log, sessionCwd, stateDir,
     workspaceFor: (key: string) => cwdFor(key),
     listConversations: (channel: string) => listConversations(channel),
     conversationHistory: (channel: string, conversation: string) => conversationHistory(channel, conversation),
-    model: () => { try { return String(ctx.get('agentDefaultModel')?.currentSelection?.()?.model ?? '') } catch { return '' } },
+    model: (key?: string) => { try { return key === undefined ? String(ctx.get('agentDefaultModel')?.currentSelection?.()?.model ?? '') : modelFor(key).model ?? '' } catch { return '' } },
+    effortOf: (key: string) => shownEffort(key),
+    modelChoice: async (key: string) => { const m = modelFor(key); const efforts = await effortsOf(m.provider, m.model); return { provider: m.provider ?? '', model: m.model ?? '', effort: shownEffort(key), efforts } },
+    listModels: () => listModels(),
+    setModel: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => setModel(key, choice),
     // The tenant a conversation is recorded in (null: the home), or undefined when none is recorded.
     boundTenant: (key: string) => (cfg.tenantIsolation === true ? state.tenantOf?.[key] : undefined),
     // The tenant a conversation is in right now, however it was decided.
@@ -2090,7 +2204,13 @@ export function apply(ctx, config) {
     // A conversation's root session, from its first turn on (state.sessions is written when a turn ends).
     sessionFor: (key: string) => state.sessions[key] ?? [...liveOrigins].find(([, o]) => keyOf(o) === key)?.[0] ?? null,
     credential: (ref: string) => credential(ref),
-    onHealth: (patch: Record<string, unknown>) => { Object.assign(health, patch); writeHealth() },
+    // The platforms share lastError: a clear that names the error it clears (ifLastError) leaves another's alone.
+    onHealth: (patch: Record<string, unknown>) => {
+      const { ifLastError, ...rest } = patch
+      if (ifLastError !== undefined && health.lastError !== ifLastError) delete rest.lastError
+      Object.assign(health, rest)
+      writeHealth()
+    },
   }
   const createPlatform = (platform: unknown) => platform === 'telegram'
     ? createTelegramTransport(transportHost)
@@ -2210,6 +2330,8 @@ export function apply(ctx, config) {
     // Outside the allowlist, do nothing. '*' means every invited channel.
     if (!allChannels && !targetChannels.includes(channel)) return
     if (!message.addressed) return
+    // Nor for anyone outside allowedUsers — and no reply, which would be a way to make it post.
+    if (!mayTalk(message.user, channel)) { log(`ignored: ${message.user} is not in allowedUsers (channel=${channel})`); return }
     if (alreadySeen(message.eventId)) { log(`duplicate event ignored event_id=${message.eventId}`); return }
 
     // Platforms with threads get a session per thread; platforms without one (a
@@ -2918,6 +3040,10 @@ export function apply(ctx, config) {
       if (typeof transport.connectedFor === 'function') await recover()
       throw e
     }
+    // Started: the error a failed start left in the health file is over, unless something has replaced it.
+    // No platform clears it for a terminal-only gateway, so it stayed for the life of the process.
+    if (startupError !== null && health.lastError === startupError) { health.lastError = null; writeHealth() }
+    startupError = null
     await recover()
   }
 
@@ -2930,6 +3056,8 @@ export function apply(ctx, config) {
   let stopped = false
   let startFailures = 0
   let startBackoff = 1000
+  /** What the last failed start wrote to the health file, so a start that works can clear that and nothing else. */
+  let startupError: string | null = null
 
   async function startWithRetry() {
     try { await start() }
@@ -2937,6 +3065,10 @@ export function apply(ctx, config) {
       if (stopped) return
       startFailures++
       log(`startup failed (${startFailures} in a row): ${String(e?.message ?? e)} — retrying in ${startBackoff}ms`)
+      // Into the health file too: a platform that fails here while another is connected was otherwise only
+      // in the log, and `dsh gateway setup` read the other's "connected" as success.
+      startupError = health.lastError = String(e?.message ?? e)
+      writeHealth()
       setTimeout(() => {
         startBackoff = Math.min(startBackoff * 2, 60000)
         if (!stopped) startWithRetry()

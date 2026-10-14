@@ -144,6 +144,20 @@ export interface AgentDefaultModelService {
   currentSelection(): { provider?: string; model?: string; reasoningEffort?: string }
 }
 
+/**
+ * The model-call service (`@deepseek-ai/dsh-llm`, registered as `llm`): only what /model reads.
+ * Verified against 0.2.0-rc.2's lib/index.js; not in the plugin's `inject`, so a deployment without
+ * it still activates and /model says it cannot list models.
+ */
+export interface LlmService {
+  /** Provider routes with a registered adapter, in registration order. */
+  listProviders(): Array<{ id?: string; provider?: string; [key: string]: unknown }>
+  /** The models an adapter advertises; may be empty for an adapter with no catalog. */
+  listModels(provider: string): Promise<Array<{ provider: string; id: string; name: string; description?: string }>>
+  /** One exact model's metadata, with the reasoning efforts it takes when it has any. */
+  resolveModelInfo(provider: string, model: string): Promise<{ reasoning?: { efforts: Array<{ id: string; name: string }>; defaultEffort?: string } }>
+}
+
 /** Query surface over the durable session log; used loosely for reporting. */
 export interface SessionQueryService {
   [key: string]: any

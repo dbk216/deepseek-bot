@@ -308,13 +308,18 @@ export function createTelegramTransport(host: TelegramHost): TelegramTransport {
   }
 
   async function pollLoop(): Promise<void> {
+    let reported: string | null = null
     while (!stopped) {
       try {
         await pollOnce()
         backoff = 2000
+        // The error it reported is over: left in the health file, it read as a platform still failing. Only
+        // that error — the platforms share the field, and another's may have been written since.
+        if (reported !== null) { onHealth({ lastError: null, ifLastError: reported }); reported = null }
       } catch (e) {
         if (stopped) return
-        onHealth({ lastError: String((e as Error)?.message ?? e) })
+        reported = String((e as Error)?.message ?? e)
+        onHealth({ lastError: reported })
         log(`telegram poll failed: ${String((e as Error)?.message ?? e)} — retrying in ${backoff}ms`)
         await new Promise((resolve) => setTimeout(resolve, backoff))
         backoff = Math.min(backoff * 2, 60000)

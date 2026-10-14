@@ -59,6 +59,9 @@ check('and slack when the profile names none', withHelpers(`profile_platform "${
 // The terminal: a new profile serves it beside the platform, and `dsh` goes on the PATH.
 writeFileSync(profile, 'plugins:\n  - id: deepbot\n    platform: [\'discord\', \'local\']\n')
 check('a profile that lists the terminal still reads back its platform', withHelpers(`profile_platform "${profile}"`).out === 'discord', withHelpers(`profile_platform "${profile}"`).out)
+// `dsh gateway setup` adds platforms after the first: a rerun still asks for the first one's tokens.
+writeFileSync(profile, 'plugins:\n  - id: deepbot\n    platform: [\'telegram\', \'local\', \'discord\']\n')
+check('a profile with a platform added after the terminal reads back the first', withHelpers(`profile_platform "${profile}"`).out === 'telegram', withHelpers(`profile_platform "${profile}"`).out)
 
 // The language a new profile starts in: the environment's, by the POSIX order, English otherwise.
 const lang = (env) => withHelpers('env_language', { LC_ALL: '', LC_MESSAGES: '', LANG: '', ...env }).out
