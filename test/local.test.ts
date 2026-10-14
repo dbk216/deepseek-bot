@@ -501,6 +501,43 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
 }
 
 {
+  // A conversation moved to another model is told, on the turn that runs on it: the harness's own notice of a
+  // switch belongs to its model selection, which this adapter cannot use, and the model went on believing the
+  // turns above were its own.
+  const llm = {
+    listProviders: () => [{ id: 'og' }, { id: 'ds' }],
+    listModels: async (p) => p === 'og' ? [{ provider: p, id: 'm1', name: 'M1' }] : [{ provider: p, id: 'm2', name: 'M2' }],
+    resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }),
+  }
+  // Turns after the first resume the session: an agent that can be resumed, and keeps what it was told.
+  const told = []
+  const agent = (o) => ({ agent: { session: { header: { id: o?.sessionId ?? o?.resumeSessionId ?? 's1' }, seq: 0, eventAt: () => undefined }, followup: (m) => { told.push((m?.content ?? []).map((b) => b?.text ?? '').join('')) }, whenIdle: async () => {}, cancel: () => {} }, dispose: async () => {} })
+  const agents = { create: async (o) => agent(o), resume: async (o) => agent(o) }
+  const t = boot({ services: { llm, agents, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm1' }) } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  await c.waitFor((f) => f.type === 'ready')
+  const turn = async (text) => { const n = told.length; c.send({ type: 'message', text }); for (let i = 0; i < 100 && told.length === n; i++) await sleep(10); await sleep(50); return told.at(-1) ?? '' }
+  const first = await turn('하나')
+  check('model note: none on a conversation\'s first turn', !first.includes('[model changed'))
+  const same = await turn('둘')
+  check('model note: none while the model stays', !same.includes('[model changed'))
+  c.send({ type: 'model', provider: 'ds', model: 'm2' })
+  await c.waitFor((f) => f.type === 'model')
+  const moved = await turn('셋')
+  check('model note: the turn after a switch names both, before the message', /\[model changed\][^\n]*og\/m1[^\n]*ds\/m2/.test(moved) && moved.indexOf('[model changed]') < moved.indexOf('셋'), moved.split('\n').find((l) => l.includes('model changed')) ?? '(none)')
+  const after = await turn('넷')
+  check('model note: once, not on every turn after', !after.includes('[model changed'))
+  c.send({ type: 'effort', step: 1 })
+  await c.waitFor((f) => f.type === 'model' && f.cause === 'effort')
+  check('model note: an effort step is not a change of model', !(await turn('다섯')).includes('[model changed'))
+  await c.close()
+  await t.done()
+}
+
+{
   // Chosen with no effort, on the route it already runs on, by a model that declares efforts but no default
   // (the live OpenGateway route): it keeps the effort it runs with, instead of storing none while the
   // harness goes on reusing it and the terminal says "the model's default".

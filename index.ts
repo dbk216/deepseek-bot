@@ -389,7 +389,7 @@ export function apply(ctx, config) {
   }
   let saveTimer = null
   function loadState() {
-    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, usage: emptyUsageStore() }
+    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, routes: {}, usage: emptyUsageStore() }
     try {
       const raw = JSON.parse(readFileSync(STATE, 'utf8'))
       return {
@@ -407,6 +407,8 @@ export function apply(ctx, config) {
         tenantOf: raw.tenantOf ?? {},
         // A conversation's own model, from /model.
         models: raw.models ?? {},
+        // The route each conversation last ran on, so a change of model is told to the model.
+        routes: raw.routes ?? {},
         usage: raw.usage ?? emptyUsageStore(),
         // Conversations with a turn accepted and not yet answered, so a restart can say what it lost.
         // This process's own start empty: what the previous one left is set aside below.
@@ -416,7 +418,7 @@ export function apply(ctx, config) {
         // this process's running turns for lost ones; and a new turn never finds an old record in its way.
         restartLost: { ...(raw.restartLost ?? {}), ...(raw.inflight ?? {}) },
       }
-    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, usage: emptyUsageStore() } }
+    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, routes: {}, usage: emptyUsageStore() } }
   }
   /**
    * Drop what has gone quiet.
@@ -446,6 +448,7 @@ export function apply(ctx, config) {
       delete state.history[key]
       if (state.tenantOf) delete state.tenantOf[key]
       if (state.models) delete state.models[key]
+      if (state.routes) delete state.routes[key]
       if (state.touched) delete state.touched[key]
       delete conversations[key]
       dropped++
@@ -2050,7 +2053,14 @@ export function apply(ctx, config) {
       // its own, before the marker: the recall indexer keeps only what follows the last
       // `[user message]`, so a marker carrying the name would index the whole preamble as speech.
       const speaker = typeof origin?.user === 'string' && origin.user !== '' ? `[speaker] <@${origin.user}>\n` : ''
-      const body = preamble === '' && speaker === '' ? prompt : `${preamble}${speaker}[user message]\n${prompt}`
+      // The model this conversation last ran on, told when it changed (by /model, a tenant's or the deployment's
+      // setting): the harness's own notice of a switch belongs to its model selection, which a plugin cannot
+      // install, and the model took the turns above for its own. Provider and model; an effort is not a model.
+      const route = `${agentOptions.provider}/${agentOptions.model}`
+      const ranOn = sessionKey === null ? undefined : state.routes?.[sessionKey]
+      const switched = ranOn !== undefined && ranOn !== route ? `[model changed] The turns above were answered by ${ranOn}; this one is answered by ${route}.\n` : ''
+      if (sessionKey !== null) state.routes = { ...(state.routes ?? {}), [sessionKey]: route }
+      const body = preamble === '' && speaker === '' && switched === '' ? prompt : `${switched}${preamble}${speaker}[user message]\n${prompt}`
       const refs = await admitImages(images)
       agent.followup(userMessage(refs.length === 0
         ? body

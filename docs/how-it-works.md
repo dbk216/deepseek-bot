@@ -564,7 +564,9 @@ What appears besides the conversation:
   takes, and the last row goes back to the configured model. Picking one, `/model <n>` or
   `/model <provider>/<model> [effort]` puts this conversation on it from its next turn — the
   same session, resumed on the new route — and `/model default` gives it the deployment's back. Every
-  terminal on the conversation is told. `shift+tab` steps the effort of the model it is on, round, and
+  terminal on the conversation is told, and so is the model: the first turn on another route opens with a
+  `[model changed]` line naming both (the harness's own notice belongs to its model selection, which a
+  plugin cannot install). `shift+tab` steps the effort of the model it is on, round, and
   keeps it as the conversation's own choice, as `/model` does. A
   model no provider lists, or an effort the model does not take, is refused. The choice is kept per
   conversation in the state file; Slack and the other conversations keep theirs. The list is every
