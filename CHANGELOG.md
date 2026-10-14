@@ -49,6 +49,10 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **One rare Chinese word was recalled unprompted.** A Chinese word is matched by its overlapping
+  pairs of characters, and all of them matched a passage that has it, so one word counted as the two
+  distinctive words unprompted recall needs. Pairs that match side by side now count once; pairs
+  matched apart still count apart.
 - **In the terminal, a stop or the usage word waited behind the running turn.** The core answers them
   at once, without a turn; queued above the input, the usage word was shown as the next turn's message,
   and the next real message's turn started under it. The gateway now names those words in `ready`, the

@@ -141,6 +141,22 @@ check('an untriggered block is empty', ctx.block('이거 요약해줘') === '')
   check('zh: and the unrelated one is not', !block.includes('饺子'))
 }
 
+// One Chinese word is one word. Its overlapping pairs all matched a passage that has it, so a single rare
+// word counted as several and was recalled unprompted, where one rare English or Korean word is not. Pairs
+// matched apart (two words of the passage) still count apart.
+{
+  const zhPath = join(dir, 'recall-zh-one.jsonl')
+  const filler = Array.from({ length: 60 }, (_, i) => ({ ts: 1_600_000_000 + i, role: 'user', sessionId: `f${i}`, text: `今天的天气很好，第${i}次` }))
+  writeFileSync(zhPath, [
+    { ts: 1_700_000_000, role: 'user', sessionId: 'z1', text: '回滚窗口定为十五分钟，审批人是张伟' },
+    ...filler,
+  ].map((r) => JSON.stringify(r)).join('\n'))
+  const zh = createRecallContext({ indexPath: zhPath })
+  check('zh: one rare word, no trigger, is not recalled unprompted', zh.triggered('回滚窗口') === false && zh.block('回滚窗口') === '', zh.block('回滚窗口').slice(0, 60))
+  const two = zh.block('张伟和回滚')
+  check('zh: two rare words matched apart are', two.includes('审批人是张伟'), two.slice(0, 60) || '(empty)')
+}
+
 rmSync(dir, { recursive: true, force: true })
 const failed = results.filter((x) => !x.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
