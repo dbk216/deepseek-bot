@@ -52,8 +52,10 @@ the caveat about version numbers is at the bottom.
 - **One rare Chinese word was recalled unprompted.** A Chinese word is matched by its overlapping
   pairs of characters, and all of them matched a passage that has it, so one word counted as the two
   distinctive words unprompted recall needs. A span of pairs the passage has side by side now counts
-  once (a word said twice is still one, a common pair inside does not split it), a span of five
-  characters or more as two, and pairs matched apart still count apart.
+  once (a word said twice is still one, a common pair inside does not split it), a span with four
+  rare pairs or more as two, and pairs matched apart still count apart. Known limit: one word of five
+  characters or more (a place name) also counts as two; without word segmentation it cannot be told
+  from a phrase.
 - **In the terminal, a stop or the usage word waited behind the running turn.** The core answers them
   at once, without a turn; queued above the input, the usage word was shown as the next turn's message,
   and the next real message's turn started under it. The gateway now names those words in `ready`, the

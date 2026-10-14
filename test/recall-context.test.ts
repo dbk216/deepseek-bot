@@ -147,15 +147,18 @@ check('an untriggered block is empty', ctx.block('이거 요약해줘') === '')
 // inside a word does not split it; and a long phrase matched as it stands is more than one word.
 {
   const zhPath = join(dir, 'recall-zh-one.jsonl')
-  const filler = Array.from({ length: 60 }, (_, i) => ({ ts: 1_600_000_000 + i, role: 'user', sessionId: `f${i}`, text: i < 6 ? `这个工具可用，第${i}次` : `今天的天气很好，第${i}次` }))
+  const filler = Array.from({ length: 60 }, (_, i) => ({ ts: 1_600_000_000 + i, role: 'user', sessionId: `f${i}`,
+    text: i < 6 ? `这个工具可用，第${i}次` : i < 12 ? `开会的时候要注意时间，第${i}次` : `今天的天气很好，第${i}次` }))
   writeFileSync(zhPath, [
     { ts: 1_700_000_000, role: 'user', sessionId: 'z1', text: '回滚窗口定为十五分钟，审批人是张伟' },
     { ts: 1_700_000_100, role: 'user', sessionId: 'z2', text: '高可用性要做到三个九' },
+    { ts: 1_700_000_200, role: 'user', sessionId: 'z3', text: '回滚的时候要注意通知值班' },
     ...filler,
   ].map((r) => JSON.stringify(r)).join('\n'))
   const zh = createRecallContext({ indexPath: zhPath })
   const unprompted = (prompt) => zh.triggered(prompt) === false && zh.block(prompt) !== ''
-  for (const prompt of ['回滚窗口', '回滚？回滚', '回滚窗口，窗口', '高可用性']) {
+  // (The last: one rare word, then a common phrase the passage also has; its length is not two words.)
+  for (const prompt of ['回滚窗口', '回滚？回滚', '回滚窗口，窗口', '高可用性', '回滚的时候要注意什么']) {
     check(`zh: "${prompt}" is one word: not recalled unprompted`, zh.triggered(prompt) === false && zh.block(prompt) === '', zh.block(prompt).slice(0, 60))
   }
   check('zh: two rare words matched apart are recalled unprompted', unprompted('张伟和回滚') && zh.block('张伟和回滚').includes('审批人是张伟'))

@@ -169,13 +169,15 @@ export function createRecallContext(options: RecallOptions) {
             // A Chinese word is one word. Its pairs all match a passage that has it, and one rare word counted as
             // several and was recalled unprompted. So a span of pairs the passage has side by side counts once,
             // if it holds a rare pair not counted already (a word said twice is one); a common pair inside does
-            // not split it; and a span of four pairs or more (five characters) is taken for two words.
+            // not split it; and a span with four rare pairs or more is taken for two words (its common pairs do not
+            // make it long). One word of five characters or more is taken for two as well: without word
+            // segmentation it cannot be told from a phrase.
             let spans = 0
             const counted = new Set<string>()
             for (const run of runs) {
               let span: string[] = []
               const close = () => {
-                if (span.some((p) => isRare(p) && !counted.has(p))) { spans += span.length >= 4 ? 2 : 1; for (const p of span) counted.add(p) }
+                if (span.some((p) => isRare(p) && !counted.has(p))) { spans += span.filter(isRare).length >= 4 ? 2 : 1; for (const p of span) counted.add(p) }
                 span = []
               }
               for (const pair of run) { if (here.has(pair)) span.push(pair); else close() }
