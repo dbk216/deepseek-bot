@@ -88,6 +88,12 @@ check('a DSH_HOME elsewhere is refused before anything is written', withHelpers(
 // repository's layout, so "no build" is real and the copy lands in scratch directories.
 const script = readFileSync(INSTALL, 'utf8')
 const build = script.indexOf('npm run --silent build')
+// npm does not read pnpm-lock.yaml and wrote a package-lock.json into the checkout; and init.sh built
+// again what install.sh had just built. Read from the scripts: neither is run by this suite.
+check('install.sh installs with the lockfile when pnpm is there, and leaves no package-lock.json otherwise',
+  /pnpm install --frozen-lockfile/.test(script) && /npm install --no-package-lock/.test(script))
+const initScript = readFileSync(join(dirname(INSTALL), 'init.sh'), 'utf8')
+check('init.sh does not build again what install.sh built', /if \[ "\$\{DEEPBOT_INSTALLER:-\}" = 1 \] && \[ -f "\$REPO_DIR\/dist\/index\.js" \]; then/.test(initScript) && /DEEPBOT_INSTALLER=1 [^\n]*init\.sh/.test(script))
 check('install.sh builds before the installers copy from the build',
   build !== -1 && build < script.indexOf('/service/install-health.sh"') && build < script.indexOf('/watch/install-watch.sh"'))
 const repo = join(dir, 'repo')
@@ -195,6 +201,12 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   writeFileSync(join(dir, 'two-routes.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      speech:\n        apiKeyEnv: OPENAI_API_KEY\n      og:\n          apiKeyEnv: OG_API_KEY   # the gateway\n\n- id: agent-default-model\n  config:\n    provider: og\n    model: x\n`)
   check('provider: a route key that is not a variable name is not asked for or written', withHelpers('usable_key_name "!!js process.env.X"').code !== 0 && withHelpers('usable_key_name OG_API_KEY').code === 0)
   check('provider: a rerun reads the key of the default model\'s route, past comments, indents and other routes', withHelpers(`profile_key "${join(dir, 'two-routes.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'two-routes.yml')}"`).out)
+  // A route key written in quotes, and a row right after the default model that is not an `- id:` row (an
+  // `- insert:` with a provider of its own): both used to fall back to DEEPSEEK_API_KEY or another route's key.
+  writeFileSync(join(dir, 'quoted.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      'og':\n        apiKeyEnv: OG_API_KEY\n- id: agent-default-model\n  config:\n    provider: "og"\n`)
+  check('provider: a quoted route key and a quoted provider are read', withHelpers(`profile_key "${join(dir, 'quoted.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'quoted.yml')}"`).out)
+  writeFileSync(join(dir, 'insert-after.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n      speech:\n        apiKeyEnv: OPENAI_API_KEY\n- id: agent-default-model\n  config:\n    provider: og\n- insert:\n    - id: tts\n      config:\n        provider: speech\n`)
+  check('provider: a provider in a row after the default model is not taken for its own', withHelpers(`profile_key "${join(dir, 'insert-after.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'insert-after.yml')}"`).out)
   writeFileSync(join(dir, 'with-og.yml'), `- id: deepbot\n  config:\n    platform: slack\n${og.out}\n`)
   check('provider: a rerun reads back the key the profile names, and DeepSeek\'s when it names none',
     withHelpers(`profile_key "${join(dir, 'with-og.yml')}"`).out === 'OG_API_KEY' && withHelpers(`profile_key "${join(dir, 'missing.yml')}"`).out === 'DEEPSEEK_API_KEY')

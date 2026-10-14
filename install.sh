@@ -147,13 +147,13 @@ profile_key() {
     function bare(s) { sub(/[[:space:]]*#.*$/, "", s); gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); gsub(/^["\047]|["\047]$/, "", s); return s }
     function indent(s) { match(s, /^[[:space:]]*/); return RLENGTH }
     FNR == NR {
-      if ($0 ~ /^- id: /) dm = ($0 ~ /^- id: agent-default-model[[:space:]]*(#.*)?$/)
+      if ($0 ~ /^- /) dm = ($0 ~ /^- id: agent-default-model[[:space:]]*(#.*)?$/)
       else if (dm && $0 ~ /^[[:space:]]+provider:/) { v = $0; sub(/^[[:space:]]+provider:/, "", v); want = bare(v) }
       next
     }
-    /^- id: / { pi = ($0 ~ /^- id: llm-pi-ai[[:space:]]*(#.*)?$/); prov = -1; route = ""; next }
+    /^- / { pi = ($0 ~ /^- id: llm-pi-ai[[:space:]]*(#.*)?$/); prov = -1; route = ""; next }
     pi && /^[[:space:]]+providers:[[:space:]]*(#.*)?$/ { prov = indent($0); next }
-    pi && prov >= 0 && indent($0) == prov + 2 && $0 ~ /^[[:space:]]+[A-Za-z0-9_.-]+:[[:space:]]*(#.*)?$/ { route = bare($0); sub(/:$/, "", route); next }
+    pi && prov >= 0 && indent($0) == prov + 2 && $0 ~ /^[[:space:]]+["\047]?[A-Za-z0-9_.-]+["\047]?:[[:space:]]*(#.*)?$/ { r = $0; sub(/:[[:space:]]*(#.*)?$/, "", r); route = bare(r); next }
     pi && route != "" && route == want && $0 ~ /^[[:space:]]+apiKeyEnv:/ { v = $0; sub(/^[[:space:]]+apiKeyEnv:/, "", v); print bare(v); exit }
   ' "$1" "$1" 2>/dev/null || true)"
   printf '%s\n' "${found:-DEEPSEEK_API_KEY}"
@@ -281,7 +281,13 @@ else
 fi
 
 step "building"
-( cd "$DEEPBOT_DIR" && npm install --no-audit --no-fund --loglevel=error >/dev/null && npm run --silent build )
+# pnpm when it is there: the checkout pins its versions in pnpm-lock.yaml, which npm does not read. npm
+# otherwise, without writing a package-lock.json of its own into the checkout.
+if command -v pnpm >/dev/null; then
+  ( cd "$DEEPBOT_DIR" && pnpm install --frozen-lockfile --silent >/dev/null && npm run --silent build )
+else
+  ( cd "$DEEPBOT_DIR" && npm install --no-package-lock --no-audit --no-fund --loglevel=error >/dev/null && npm run --silent build )
+fi
 [ -f "$DEEPBOT_DIR/dist/index.js" ] || die "the build produced no dist/index.js"
 note "dist/ ready"
 

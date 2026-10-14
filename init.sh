@@ -84,7 +84,10 @@ if [ -z "$NODE_BIN" ]; then
     [ -n "$candidate" ] && [ -x "$candidate" ] && { NODE_BIN="$candidate"; break; }
   done
 fi
-if [ -f "$REPO_DIR/node_modules/typescript/lib/tsc.js" ] && [ -n "$NODE_BIN" ]; then
+if [ "${DEEPBOT_INSTALLER:-}" = 1 ] && [ -f "$REPO_DIR/dist/index.js" ]; then
+  # install.sh built it a moment ago; a second build only doubled the wait.
+  echo "   built   dist/ (by the installer)"
+elif [ -f "$REPO_DIR/node_modules/typescript/lib/tsc.js" ] && [ -n "$NODE_BIN" ]; then
   if run "$NODE_BIN" "$REPO_DIR/node_modules/typescript/lib/tsc.js" -p "$REPO_DIR/tsconfig.json"; then
     echo "   built   dist/ (the profile loads dist/index.js)"
   else
