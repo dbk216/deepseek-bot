@@ -999,6 +999,43 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('picker: numbers line up past nine', nine !== null && eleven !== null && nine.col === eleven.col, text.split('\n').filter((l) => /model-(9|11) /.test(l)).join(' | '))
 }
 
+// 73. Second review. A deployment whose models take no effort shows "takes no effort" on every row: its
+// line was drawn and not counted. A crowded screen (interview strip, panel, approval) left the picker one
+// or two rows, and it drew more. And with text in the box, every key but esc is the text's.
+{
+  const none = Array.from({ length: 12 }, (_, i) => ({ label: `p/model-${i + 1}`, detail: `M${i + 1}`, efforts: [] }))
+  for (const rows of [15, 14]) {
+    const t = setup({ cols: 80, rows })
+    t.app.openPicker({ title: 'Model', rows: none, onPick: () => {} })
+    t.clock.advance(20)
+    check(`picker: models that take no effort, ${rows} rows: the box and the hint line stay`, t.term.screen.find('╰') !== null && t.term.screen.text().includes('↑↓ pick'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+    check(`picker: and the highlighted model says it takes none (${rows} rows)`, t.term.screen.text().includes('this model takes no effort'))
+  }
+  // 18 rows leave the picker three, 17 two, 16 one: the title and the effort line give way to the rows.
+  for (const rows of [18, 17, 16]) {
+    const crowd = setup({ cols: 80, rows })
+    const now = crowd.clock.now()
+    crowd.app.startInterview('topic')
+    crowd.app.setPanel([{ id: 'c1', label: 'helper', mode: 'one-shot', status: 'running', since: now, settledMs: 0, tokens: 0 }], [{ id: 'bash-1', owner: 'root', kind: 'bash', label: 'sleep', status: 'running', startedAt: now, progress: '' }])
+    crowd.app.offer('ts-1', [{ id: 'yes', label: 'yes' }, { id: 'no', label: 'no' }])
+    crowd.app.openPicker({ title: 'Model', rows: none, onPick: () => {} })
+    crowd.clock.advance(20)
+    check(`picker: on a crowded screen (${rows} rows) the box and the hint line stay`, crowd.term.screen.find('╰') !== null && crowd.term.screen.text().includes('↑↓ pick'), crowd.term.screen.text().split('\n').slice(-5).join(' | '))
+    check(`picker: and a row to pick is still shown (${rows} rows)`, /❯ +1\. p\/model-1 /.test(crowd.term.screen.text()))
+  }
+
+  const picked = []
+  const t = setup({ cols: 80, rows: 40 })
+  t.key('ab')
+  t.app.openPicker({ title: 'Model', rows: [{ label: 'og/m1', current: true, efforts: ['low', 'high'], effort: 'low' }, { label: 'og/m2' }], onPick: (i, e) => picked.push([i, e]) })
+  t.key('\x1b[D'); t.key('X'); t.clock.advance(20)
+  check('picker: with text in the box, ← moves the cursor in the text, not the effort', t.app.editor.text === 'aXb' && /effort ◂ low ▸/.test(t.term.screen.text()), JSON.stringify(t.app.editor.text))
+  t.key('\x1b[B'); t.clock.advance(20)
+  check('picker: and ↓ is not the picker\'s', /❯ 1\. og\/m1/.test(t.term.screen.text()))
+  t.key('\x1b'); t.clock.advance(40)
+  check('picker: esc still closes it, and leaves the text', t.app.picker === null && t.app.editor.text === 'aXb' && picked.length === 0)
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

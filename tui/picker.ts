@@ -39,6 +39,11 @@ export class Picker {
     return this.spec.rows
   }
 
+  /** Whether the highlighted row can have an effort line: a row with efforts, or one that takes none. */
+  get hasEffortLine(): boolean {
+    return this.spec.rows.some((r) => r.efforts !== undefined)
+  }
+
   /** Whether any row has efforts to step: the hint names ←→ only then. */
   get hasEfforts(): boolean {
     return this.spec.rows.some((r) => (r.efforts ?? []).length > 0)
@@ -83,6 +88,8 @@ export class Picker {
     const n = this.spec.rows.length
     if (n <= max) return { first: 0, count: n, above: 0, below: 0 }
     const place = (count: number) => Math.max(0, Math.min(this.cursor - count + 1, n - count))
+    // Too little room for the counts: rows only.
+    if (max < 3) { const count = Math.max(1, max); return { first: place(count), count, above: 0, below: 0 } }
     let count = Math.max(1, max - 1)
     let first = place(count)
     // Rows hidden at both ends: a line for each.

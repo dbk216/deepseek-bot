@@ -830,7 +830,12 @@ export class App {
   /** Keys while a picker is open. Returns false for keys the input box should get instead. */
   private onPickerKey(key: KeyEvent): boolean {
     const p = this.picker!
-    const typing = this.editor.text !== ''
+    // Opened over text being typed (it opens when the gateway answers): every key but esc is the text's,
+    // until the box is empty again.
+    if (this.editor.text !== '') {
+      if (key.name === 'escape' && !key.ctrl) { this.closePicker(); return true }
+      return false
+    }
     if (key.ctrl) {
       if (key.name === 'char' && key.ch === 'c') { this.closePicker(); return true }
       return false
@@ -842,13 +847,11 @@ export class App {
       case 'left': p.stepEffort(-1); break
       case 'right': p.stepEffort(1); break
       case 'enter':
-        // Opened over text being typed (it opens when the gateway answers): ↵ is the text's.
-        if (typing) { this.closePicker(); return false }
         if (!key.alt && !key.shift) this.choosePicker()
         return true
       case 'escape': this.closePicker(); return true
       case 'char':
-        if (!key.alt && !typing && /^[1-9]$/.test(key.ch ?? '') && p.jump(Number(key.ch))) break
+        if (!key.alt && /^[1-9]$/.test(key.ch ?? '') && p.jump(Number(key.ch))) break
         // Typing goes back to the input box, with the key.
         this.closePicker()
         return false
@@ -1161,7 +1164,7 @@ export class App {
     const search = this.search
     const hint = search !== null ? t().hints.search(search.query, search.found)
       : this.completion !== null ? t().hints.completion
-      : this.picker !== null && this.question === null ? t().hints.picker(this.picker.hasEfforts)
+      : this.picker !== null && this.question === null && this.editor.text === '' ? t().hints.picker(this.picker.hasEfforts)
       : this.question?.typing ? t().hints.typing
       : this.question !== null ? t().hints.question(this.question.current?.multiSelect === true)
       : this.focus === 'panel' ? t().hints.panel
@@ -1194,9 +1197,14 @@ export class App {
     const p = this.picker
     if (p === null) return []
     const s = (style) => sgr(style, this.mode)
-    const out: Array<{ text: string; style: string; row: number }> = [{ text: p.spec.title, style: s({ ...theme.accent, bold: true }), row: -1 }]
-    // Within the room left: the title, and the effort line when a row has efforts, come off it first.
-    const win = p.window(Math.max(1, Math.min(PICKER_MAX_ROWS, room - 1 - (p.hasEfforts ? 1 : 0))))
+    // Within the room left. The title and the effort line come off it first, and go when the rows
+    // would not fit with them.
+    let title = 1
+    let effortLine = p.hasEffortLine ? 1 : 0
+    if (room - title - effortLine < 1) title = 0
+    if (room - title - effortLine < 1) effortLine = 0
+    const out: Array<{ text: string; style: string; row: number }> = title === 1 ? [{ text: p.spec.title, style: s({ ...theme.accent, bold: true }), row: -1 }] : []
+    const win = p.window(Math.max(1, Math.min(PICKER_MAX_ROWS, room - title - effortLine)))
     const shown = p.rows.slice(win.first, win.first + win.count)
     const labelWidth = Math.min(Math.max(0, ...shown.map((r) => stringWidth(r.label))), Math.floor(cols / 2))
     const numberWidth = String(p.rows.length).length
@@ -1210,7 +1218,7 @@ export class App {
     })
     if (win.below > 0) out.push({ text: `  ↓ ${win.below}`, style: s(theme.muted), row: -1 })
     const current = p.rows[p.cursor]
-    if (current?.efforts !== undefined) {
+    if (effortLine === 1 && current?.efforts !== undefined) {
       const text = current.efforts.length === 0 ? `  ${t().noEffort}`
         : `  effort ◂ ${p.effortAt(p.cursor) ?? t().effortDefault} ▸  ${current.efforts.join(' · ')}`
       out.push({ text, style: s(theme.thinking), row: current.efforts.length === 0 ? -1 : -2 })
