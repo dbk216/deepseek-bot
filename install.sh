@@ -73,8 +73,12 @@ env_language() {
 # A custom endpoint's answers go into the profile's YAML: nothing that could leave a quoted value, or
 # start a new key, gets through.
 valid_endpoint() {   # valid_endpoint <baseURL> <model> <keyRef> <contextWindow>
-  local url_re='^https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$' model_re='^[A-Za-z0-9._:/@+-]+$' ref_re='^[A-Za-z_][A-Za-z0-9_]*$'
-  [[ $1 =~ $url_re ]] && [[ $2 =~ $model_re ]] && [[ $3 =~ $ref_re ]] && [[ $4 =~ ^[0-9]+$ ]] && [ "$4" -gt 0 ]
+  local url_re='^https://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$' model_re='^[A-Za-z0-9._:/@+-]+$' ref_re='^[A-Z][A-Z0-9_]*_KEY$'
+  # Plain http only to this machine: anywhere else the key would cross the network in clear text.
+  local here_re='^http://(localhost|127\.0\.0\.1)(:[0-9]+)?(/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]*)?$'
+  { [[ $1 =~ $url_re ]] || [[ $1 =~ $here_re ]]; } && [[ $2 =~ $model_re ]] && [[ $3 =~ $ref_re ]] && [[ $4 =~ ^[0-9]+$ ]] && [ "$((10#$4))" -gt 0 ] || return 1
+  # A key of its own: one the deployment reads for something else would be sent to this endpoint.
+  case "$3" in DEEPSEEK_API_KEY|OG_API_KEY|SLACK_*|TELEGRAM_*|DISCORD_*) return 1 ;; esac
 }
 
 route_rows() {   # route_rows <id> <displayName> <keyRef> <baseURL> <model> <window> <images yes|no> [deepseek]
@@ -83,7 +87,7 @@ route_rows() {   # route_rows <id> <displayName> <keyRef> <baseURL> <model> <win
   printf -- "- id: llm-pi-ai\n  config:\n    providers:\n      %s:\n        displayName: %s\n        apiKeyEnv: %s\n        api: openai-completions\n        baseURL: '%s'\n" "$1" "$2" "$3" "$4"
   # A DeepSeek model behind the endpoint: its thinking comes in DeepSeek's format, with these efforts.
   [ "${8:-}" = deepseek ] && printf '        compat:\n          thinkingFormat: deepseek\n'
-  printf "        models:\n          - id: '%s'\n            name: '%s'\n            contextWindow: %s\n            input: %s\n" "$5" "$5" "$6" "$input"
+  printf "        models:\n          - id: '%s'\n            name: '%s'\n            contextWindow: %s\n            input: %s\n" "$5" "$5" "$((10#$6))" "$input"
   [ "${8:-}" = deepseek ] && printf '            reasoningEfforts:\n              off:\n              low: low\n              medium: medium\n              high: high\n'
   printf "\n- id: agent-default-model\n  config:\n    provider: %s\n    model: '%s'\n" "$1" "$5"
   [ "${8:-}" = deepseek ] && printf '    reasoningEffort: medium\n'
@@ -137,10 +141,24 @@ provider_key() {   # provider_key <provider> [keyRef]: the credential the provid
   case "$1" in opengateway) echo OG_API_KEY ;; custom) echo "$2" ;; *) echo DEEPSEEK_API_KEY ;; esac
 }
 
-# The credential an existing profile's route reads, for a rerun: DeepSeek's when it declares none.
+# The credential an existing profile's default model reads, for a rerun: the provider agent-default-model
+# names, then that route's apiKeyEnv under llm-pi-ai — whatever the comments, the indent or the other
+# routes. DeepSeek's when the profile names no route of its own.
 profile_key() {
   local found
-  found="$(sed -n -E 's/^ {8}apiKeyEnv: ([A-Za-z_][A-Za-z0-9_]*)$/\1/p' "$1" 2>/dev/null | head -1 || true)"
+  found="$(awk '
+    function bare(s) { sub(/[[:space:]]*#.*$/, "", s); gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); gsub(/^["\047]|["\047]$/, "", s); return s }
+    function indent(s) { match(s, /^[[:space:]]*/); return RLENGTH }
+    FNR == NR {
+      if ($0 ~ /^- id: /) dm = ($0 ~ /^- id: agent-default-model[[:space:]]*(#.*)?$/)
+      else if (dm && $0 ~ /^[[:space:]]+provider:/) { v = $0; sub(/^[[:space:]]+provider:/, "", v); want = bare(v) }
+      next
+    }
+    /^- id: / { pi = ($0 ~ /^- id: llm-pi-ai[[:space:]]*(#.*)?$/); prov = -1; route = ""; next }
+    pi && /^[[:space:]]+providers:[[:space:]]*(#.*)?$/ { prov = indent($0); next }
+    pi && prov >= 0 && indent($0) == prov + 2 && $0 ~ /^[[:space:]]+[A-Za-z0-9_.-]+:[[:space:]]*(#.*)?$/ { route = bare($0); sub(/:$/, "", route); next }
+    pi && route != "" && route == want && $0 ~ /^[[:space:]]+apiKeyEnv:/ { v = $0; sub(/^[[:space:]]+apiKeyEnv:/, "", v); print bare(v); exit }
+  ' "$1" "$1" 2>/dev/null || true)"
   printf '%s\n' "${found:-DEEPSEEK_API_KEY}"
 }
 
