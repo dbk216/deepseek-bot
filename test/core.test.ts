@@ -1136,6 +1136,33 @@ for (const remove of [false, true]) {
   check('a language it has no words for is a config error, not a silent English', /language: must be 'en', 'ko' or 'zh' \(got: fr\)/.test(refused), refused.split('\n')[1] ?? refused)
 }
 
+// 40. Who the agent is: every session's setup tells it it is deepseek-bot, where this conversation is, and which
+// settings are its own and which are the operator's — it was told only that it is "a coding agent".
+{
+  const t = boot({ agent: 'answer', answer: { text: '응' } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: '너는 누구야?' }))
+  for (let i = 0; i < 100 && t.created.length === 0; i++) await sleep(10)
+  const sections = []
+  await t.created[0]?.setup?.({ systemPrompt: { section: (s) => { sections.push(s); return () => {} } } })
+  const identity = sections.find((s) => s.name === 'deepbot:identity')
+  const text = String(identity?.text ?? '')
+  check('identity: setup registers a section of its own, after the persona prefix and before the tools', identity !== undefined && identity.order > 0 && identity.order < 500 && identity.interpolate === false, JSON.stringify({ name: identity?.name, order: identity?.order }))
+  check('identity: it says it is deepseek-bot, on DeepSeek Harness, and that this conversation is on Slack', /deepseek-bot/.test(text) && /DeepSeek Harness/.test(text) && /This conversation is on Slack/.test(text), text.split('\n')[1])
+  check('identity: it names what it may change itself', /SOUL\.md/.test(text) && /memory\//.test(text) && /\.dsh\/skills\//.test(text) && /watch/.test(text))
+  check('identity: and what only the operator can, and where, without trying', /operator/.test(text) && /model/.test(text) && /provider/.test(text) && /language/.test(text) && /cordis\.patch\.yml/.test(text) && /\.env/.test(text) && /\.credentials\.yaml/.test(text) && /does not try/.test(text))
+  t.done()
+
+  // A turn with no conversation (the self-test diagnostic) gets the section too, instead of a TypeError in setup.
+  const selfTest = boot({ agent: 'ready', config: { selfTest: 'are you there?' } })
+  for (let i = 0; i < 100 && selfTest.created.length === 0; i++) await sleep(10)
+  const own = []
+  let threw = ''
+  try { await selfTest.created[0]?.setup?.({ systemPrompt: { section: (s) => { own.push(s); return () => {} } } }) } catch (e) { threw = String((e as Error).message) }
+  check('identity: a turn outside any conversation is set up, and told so', threw === '' && /not in any conversation/.test(String(own.find((s) => s.name === 'deepbot:identity')?.text ?? '')), threw || String(own[0]?.text ?? '').split('\n')[1])
+  selfTest.done()
+}
+
 // 39. The steps after the agent exists run. They sat after a throw, inside the branch for an agent that
 // did not come back (a0e847e, when the emptied index.ts was restored): no session was ever attached to its
 // workspace, and permissionPreset was a setting that did nothing.

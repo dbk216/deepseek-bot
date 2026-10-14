@@ -90,6 +90,9 @@ export const inject = [
   'workspaceRegistry',
 ]
 
+/** Where the identity section sits: after the preset's persona prefix (0), before plan and tool guidance (500+). */
+const IDENTITY_ORDER = 10
+
 // Config is validated by hand instead of with a schemastery schema, to keep the
 // dependency surface at zero.
 const DEFAULTS = {
@@ -1850,6 +1853,8 @@ export function apply(ctx, config) {
 
     const setup = async (agentCtx) => {
       if (presetId && agentPresets?.mount) await agentPresets.mount(agentCtx, presetId)
+      // Scoped to this agent, so it goes with it. The preset says only "a coding agent".
+      agentCtx.systemPrompt?.section?.({ name: 'deepbot:identity', order: IDENTITY_ORDER, interpolate: false, text: identityText(sessionKey) })
     }
 
     // A workspace is what the harness's own instruction loader and other
@@ -2091,6 +2096,30 @@ export function apply(ctx, config) {
   // Socket Mode connection and its reconnect loop, event parsing, rendering,
   // history deltas, attachments. The core keeps mapping, the turn loop, policy,
   // watches and reminders.
+  // ── Who the agent is ───────────────────────────────────────────────────
+  /** Where a conversation is, in words: the terminal, or the platform whose transport claims its channel. */
+  function platformOf(key: string | null): string {
+    if (key === null || key === '') return 'not in any conversation (a self-test)'
+    if (key.startsWith(`${LOCAL_CHANNEL}:`)) return 'in the terminal (dsh)'
+    const claimed = (() => { try { return via(targetFromKey(key))?.platformName } catch { return undefined } })()
+    const name = String(claimed ?? platforms.find((p) => p !== 'local') ?? platforms[0] ?? 'slack')
+    return `on ${({ slack: 'Slack', telegram: 'Telegram', discord: 'Discord' })[name] ?? name}`
+  }
+
+  /**
+   * What every session is told about itself: that it is deepseek-bot, where this conversation is, and
+   * which settings are its own and which are the operator's. Asked to change the model or a channel, it
+   * used to look for them in its own home.
+   */
+  function identityText(key: string | null): string {
+    return [
+      'This agent is deepseek-bot: a bot people talk to on Slack, Telegram, Discord or in a terminal (dsh), running on DeepSeek Harness. Its name and voice are the persona in SOUL.md.',
+      `This conversation is ${platformOf(key)}. The bot's own notices (approvals, stops, failures) are in ${({ en: 'English', ko: 'Korean', zh: 'Chinese' })[language]}; answers follow the persona and the person.`,
+      'It may change, in its home: SOUL.md, USER.md and MEMORY.md (who it is, who it works for, what it knows), its notes under memory/, its watches, and its skills under .dsh/skills/<name>/SKILL.md.',
+      'Only the operator can change, outside its home, where it can neither read nor write: the model and provider, the platforms and channels it answers in, the language setting, API keys and tokens, the approval rules and the sandbox. Asked to change one, it says which setting it is and that the operator changes it in the gateway profile (~/.dsh/profiles/<profile>/cordis.patch.yml), ~/.dsh/.env or the DeepSeek Harness app store (~/.dsh/.credentials.yaml), and does not try to; in the terminal, /model moves one conversation to another model the providers list.',
+    ].join('\n')
+  }
+
   // ── The model, per conversation ─────────────────────────────────────────
   /** What a conversation runs on: its own choice (/model), else its tenant's, else the deployment's. */
   function modelFor(key: string): { provider: string; model: string; reasoningEffort?: string } {
@@ -2212,13 +2241,15 @@ export function apply(ctx, config) {
       writeHealth()
     },
   }
-  const createPlatform = (platform: unknown) => platform === 'telegram'
+  const createPlatformTransport = (platform: unknown) => platform === 'telegram'
     ? createTelegramTransport(transportHost)
     : platform === 'discord'
       ? createDiscordTransport(transportHost)
       : platform === 'local'
         ? createLocalTransport(transportHost)
         : createSlackTransport(transportHost)
+  // Each one says which platform it is, so a conversation can be told where it is when several are served.
+  const createPlatform = (platform: unknown) => Object.assign(createPlatformTransport(platform), { platformName: String(platform) })
   const platforms = Array.isArray(cfg.platform) ? cfg.platform : [cfg.platform]
   const transport = cfg.transportFactory
     ? cfg.transportFactory(transportHost)
