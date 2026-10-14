@@ -9,7 +9,7 @@
  * Layout, top to bottom: a header, the transcript, a divider, the status line, the input box,
  * and a hint line. Nothing frames the whole screen; the transcript gets every row it can.
  */
-import { answerBlock, bannerBlock, noticeBlock, spacerBlock, thinkingBlock, toolBlock, toolCallBlock, userBlock, type AnswerBlock, type Detail, type NoticeKind, type ThinkingBlock, type ToolCallBlock, type ToolStep } from './blocks.js'
+import { answerBlock, bannerBlock, noticeBlock, ruleBlock, spacerBlock, thinkingBlock, toolBlock, toolCallBlock, userBlock, type AnswerBlock, type Detail, type NoticeKind, type ThinkingBlock, type ToolCallBlock, type ToolStep } from './blocks.js'
 import { complete, type CommandInfo, type Completion } from './complete.js'
 import type { AgentItem, JobItem, ViewLine } from './bridge.js'
 import { formatTokens, panelCounts, panelRows, panelWindow, rowStatus, type PanelRow } from './panel.js'
@@ -22,9 +22,10 @@ import { copy as systemCopy, type CopyMethod } from './render/clipboard.js'
 import { Editor } from './render/editor.js'
 import type { InputEvent, KeyEvent, MouseEvent } from './render/input.js'
 import type { Screen } from './render/screen.js'
-import { detectColorMode, sgr, theme, type ColorMode } from './render/style.js'
+import { detectColorMode, palette, sgr, theme, type ColorMode } from './render/style.js'
+import { currentFrame, setFrame, shimmer } from './render/motion.js'
 import { Terminal, type TerminalIO } from './render/terminal.js'
-import { Transcript } from './render/transcript.js'
+import { Transcript, type Block } from './render/transcript.js'
 import { graphemes, stringWidth } from './render/width.js'
 
 export interface Backend {
@@ -141,6 +142,14 @@ export class App {
   private attemptThought: ThinkingBlock | null = null
   /** Tool calls waiting for their result, by call id. */
   private readonly calls = new Map<string, ToolCallBlock>()
+  /** The tool running now, for the status line. */
+  private runningTool: string | null = null
+  /** Exchanges shown so far: a rule goes between one and the next. */
+  private exchanges = 0
+  /** Messages sent while a turn runs: shown above the input until their turn starts. */
+  private pending: string[] = []
+  /** The transcript ends in a blank line: the next step needs none of its own. */
+  private gapped = true
   /** Candidates for what is being typed (/commands, @files), and the one picked. */
   completion: (Completion & { index: number; text: string }) | null = null
   /** The text Esc closed the list at: it stays closed until the text changes. */
@@ -220,7 +229,7 @@ export class App {
   /** Streamed answer text. The block is created on the first delta. */
   delta(text: string): void {
     this.closeThinking()
-    if (this.answer === null) { this.answer = answerBlock(this.mode); this.transcript.push(this.answer); this.turnBlock = this.answer }
+    if (this.answer === null) { this.answer = answerBlock(this.mode); this.step(this.answer); this.turnBlock = this.answer }
     this.answer.append(text)
     this.noteInterview(this.answer.text)
     this.transcript.touch()
@@ -243,7 +252,7 @@ export class App {
     if (this.thought === null) {
       this.closeAnswer()
       this.thought = thinkingBlock(this.detail, this.mode)
-      this.transcript.push(this.thought)
+      this.step(this.thought)
     }
     this.thought.append(text)
     this.transcript.touch()
@@ -265,7 +274,8 @@ export class App {
     this.attemptThought = null
     this.closeAnswer()
     const block = toolCallBlock(step, this.detail, this.mode)
-    this.transcript.push(block)
+    this.runningTool = step.name
+    this.step(block)
     if (step.callId !== undefined) {
       this.calls.set(step.callId, block)
       // A result that never comes (a cancelled turn) must not keep its call forever.
@@ -278,6 +288,7 @@ export class App {
     const block = this.calls.get(callId)
     if (block === undefined) return
     this.calls.delete(callId)
+    if (this.calls.size === 0) this.runningTool = null
     block.result(ok, text)
     this.transcript.touch()
     this.terminal.requestRender()
@@ -286,7 +297,7 @@ export class App {
   /** The turn's final text. Replaces the streamed text when there was any. */
   final(text: string): void {
     if (this.answer !== null) this.answer.finish(text)
-    else if (text !== '') { const block = answerBlock(this.mode); block.finish(text); this.transcript.push(block) }
+    else if (text !== '') { const block = answerBlock(this.mode); block.finish(text); this.step(block) }
     this.answer = null
     this.transcript.touch()
     this.terminal.requestRender()
@@ -297,16 +308,28 @@ export class App {
     this.attemptThought = null
     this.closeAnswer()
     this.choice = null   // whatever it asked belonged to the turn
+    // A call with no result by now never gets one: it stops blinking.
+    for (const call of this.calls.values()) call.settle()
+    this.calls.clear()
+    this.runningTool = null
     this.busy = Math.max(0, this.busy - 1)
     if (this.busy === 0) {
       this.status.running = false
       this.stopSpinner()
+      // Nothing is waiting any more: whatever is still shown above the input was answered with it.
+      for (const text of this.pending.splice(0)) this.shown(text)
+    } else if (this.pending.length > 0) {
+      // The next waiting message's turn starts now.
+      this.shown(this.pending.shift()!)
+      this.status.startedAt = this.clock.now()
     }
+    this.transcript.touch()
     this.terminal.requestRender()
   }
 
   notice(text: string, kind: NoticeKind = 'info'): void {
     this.transcript.push(noticeBlock(text, kind, this.mode))
+    this.gapped = false
     this.terminal.requestRender()
   }
 
@@ -330,7 +353,7 @@ export class App {
       const block = answerBlock(this.mode)
       block.finish(text)
       this.remember(ts, block)
-      this.transcript.push(block)
+      this.step(block)
     }
     this.transcript.touch()
     this.terminal.requestRender()
@@ -344,10 +367,32 @@ export class App {
 
   /** Send a message shown as `display` (a command's short form) rather than as its full text. */
   sendAs(display: string, text: string): void {
-    this.transcript.push(userBlock(display, this.mode))
-    this.transcript.push(spacerBlock())
-    this.transcript.toBottom()
+    this.said(display)
     this.o.backend.send(text)
+  }
+
+  /**
+   * What the person said, into the transcript — or, while a turn runs, above the input: the gateway
+   * answers it after the running turn, and it joins the transcript when its turn starts.
+   */
+  private said(text: string): void {
+    if (this.status.running) { this.pending.push(text); this.terminal.requestRender(true); return }
+    this.shown(text)
+  }
+
+  private shown(text: string): void {
+    if (this.exchanges++ > 0) this.transcript.push(ruleBlock(this.mode))
+    this.transcript.push(userBlock(text, this.mode))
+    this.transcript.push(spacerBlock())   // one blank line between a question and what answers it
+    this.gapped = true
+    this.transcript.toBottom()
+  }
+
+  /** A turn's step — thinking, a tool call, the answer — with one blank line before it. */
+  private step(block: Block): void {
+    if (!this.gapped) this.transcript.push(spacerBlock())
+    this.transcript.push(block)
+    this.gapped = false
   }
 
   private noteInterview(text: string): void {
@@ -424,7 +469,7 @@ export class App {
     if (items.length === 0) return
     this.notice(t().earlier(items.length), 'info')
     for (const item of items) {
-      if (item.role === 'user') { this.transcript.push(userBlock(item.text, this.mode)); this.transcript.push(spacerBlock()) }
+      if (item.role === 'user') this.shown(item.text)
       else { const block = answerBlock(this.mode); block.finish(item.text); this.transcript.push(block) }
     }
     this.notice(t().continuedHere, 'info')
@@ -597,7 +642,7 @@ export class App {
       case 'escape':
         if (this.pane.selection !== null) this.clearSelection()
         else if (this.view.kind !== 'main') this.backToMain()
-        else if (this.status.running) this.o.backend.cancel()
+        else if (this.status.running) this.cancel()
         break
       case 'backspace': if (key.alt || key.ctrl) this.editor.killWord(); else this.editor.backspace(); break
       case 'delete': this.editor.del(); break
@@ -757,10 +802,17 @@ export class App {
     }
     if (this.view.kind === 'job') { this.showToast(t().shellNoInput); return }
     this.o.remember?.(text)
-    this.transcript.push(userBlock(text, this.mode))
-    this.transcript.push(spacerBlock())   // one blank line between a question and what answers it
-    this.transcript.toBottom()
+    this.said(text)
     this.o.backend.send(text)
+  }
+
+  /** Stop the turn. The gateway withdraws the messages waiting behind it, so they come back to the input. */
+  private cancel(): void {
+    this.o.backend.cancel()
+    if (this.pending.length === 0) return
+    const back = this.pending.splice(0).join('\n')
+    this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
+    this.terminal.requestRender(true)
   }
 
   private pick(index: number): void {
@@ -772,7 +824,7 @@ export class App {
 
   private ctrlC(): void {
     if (this.editor.text !== '') { this.editor.set(''); this.quitArmed = 0; this.refreshCompletion(); this.terminal.requestRender(true); return }
-    if (this.status.running) { this.o.backend.cancel(); return }
+    if (this.status.running) { this.cancel(); return }
     const now = this.clock.now()
     if (this.quitArmed !== 0 && now - this.quitArmed < TOAST_MS) { this.stop(0); return }
     this.quitArmed = now
@@ -855,6 +907,7 @@ export class App {
 
   private render(screen: Screen): void {
     const { cols, rows } = screen
+    setFrame(Math.floor(this.clock.now() / 80))
     const s = (style) => sgr(style, this.mode)
     const editor = this.editor.layout(this.editorWidth())
     const editorRows = Math.min(EDITOR_MAX_ROWS, editor.rows.length)
@@ -865,11 +918,15 @@ export class App {
     const panel = panelWindow(allRows, this.panelIndex, PANEL_MAX_ROWS)
     const panelShown = panel.rows.length
     const completionLines = this.completionLines(cols)
-    const bottom = 1 /* divider */ + 1 /* status */ + panelShown + choiceRows + questionLines.length + completionLines.length + editorRows + 2 /* box */ + 1 /* hint */
+    // Messages waiting behind the running turn, above the divider: three at most, then a count.
+    const waiting = this.view.kind === 'main' ? this.pending : []
+    const pendingRows = Math.min(waiting.length, 3) + (waiting.length > 3 ? 1 : 0)
+    const bottom = pendingRows + 1 /* divider */ + 1 /* status */ + panelShown + choiceRows + questionLines.length + completionLines.length + editorRows + 2 /* box */ + 1 /* hint */
     const transcriptTop = 1 + stripRows
     const transcriptHeight = Math.max(1, rows - transcriptTop - bottom)
     if (stripRows > 0) this.drawInterview(screen, 1, cols)
-    const dividerRow = transcriptTop + transcriptHeight
+    const pendingTop = transcriptTop + transcriptHeight
+    const dividerRow = pendingTop + pendingRows
     const statusRow = dividerRow + 1
     const panelTop = panelShown === 0 ? -1 : statusRow + 1
     const choiceRow = choiceRows === 0 ? -1 : statusRow + 1 + panelShown
@@ -925,6 +982,21 @@ export class App {
         }
       }
     })
+
+    // What waits behind the running turn, each on the band it will have in the transcript.
+    if (pendingRows > 0) {
+      const banded = this.mode !== 'none'
+      const body = s(banded ? theme.userBand : theme.muted)
+      const tag = ` ${t().queued} `
+      waiting.slice(0, 3).forEach((text, i) => {
+        const y = pendingTop + i
+        if (banded) screen.put(0, y, ' '.repeat(cols), body)
+        const x = screen.put(0, y, '› ', s(banded ? theme.userMark : theme.user))
+        screen.put(x, y, text.replace(/\s+/g, ' '), body, Math.max(x, cols - stringWidth(tag) - 1))
+        screen.put(cols - stringWidth(tag) - 1, y, tag, s(banded ? { ...theme.userBand, fg: palette.muted, italic: true } : theme.muted))
+      })
+      if (waiting.length > 3) screen.put(2, pendingTop + 3, t().queuedCount(waiting.length), s(theme.muted))
+    }
 
     // Divider, with the "new lines below" marker when scrolled away.
     screen.put(0, dividerRow, '─'.repeat(cols), s(theme.border))
@@ -1054,6 +1126,14 @@ export class App {
       x = screen.put(x, y, `○ ${this.status.link}`, s(theme.warn))
     } else {
       x = screen.put(x, y, `▸▸ ${this.status.preset || 'ask'}`, s(theme.accent))
+      if (this.status.running) {
+        // Thinking in the sky blue it has in the transcript; anything else in the brand's light blue.
+        const thinking = this.thought !== null && this.thought.streaming
+        const label = thinking ? t().thinking : this.runningTool !== null ? t().runningTool(this.runningTool) : t().working
+        x = screen.put(x, y, '  ✻ ', s(thinking ? theme.thinking : theme.accent))
+        for (const span of shimmer(label, thinking ? palette.sky : palette.light, palette.glint, currentFrame(), this.mode)) x = screen.put(x, y, span.text, span.style)
+      }
+      if (this.pending.length > 0) x = screen.put(x, y, ` · ${t().queuedCount(this.pending.length)}`, s(theme.muted))
       const counts = panelCounts(this.panel.agents, this.panel.jobs)
       if (counts.shells > 0) x = screen.put(x, y, ` · ${counts.shells} shell${counts.shells > 1 ? 's' : ''}`, s(theme.muted))
       if (counts.agents > 0) x = screen.put(x, y, ` · ← ${counts.agents} agent${counts.agents > 1 ? 's' : ''}`, s(theme.muted))
@@ -1104,6 +1184,7 @@ export class App {
     const tick = () => {
       this.spinTimer = null
       if (!this.status.running) return
+      this.transcript.touch()   // a running tool's dot and the thinking label move with the frame
       this.terminal.requestRender()
       this.spinTimer = this.clock.setTimer(tick, 80)
     }

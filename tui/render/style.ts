@@ -76,6 +76,15 @@ export const palette = {
   warn: [0xf2, 0xb0, 0x3d] as Rgb,
   danger: [0xf0, 0x5a, 0x5a] as Rgb,
   ok: [0x4c, 0xc3, 0x8a] as Rgb,
+  /** Thinking and reasoning: a sky blue apart from the brand's, so the model's reasoning never reads as its answer. */
+  sky: [0x7d, 0xd3, 0xfc] as Rgb,
+  skyDim: [0x5b, 0xa4, 0xc8] as Rgb,
+  /** The light that sweeps across a label while the bot works. */
+  glint: [0xff, 0xff, 0xff] as Rgb,
+  /** The band behind what the person said. */
+  band: [0x26, 0x2c, 0x38] as Rgb,
+  /** The rule between one exchange and the next. */
+  rule: [0x3a, 0x42, 0x52] as Rgb,
 }
 
 /** Named styles the views use, so a view never spells a colour. */
@@ -84,6 +93,12 @@ export const theme = {
   muted: { fg: palette.muted } as Style,
   dim: { dim: true } as Style,
   user: { fg: palette.light, bold: true } as Style,
+  userBand: { fg: palette.text, bg: palette.band } as Style,
+  userMark: { fg: palette.light, bg: palette.band, bold: true } as Style,
+  answerMark: { fg: palette.text } as Style,
+  thinking: { fg: palette.sky } as Style,
+  thinkingBody: { fg: palette.skyDim, italic: true } as Style,
+  rule: { fg: palette.rule } as Style,
   assistant: {} as Style,
   tool: { fg: palette.muted } as Style,
   toolMark: { fg: palette.primary } as Style,

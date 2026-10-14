@@ -130,7 +130,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.app.turnEnded()
   t.clock.advance(20)
   const done = t.term.screen.text()
-  check('stream: a tool step appears between the two parts', done.includes('⏺ recall  2 passages'))
+  check('stream: a tool step appears between the two parts', done.includes('● recall  2 passages'))
   check('stream: the final text replaces the streamed text', done.includes('staging 먼저, 그다음 production.') && !done.includes('staging 먼저.▍'))
   check('stream: no spinner after the turn', !/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d+\.\ds/.test(done))
 }
@@ -273,7 +273,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.app.agentLines('child-1', [{ role: 'user', text: '링크 3개를 요약해' }, { role: 'tool', text: 'web_fetch' }, { role: 'assistant', text: '요약 중간 결과' }])
   t.clock.advance(20)
   const view = t.term.screen.text()
-  check('agent view: the header says where we are, the pane shows the child\'s conversation', view.includes('deepseek-bot · main › research links') && view.includes('› 링크 3개를 요약해') && view.includes('⏺ web_fetch') && view.includes('요약 중간 결과'))
+  check('agent view: the header says where we are, the pane shows the child\'s conversation', view.includes('deepseek-bot · main › research links') && view.includes('› 링크 3개를 요약해') && view.includes('● web_fetch') && view.includes('요약 중간 결과'))
   check('agent view: lines for another child are ignored', (t.app.agentLines('child-2', [{ role: 'user', text: '다른 아이' }]), !t.term.screen.text().includes('다른 아이')))
   t.key('더 짧게 해줘\r')
   check('agent view: Enter sends to that child, not to the conversation', JSON.stringify(t.views.at(-1)) === JSON.stringify(['send', 'child-1', '더 짧게 해줘']) && t.sent.length === 0)
@@ -530,7 +530,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
     diff: [{ path: '/w/a.ts', old: 'same one\nold value\nsame two', new: 'same one\nnew value\nsame two' }] })
   t.clock.advance(20)
   screen = t.term.screen.text()
-  check('tools: the call shows its name and title', screen.includes('⏺ str_replace_editor') && screen.includes('str_replace /w/a.ts'))
+  check('tools: the call shows its name and title', screen.includes('● str_replace_editor') && screen.includes('str_replace /w/a.ts'))
   check('tools: an edit shows what changed, not the lines around it', screen.includes('- old value') && screen.includes('+ new value') && !screen.includes('same one'), screen.split('\n').slice(-16).join(' | '))
   t.app.toolResult('c1', true, 'r1\nr2\nr3\nr4\nr5')
   t.clock.advance(20)
@@ -734,6 +734,96 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const first = fileFinder(undefined, backwards)(root, 'many/f', 5000)
   check('files: a directory over the cap keeps its first names, whatever order the disk gives', first.includes('many/f0000') && first.includes('many/f1999') && !first.includes('many/f2099'), `${first.length} listed`)
   rmSync(root, { recursive: true, force: true })
+}
+
+// 60. How a conversation looks: what was said on a band, answers and tool calls marked, thinking in sky
+// blue with a light passing over it, a rule between exchanges, and what waits shown as waiting.
+{
+  const BAND = '48;2;38;44;56', OK = '38;2;76;195;138', DANGER = '38;2;240;90;90', MUTED = '38;2;138;147;166', SKY = '38;2;125;211;252'
+  const t = setup({ cols: 80, rows: 40 })
+  const cell = (r, c) => t.term.screen.grid[r * 80 + c]
+  const styleAt = (needle) => { const at = t.term.screen.find(needle); return at === null ? null : cell(at.row, at.col).style }
+  t.key('hello there\r')
+  t.clock.advance(20)
+  const said = t.term.screen.find('› hello there')
+  check('band: what was said sits on a band to the edge', said !== null && cell(said.row, said.col).style.includes(BAND) && cell(said.row, 79).style.includes(BAND), said === null ? 'not found' : cell(said.row, 79).style)
+  t.app.turnStarted()
+  t.app.toolCall({ name: 'bash', callId: 'c1', title: 'ls' })
+  t.clock.advance(20)
+  const first = styleAt('● bash')
+  t.clock.advance(480)
+  const second = styleAt('● bash')
+  check('tool: the dot blinks while the tool runs', first !== null && second !== null && first !== second, `${first} / ${second}`)
+  check('status: says which tool runs', t.term.screen.text().includes('running bash…'))
+  t.app.toolResult('c1', true, 'a.txt')
+  t.clock.advance(20)
+  check('tool: green once it succeeded', (styleAt('● bash') ?? '').includes(OK), styleAt('● bash'))
+  t.app.toolCall({ name: 'grep', callId: 'c2', title: 'x' })
+  t.app.toolResult('c2', false, 'no such file')
+  t.clock.advance(20)
+  check('tool: red once it failed', (styleAt('● grep') ?? '').includes(DANGER), styleAt('● grep'))
+  t.app.toolCall({ name: 'fetch', callId: 'c3', title: 'https://example.com' })
+  t.app.thinking('weighing the two options\n')
+  t.clock.advance(20)
+  const label = t.term.screen.find('✻ thinking…')
+  const styles = label === null ? new Set() : new Set(Array.from({ length: 9 }, (_, i) => cell(label.row, label.col + 2 + i).style))
+  check('thinking: in sky blue, with a light passing over its label', label !== null && styles.size > 1 && [...styles].some((s) => String(s).includes(SKY)), [...styles].join(' | ').slice(0, 120))
+  check('status: says it is thinking', /✻ thinking…/.test(t.term.screen.row(t.term.screen.find('▸▸ ask').row)))
+  t.app.delta('The answer.')
+  t.app.final('The answer.')
+  t.app.turnEnded()
+  t.clock.advance(20)
+  check('answer: marked with a dot where it starts', t.term.screen.text().includes('● The answer.'))
+  const lines = t.term.screen.text().split('\n')
+  const answerAt = lines.findIndex((l) => l.includes('● The answer.'))
+  check('steps: a blank line before the answer, and before each tool call', answerAt > 0 && lines[answerAt - 1].trim() === '' && lines[lines.findIndex((l) => l.includes('● grep')) - 1].trim() === '', lines.slice(Math.max(0, answerAt - 2), answerAt + 1).join(' | '))
+  const settled = styleAt('● fetch')
+  t.clock.advance(480)
+  check('tool: a call left without a result stops blinking when the turn ends', settled !== null && settled === styleAt('● fetch') && settled.includes(MUTED), settled)
+  check('thinking: folded, it says what it was, in one colour', (() => { const at = t.term.screen.find('✻ thought ·'); return at !== null && cell(at.row, at.col + 2).style === cell(at.row, at.col + 8).style && cell(at.row, at.col + 2).style.includes(SKY) })())
+
+  t.key('second question\r')
+  t.clock.advance(20)
+  const rows = t.term.screen.text().split('\n')
+  const ruleAt = rows.findIndex((l) => /^ {2}─{20,}/.test(l))
+  const secondAt = rows.findIndex((l) => l.includes('› second question'))
+  check('rule: a line between one exchange and the next, and none before the first', ruleAt !== -1 && ruleAt < secondAt && ruleAt > rows.findIndex((l) => l.includes('● The answer.')) && rows.findIndex((l) => /^ {2}─{20,}/.test(l)) === ruleAt, `${ruleAt} < ${secondAt}`)
+
+  // A message sent while a turn runs waits above the input, and joins the transcript when its turn starts.
+  t.app.turnStarted()
+  t.key('and a third\r')
+  t.app.turnStarted()   // the gateway's typing for the waiting message
+  t.clock.advance(20)
+  const waiting = t.term.screen.find('› and a third')
+  const divider = t.term.screen.text().split('\n').findIndex((l) => /^─{60,}/.test(l))
+  check('waiting: shown above the input, tagged, not yet in the transcript', waiting !== null && waiting.row === divider - 1 && t.term.screen.row(waiting.row).includes('queued'), waiting === null ? 'not shown' : `${waiting.row} vs ${divider}`)
+  check('waiting: the status line counts it', t.term.screen.text().includes('1 queued'))
+  t.app.final('Second answer.')
+  t.app.turnEnded()
+  t.clock.advance(20)
+  const moved = t.term.screen.find('› and a third')
+  check('waiting: its turn started, it is in the transcript, untagged', moved !== null && moved.row < divider && !t.term.screen.row(moved.row).includes('queued') && !t.term.screen.text().includes('1 queued'))
+  t.app.turnEnded()
+
+  // Stopping the turn withdraws what waited at the gateway: it comes back to the input.
+  t.app.turnStarted()
+  t.key('fourth\r')
+  t.key('\x1b'); t.clock.advance(40)
+  check('waiting: esc stops the turn and gives what waited back to the input', t.cancels === 1 && t.app.editor.text === 'fourth' && !t.term.screen.text().includes('queued'), `cancels ${t.cancels}, editor ${JSON.stringify(t.app.editor.text)}`)
+  t.app.turnEnded()
+}
+
+// 61. Without colour there is no band and nothing sweeps: the same words, plain.
+{
+  const t = setup({ cols: 60, rows: 24, env: { NO_COLOR: '1' } })
+  t.key('plain\r')
+  t.app.turnStarted()
+  t.app.thinking('hmm\n')
+  t.clock.advance(20)
+  const at = t.term.screen.find('› plain')
+  check('no colour: what was said has no band and no trailing spaces', at !== null && !t.term.screen.grid.some((c) => c.style.includes('48;')) && t.term.screen.row(at.row).trimEnd() === '› plain')
+  check('no colour: the thinking label is one style', (() => { const l = t.term.screen.find('✻ thinking…'); return l !== null && new Set(Array.from({ length: 9 }, (_, i) => t.term.screen.grid[l.row * 60 + l.col + 2 + i].style)).size === 1 })())
+  t.app.turnEnded()
 }
 
 const failed = results.filter((r) => !r.ok)

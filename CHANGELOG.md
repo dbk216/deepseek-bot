@@ -18,6 +18,13 @@ the caveat about version numbers is at the bottom.
 
 ### Changed
 
+- **The terminal shows a turn's parts apart.** What the person said is on a band; answers start at
+  a `●`; a tool call's `●` blinks while it runs and turns green or red with its result, and stops
+  blinking when the turn ends without one; thinking is sky blue, its label swept by a light while it
+  streams; a blank line separates a turn's steps and a rule separates exchanges; the status line
+  names what is happening (thinking, the running tool, working). A message sent during a turn waits
+  above the input, tagged queued, until its turn starts, and `esc` gives what waited back to the
+  input, since the gateway withdraws it.
 - **The bot's own words default to English.** They were Korean. A Korean deployment keeps them by
   setting `language: ko`; the Korean wording is unchanged.
 - **The terminal speaks English.** Its status line, hints, notices, `/help`, usage and exit line were

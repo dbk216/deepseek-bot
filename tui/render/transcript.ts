@@ -10,12 +10,12 @@ import { extract, type Line } from './text.js'
 
 export interface Block {
   id: string
-  /** Bump when the content changes; the cached layout is dropped. */
-  version: number
+  /** Bump when the content changes; the cached layout is dropped. A string may carry an animation frame. */
+  version: number | string
   lines(width: number): Line[]
 }
 
-interface Cached { version: number; width: number; lines: Line[] }
+interface Cached { version: number | string; width: number; lines: Line[] }
 
 export interface Point { line: number; col: number }
 

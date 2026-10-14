@@ -453,7 +453,7 @@ no progress at all.
 
 ## Stopping a running turn
 
-A turn can take minutes. Say `그만`, `중단`, `취소`, `멈춰`, `stop` or `cancel` on its own in the
+A turn can take minutes. Say `stop` or `cancel` (`그만`, `중단`, `취소`, `멈춰`, `停止`, `取消`…) on its own in the
 thread and the turn is cancelled; the progress placeholder becomes the report, so there is no
 second message. With nothing running, the answer is that there is nothing to stop, rather than a
 turn started just to say so.
@@ -494,10 +494,19 @@ beside the platform; from a clone, run `node dist/tui/main.js`) finds the runnin
 (needs `tenantIsolation`; without it a new conversation goes where the configuration sends any other,
 `tenantDefault` or the home), `--resume <id>` continues a conversation (the id is printed on exit).
 
+**What it shows.** What the person said sits on a band across the pane; the answer starts at a white
+`●`; a tool call's `●` blinks while it runs and turns green or red with its result (grey when the turn
+ended without one); thinking is in sky blue, its label swept by a light while it streams, and folds to
+one line when the answer starts. A blank line separates the steps of a turn and a rule separates one
+exchange from the next. The status line says what is happening — `thinking…`, `running bash…`,
+`working…` — under the same light. A message sent while a turn runs waits above the input, tagged
+queued, and joins the transcript when its turn starts. Under `NO_COLOR` there is no band and nothing
+sweeps.
+
 | Keys | |
 |---|---|
 | `↵` / `alt+↵` | send / new line |
-| `esc` | stop the running turn; in a view, back to the conversation |
+| `esc` | stop the running turn (what was waiting behind it comes back to the input); in a view, back to the conversation |
 | `ctrl+c` twice, `ctrl+d` | quit (the terminal is always restored) |
 | wheel, `PgUp`/`PgDn` | scroll; drag selects and copies (pbcopy locally, OSC 52 over SSH) |
 | `tab`, `↑↓`, `↵`, or a click | the agent panel: open a subagent or a shell |

@@ -7,7 +7,9 @@
  */
 import { banner } from './render/banner.js'
 import { t } from './strings.js'
-import { sgr, theme, type ColorMode } from './render/style.js'
+import { palette, sgr, theme, type ColorMode } from './render/style.js'
+import { blink, currentFrame, shimmer } from './render/motion.js'
+import { stringWidth } from './render/width.js'
 import { layout, type Line, type Span } from './render/text.js'
 import { markdown, type MarkdownStyles } from './render/markdown.js'
 import { lineDiff } from './render/linediff.js'
@@ -27,16 +29,34 @@ const nextId = (kind: string) => `${kind}-${++counter}`
 
 const pad = (text: string, style = ''): Span => ({ text, style, decor: true })
 
+/** The display width of a line's spans. */
+const widthOf = (line: Line) => line.spans.reduce((n, span) => n + stringWidth(span.text), 0)
+
+/** What the person said, on a band of its own across the pane, so a question never reads as part of an answer. */
 export function userBlock(text: string, mode: ColorMode): Block {
-  const style = sgr(theme.user, mode)
+  const banded = mode !== 'none'
+  const mark = sgr(banded ? theme.userMark : theme.user, mode)
+  const body = sgr(banded ? theme.userBand : theme.text, mode)
   return {
     id: nextId('user'),
     version: 0,
-    lines: (width) => [blank(), ...layout(text, width, sgr(theme.text, mode), { first: pad('› ', style), rest: pad('  ') })],
+    lines(width) {
+      const lines = layout(text, width, body, { first: pad('› ', mark), rest: pad('  ', body) })
+      // The band runs to the edge; without colour there is no band, and no trailing spaces.
+      if (banded) for (const line of lines) line.spans.push(pad(' '.repeat(Math.max(0, width - widthOf(line))), body))
+      return [blank(), ...lines]
+    },
   }
 }
 
+/** A line between one exchange and the next. */
+export function ruleBlock(mode: ColorMode): Block {
+  const style = sgr(theme.rule, mode)
+  return { id: nextId('rule'), version: 0, lines: (width) => [blank(), { spans: [pad('  '), pad('─'.repeat(Math.max(0, width - 4)), style)], soft: false }] }
+}
+
 export interface AnswerBlock extends Block {
+  version: number
   text: string
   streaming: boolean
   append(delta: string): void
@@ -48,6 +68,7 @@ export interface AnswerBlock extends Block {
 export function answerBlock(mode: ColorMode): AnswerBlock {
   const styles = markdownStyles(mode)
   const caret = sgr(theme.accent, mode)
+  const mark = sgr(theme.answerMark, mode)
   const block: AnswerBlock = {
     id: nextId('answer'),
     version: 0,
@@ -62,6 +83,9 @@ export function answerBlock(mode: ColorMode): AnswerBlock {
       if (shown === '' && !block.streaming) return []
       const lines = markdown(shown, width, styles, pad('  '))
       if (lines.length === 0) lines.push({ spans: [pad('  ')], soft: false })
+      // A dot where the answer starts, in the indent it would have had.
+      const lead = lines[0].spans[0]
+      if (lead?.decor === true && lead.text === '  ') lines[0].spans[0] = pad('● ', mark)
       if (block.streaming) lines[lines.length - 1].spans.push({ text: '▍', style: caret, decor: true })
       return lines
     },
@@ -73,7 +97,7 @@ export function toolBlock(name: string, detail: string, mode: ColorMode): Block 
   const mark = sgr(theme.toolMark, mode)
   const style = sgr(theme.tool, mode)
   const text = detail === '' ? name : `${name} · ${detail}`
-  return { id: nextId('tool'), version: 0, lines: (width) => layout(text, width, style, { first: pad('⏺ ', mark), rest: pad('  ') }) }
+  return { id: nextId('tool'), version: 0, lines: (width) => layout(text, width, style, { first: pad('● ', mark), rest: pad('  ') }) }
 }
 
 /** What folded blocks (thinking, tool steps) show: a few lines, or all of them (ctrl+o). Shared. */
@@ -100,13 +124,13 @@ export interface ThinkingBlock extends Block {
 
 /** The model's reasoning: its latest lines while it streams, one line after, all of it on ctrl+o. */
 export function thinkingBlock(detail: Detail, mode: ColorMode): ThinkingBlock {
-  const head = sgr(theme.muted, mode)
-  const body = sgr({ ...theme.muted, italic: true }, mode)
+  const head = sgr(theme.thinking, mode)
+  const body = sgr(theme.thinkingBody, mode)
   let own = 0
   const block: ThinkingBlock = {
     id: nextId('thinking'),
-    // The layout depends on ctrl+o as much as on the text.
-    get version() { return own * 2 + (detail.expanded ? 1 : 0) },
+    // The layout depends on ctrl+o as much as on the text, and while it streams, on the frame.
+    get version() { return `${own}:${detail.expanded ? 1 : 0}:${block.streaming ? currentFrame() : '-'}` },
     text: '',
     streaming: true,
     append(text) { block.text += text; own++ },
@@ -115,8 +139,10 @@ export function thinkingBlock(detail: Detail, mode: ColorMode): ThinkingBlock {
     lines(width) {
       const text = block.text.trim()
       if (text === '') return []
-      const label = block.streaming ? t().thinking : t().thought([...text].length, detail.expanded)
-      const lines: Line[] = [{ spans: [pad('✻ ', head), { text: label, style: head }], soft: false }]
+      const label = block.streaming
+        ? shimmer(t().thinking, palette.sky, palette.glint, currentFrame(), mode)
+        : [{ text: t().thought([...text].length, detail.expanded), style: head }]
+      const lines: Line[] = [{ spans: [pad('✻ ', head), ...label], soft: false }]
       if (!detail.expanded && !block.streaming) return lines
       const all = layout(text, width, body, { first: pad('  '), rest: pad('  ') })
       return [...lines, ...(detail.expanded ? fold(all, UNFOLDED.thinking, detail, head) : all.slice(-FOLDED.thinking))]
@@ -134,12 +160,19 @@ export interface ToolStep {
 
 export interface ToolCallBlock extends Block {
   callId?: string
+  name: string
   result(ok: boolean, text: string): void
+  /** The turn ended with no result for it: stop blinking. */
+  settle(): void
 }
 
 /** A tool call: its name and title, an edit's changed lines, then its result under it. */
 export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): ToolCallBlock {
-  const mark = sgr(theme.toolMark, mode)
+  const marks = {
+    on: sgr({ fg: palette.light, bold: true }, mode), off: sgr({ fg: palette.deep }, mode),
+    ok: sgr(theme.ok, mode), failed: sgr(theme.danger, mode), settled: sgr(theme.muted, mode),
+  }
+  const name = sgr({ ...theme.text, bold: true }, mode)
   const style = sgr(theme.tool, mode)
   const removed = sgr(theme.danger, mode)
   const added = sgr(theme.ok, mode)
@@ -170,14 +203,22 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
   const cut = (step.diff ?? []).some((d) => d.oldCut === true || d.newCut === true)
   let own = 0
   let outcome: { ok: boolean; text: string } | null = null
+  let settled = false
+  const running = () => outcome === null && !settled
   const block: ToolCallBlock = {
     id: nextId('tool'),
-    get version() { return own * 2 + (detail.expanded ? 1 : 0) },
+    get version() { return `${own}:${detail.expanded ? 1 : 0}:${running() ? (blink(currentFrame()) ? 'on' : 'off') : '-'}` },
     callId: step.callId,
+    name: step.name,
     result(ok, text) { outcome = { ok, text }; own++ },
+    settle() { if (running()) { settled = true; own++ } },
     lines(width) {
       const title = (step.title ?? '').split('\n')[0]
-      const out = layout(title === '' || title === step.name ? step.name : `${step.name}  ${title}`, width, style, { first: pad('⏺ ', mark), rest: pad('  ') })
+      const mark = outcome !== null ? (outcome.ok ? marks.ok : marks.failed) : settled ? marks.settled : blink(currentFrame()) ? marks.on : marks.off
+      const out = layout(title === '' || title === step.name ? step.name : `${step.name}  ${title}`, width, style, { first: pad('● ', mark), rest: pad('  ') })
+      // The tool's name in bold, what it was asked in the tool's own grey.
+      const head = out[0]?.spans[1]
+      if (head !== undefined && head.text.startsWith(step.name)) out[0].spans.splice(1, 1, { text: step.name, style: name }, { text: head.text.slice(step.name.length), style })
       const diff = changes.flatMap((d) => layout(d.text === '' ? ' ' : d.text, width, d.op === '-' ? removed : added, { first: pad(`  ${d.op} `, d.op === '-' ? removed : added), rest: pad('    ') }))
       out.push(...fold(diff, detail.expanded ? UNFOLDED.diff : FOLDED.diff, detail, style))
       const note = uncompared ? t().diffUncompared
