@@ -509,30 +509,46 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
     listModels: async (p) => p === 'og' ? [{ provider: p, id: 'm1', name: 'M1' }] : [{ provider: p, id: 'm2', name: 'M2' }],
     resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }),
   }
-  // Turns after the first resume the session: an agent that can be resumed, and keeps what it was told.
+  // Turns after the first resume the session: an agent that can be resumed, and keeps what it was told. A turn
+  // whose message says FAILTURN dies after its prompt was sent.
   const told = []
-  const agent = (o) => ({ agent: { session: { header: { id: o?.sessionId ?? o?.resumeSessionId ?? 's1' }, seq: 0, eventAt: () => undefined }, followup: (m) => { told.push((m?.content ?? []).map((b) => b?.text ?? '').join('')) }, whenIdle: async () => {}, cancel: () => {} }, dispose: async () => {} })
+  let dying = false
+  const agent = (o) => ({ agent: { session: { header: { id: o?.sessionId ?? o?.resumeSessionId ?? 's1' }, seq: 0, eventAt: () => undefined },
+    followup: (m) => { const text = (m?.content ?? []).map((b) => b?.text ?? '').join(''); told.push(text); dying = /FAILTURN/.test(text) },
+    whenIdle: async () => { if (dying) { dying = false; throw new Error('fake: the turn died') } }, cancel: () => {} }, dispose: async () => {} })
   const agents = { create: async (o) => agent(o), resume: async (o) => agent(o) }
-  const t = boot({ services: { llm, agents, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm1' }) } } })
+  // A route recorded for this conversation with no session behind it yet (a first turn that died): no line.
+  const t = boot({ state: { routes: { 'tui:conv-note': 'zz/old' } }, services: { llm, agents, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm1' }) } } })
   await sleep(100)
   const c = client(join(t.stateDir, 'tui.sock'))
   await c.opened
-  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-note' })
   await c.waitFor((f) => f.type === 'ready')
-  const turn = async (text) => { const n = told.length; c.send({ type: 'message', text }); for (let i = 0; i < 100 && told.length === n; i++) await sleep(10); await sleep(50); return told.at(-1) ?? '' }
+  // The prompt that carries this message, or '' when none came: the checks below cannot pass on an older one.
+  const turn = async (text) => { c.send({ type: 'message', text }); for (let i = 0; i < 400 && !told.some((p) => p.includes(text)); i++) await sleep(10); await sleep(80); return told.find((p) => p.includes(text)) ?? '' }
+  const switchTo = async (provider, model) => { const n = c.frames.filter((f) => f.type === 'model').length; c.send({ type: 'model', provider, model }); for (let i = 0; i < 100 && c.frames.filter((f) => f.type === 'model').length === n; i++) await sleep(10) }
   const first = await turn('하나')
-  check('model note: none on a conversation\'s first turn', !first.includes('[model changed'))
+  check('model note: none on a conversation\'s first turn, even with a route recorded and no session', first.includes('하나') && !first.includes('[model changed'), first.slice(0, 80))
   const same = await turn('둘')
-  check('model note: none while the model stays', !same.includes('[model changed'))
-  c.send({ type: 'model', provider: 'ds', model: 'm2' })
-  await c.waitFor((f) => f.type === 'model')
+  check('model note: none while the model stays', same.includes('둘') && !same.includes('[model changed'))
+  await switchTo('ds', 'm2')
   const moved = await turn('셋')
-  check('model note: the turn after a switch names both, before the message', /\[model changed\][^\n]*og\/m1[^\n]*ds\/m2/.test(moved) && moved.indexOf('[model changed]') < moved.indexOf('셋'), moved.split('\n').find((l) => l.includes('model changed')) ?? '(none)')
+  check('model note: the turn after a switch names both, before the [user message] marker', /\[model changed\][^\n]*og\/m1[^\n]*ds\/m2/.test(moved) && moved.indexOf('[model changed]') < moved.lastIndexOf('[user message]'), moved.split('\n').find((l) => l.includes('model changed')) ?? '(none)')
   const after = await turn('넷')
-  check('model note: once, not on every turn after', !after.includes('[model changed'))
+  check('model note: once, not on every turn after', after.includes('넷') && !after.includes('[model changed'))
   c.send({ type: 'effort', step: 1 })
   await c.waitFor((f) => f.type === 'model' && f.cause === 'effort')
-  check('model note: an effort step is not a change of model', !(await turn('다섯')).includes('[model changed'))
+  const stepped = await turn('다섯')
+  check('model note: an effort step is not a change of model', stepped.includes('다섯') && !stepped.includes('[model changed'))
+  // A turn on another route that dies answered nothing: going back, the line does not name it.
+  await switchTo('og', 'm1')
+  await turn('FAILTURN 여섯')
+  // Its failure is said before the next message is taken (the failed turn is retried first).
+  for (let i = 0; i < 300 && !c.frames.some((f) => f.type === 'post' && /fake: the turn died/.test(f.text)); i++) await sleep(10)
+  await sleep(300)
+  await switchTo('ds', 'm2')
+  const back = await turn('일곱')
+  check('model note: a route whose turn died is not named as having answered', back.includes('일곱') && !/answered by og\/m1/.test(back), back.split('\n').find((l) => l.includes('model changed')) ?? '(none)')
   await c.close()
   await t.done()
 }

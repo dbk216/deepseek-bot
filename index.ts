@@ -2056,16 +2056,18 @@ export function apply(ctx, config) {
       // The model this conversation last ran on, told when it changed (by /model, a tenant's or the deployment's
       // setting): the harness's own notice of a switch belongs to its model selection, which a plugin cannot
       // install, and the model took the turns above for its own. Provider and model; an effort is not a model.
+      // Only on a session that had turns before this one: a fresh session has no turns above to speak of.
       const route = `${agentOptions.provider}/${agentOptions.model}`
-      const ranOn = sessionKey === null ? undefined : state.routes?.[sessionKey]
-      const switched = ranOn !== undefined && ranOn !== route ? `[model changed] The turns above were answered by ${ranOn}; this one is answered by ${route}.\n` : ''
-      if (sessionKey !== null) state.routes = { ...(state.routes ?? {}), [sessionKey]: route }
+      const ranOn = sessionKey === null || existingSessionId === undefined ? undefined : state.routes?.[sessionKey]
+      const switched = ranOn !== undefined && ranOn !== route ? `[model changed] The turns above were answered by ${defuse(ranOn)}; this one is answered by ${defuse(route)}.\n` : ''
       const body = preamble === '' && speaker === '' && switched === '' ? prompt : `${switched}${preamble}${speaker}[user message]\n${prompt}`
       const refs = await admitImages(images)
       agent.followup(userMessage(refs.length === 0
         ? body
         : [{ type: 'text', text: body }, ...refs.map((attachment) => ({ type: 'image', attachment }))]))
       await agent.whenIdle()
+      // Recorded once the turn has run: a turn that died answered nothing, and is not named as having answered.
+      if (sessionKey !== null) state.routes = { ...(state.routes ?? {}), [sessionKey]: route }
       await sessions.flush(agent.session)
       // Refresh here, not in the Slack event handler: this is the one place every
       // path passes through (Slack messages, the test harness, any other caller),
