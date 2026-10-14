@@ -77,6 +77,7 @@ if (!existsSync(DSH_BIN)) fail(`dsh not found: ${DSH_BIN} (set DSH_BIN)`)
 // one ~/dsh-agent-test-<time> behind on every test run.
 let spec: { seed?: Record<string, unknown> }
 try { spec = JSON.parse(readFileSync(scenario, 'utf8')) } catch (e) { fail(`could not read the scenario: ${String((e as Error)?.message ?? e)}`) }
+if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) fail('could not read the scenario: it is not a JSON object')
 
 console.log(`scenario : ${scenario}`)
 console.log(`profile  : ${PROFILE}`)
@@ -136,6 +137,9 @@ for (const [path, body] of outsideFiles) {
 mkdirSync(join(homedir(), '.dsh', 'deepbot'), { recursive: true })
 const AGENTS_HOME = mkdtempSync(join(homedir(), '.dsh', 'deepbot', 'agents-home-test-'))
 
+// Stopped with ctrl+c or a kill, 'exit' does not run by itself: these leave through it, so what was made is removed.
+process.on('SIGINT', () => process.exit(130))
+process.on('SIGTERM', () => process.exit(143))
 process.on('exit', () => {
   rmSync(AGENTS_HOME, { recursive: true, force: true })
   // The index outlives the fresh home otherwise, one directory per run under ~/.dsh/recall.

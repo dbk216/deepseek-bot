@@ -311,10 +311,10 @@ export function apply(ctx, config) {
   }
   // One messenger, with the terminal beside it: with two, every conversation the terminal did not claim
   // went to the first one listed.
-  if (new Set(listedPlatforms).size !== listedPlatforms.length) problems.push(`platform: a platform listed twice would connect twice (got: ${JSON.stringify(cfg.platform)})`)
+  if (new Set(listedPlatforms).size !== listedPlatforms.length) problems.push(`platform: a platform listed twice would connect twice — list each once (got: ${JSON.stringify(cfg.platform)})`)
   const messengers = [...new Set(listedPlatforms.filter((p) => p !== 'local'))]
   if (messengers.length > 1) {
-    problems.push(`platform: one messenger at a time, with 'local' beside it (got: ${messengers.join(', ')}) — dsh gateway setup switches to one`)
+    problems.push(`platform: one messenger at a time, with 'local' beside it (got: ${messengers.join(', ')}) — keep one in the profile, or run dsh gateway setup <slack|telegram|discord>, which replaces the messenger`)
   }
   if (problems.length > 0) throw new Error(`deepbot config error:\n  - ${problems.join('\n  - ')}`)
 
@@ -2135,7 +2135,7 @@ export function apply(ctx, config) {
     return [
       'This agent is deepseek-bot: a bot people talk to on Slack, Telegram, Discord or in a terminal (dsh), running on DeepSeek Harness. Its name and voice are the persona in SOUL.md.',
       `This conversation is ${platformOf(key)}. The bot's own notices (approvals, stops, failures) are in ${({ en: 'English', ko: 'Korean', zh: 'Chinese' })[language]}; answers follow the persona and the person.`,
-      'It may change, in its home: SOUL.md, USER.md and MEMORY.md (who it is, who it works for, what it knows), its notes under memory/, its watches, and its skills under .dsh/skills/<name>/SKILL.md.',
+      `It may change, in its home: SOUL.md, USER.md and MEMORY.md (who it is, who it works for, what it knows), its notes under memory/,${tenantOf(key) === null ? ' its watches,' : ''} and its skills under .dsh/skills/<name>/SKILL.md.`,
       'Only the operator can change, outside its home, where it can neither read nor write: the model and provider, the platforms and channels it answers in, the language setting, API keys and tokens, the approval rules and the sandbox. Asked to change one, it says which setting it is and that the operator changes it in the gateway profile (~/.dsh/profiles/<profile>/cordis.patch.yml), ~/.dsh/.env or the DeepSeek Harness app store (~/.dsh/.credentials.yaml), and does not try to; in the terminal, /model moves one conversation to another model the providers list.',
     ].join('\n')
   }

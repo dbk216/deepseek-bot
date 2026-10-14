@@ -1219,6 +1219,11 @@ for (const remove of [false, true]) {
   await sleep(400)
   const homeSent = t.followups.slice(before).map(textOf).join('\n')
   check('home: still told the home, its notes and how to set a watch', homeSent.includes(`Your home is ${home}.`) && homeSent.includes('home-note-5a1') && homeSent.includes(`${home}/watches/C_HOME-h1.json`), (homeSent.match(/Your home is [^\n]*/) ?? ['(none)'])[0])
+  // The identity section, set for every session, no longer promises watches to a tenant.
+  const tenantSections = []
+  await t.created[0]?.setup?.({ systemPrompt: { section: (s) => { tenantSections.push(s); return () => {} } } })
+  const tenantIdentity = String(tenantSections.find((s) => s.name === 'deepbot:identity')?.text ?? '')
+  check('tenant: its identity does not offer watches', tenantIdentity !== '' && !/watch/i.test(tenantIdentity), tenantIdentity.split('\n')[2])
   for (const dir of [home, tenants]) rmSync(dir, { recursive: true, force: true })
   t.done()
 }

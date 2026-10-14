@@ -125,8 +125,9 @@ buttons })`, `fetchHistory`, `fetchAttachments`, `identity()`, optional `permali
 `uploadFile`, `startTyping` and `remove`, and a `supportsButtons` flag the core reads rather than
 assumes.
 
-`platform: 'slack' | 'telegram' | 'discord'` selects one. `test/fake-transport.ts` supplies a
-fourth, which is how the core is tested with no platform account at all.
+`platform: 'slack' | 'telegram' | 'discord' | 'local'` selects one, or a list of one messenger and
+`'local'` (the terminal); anything else is a config error at load. `test/fake-transport.ts` supplies
+another, which is how the core is tested with no platform account at all.
 
 ### Sessions
 

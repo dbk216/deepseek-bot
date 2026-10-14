@@ -169,16 +169,22 @@ function boot({ state = {}, config = {} }: { state?: Record<string, unknown>; co
 {
   const dir = mkdtempSync(join(tmpdir(), 'deepbot-scenario-'))
   const broken = join(dir, 'broken.json')
-  writeFileSync(broken, '{ this is not json')
   // Pinned, so this check never writes the user's home: a broken file made the runner create
   // ~/dsh-agent-test-<time> and exit before removing it, one more on every test run.
   const pinned = join(dir, 'home')
-  const run = spawnSync(process.execPath, ['test/run-scenario.ts', broken, '--timeout', '30'], { encoding: 'utf8', cwd: process.cwd(), env: { ...process.env, DEEPBOT_TEST_HOME: pinned } })
-  const leftHome = existsSync(pinned)
+  // DSH_BIN is any file that exists, so the runner gets past its own checks to the file's (CI has no dsh, and
+  // the check passed there on "dsh not found" alone). A file that parses to null is no scenario either.
+  const runOn = (body) => {
+    writeFileSync(broken, body)
+    const run = spawnSync(process.execPath, ['test/run-scenario.ts', broken, '--timeout', '30'], { encoding: 'utf8', cwd: process.cwd(), env: { ...process.env, DEEPBOT_TEST_HOME: pinned, DSH_BIN: process.execPath } })
+    return { status: run.status, said: `${run.stdout}${run.stderr}`, leftHome: existsSync(pinned) }
+  }
+  const notJson = runOn('{ this is not json')
+  const nothing = runOn('null')
   rmSync(dir, { recursive: true, force: true })
-  check('a broken scenario file exits non-zero', run.status !== 0, `status ${run.status}`)
-  check('and makes no agent home before it has read the file', !leftHome)
-  check('and says what is wrong rather than hanging', /json|JSON|parse|not found|scenario/i.test(`${run.stdout}${run.stderr}`), `${run.stdout}${run.stderr}`.trim().split('\n').slice(-1)[0]?.slice(0, 100))
+  check('a broken scenario file exits non-zero', notJson.status !== 0 && nothing.status !== 0, `status ${notJson.status}, ${nothing.status}`)
+  check('and makes no agent home before it has read the file', !notJson.leftHome && !nothing.leftHome)
+  check('and says it could not read the scenario', /could not read the scenario/.test(notJson.said) && /could not read the scenario/.test(nothing.said), notJson.said.trim().split('\n').slice(-1)[0]?.slice(0, 100))
 }
 
 // 10. A link inside the workspace that points outside it is not inside it.
