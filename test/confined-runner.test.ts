@@ -269,6 +269,27 @@ for (const resolved of [false, true]) {
   mkdirSync(plain)
   check('a workspace with no .git can make one', inWs(plain, `mkdir '${join(plain, '.git')}'`) && existsSync(join(plain, '.git')))
   check('nor can it make its own directory unreadable to the adapter', !inWs(marked, `chmod 000 '${marked}'`) || (() => { const ok = (statSync(marked).mode & 0o777) !== 0; chmodSync(marked, 0o755); return ok })())
+  // An ACL does it as well as a mode, and the harness's skill discovery takes an unreadable .git for none.
+  const acl = inWs(marked, `chmod +a "everyone deny search,list" '${marked}'`)
+  if (acl) execFileSync('/bin/chmod', ['-N', marked])
+  check('nor give it an ACL that denies reading it', !acl)
+  check('while files in it are still written', inWs(marked, `echo x > '${join(marked, 'note.md')}'`) && existsSync(join(marked, 'note.md')))
+  // Given by a link that sits under the .git, its target elsewhere: the loader climbs the name it was given,
+  // and Seatbelt matches the target, so the rule goes on both names.
+  const target = realpathSync(mkdtempSync(join(tmpdir(), 'runner-target-')))
+  mkdirSync(join(target, '.git'))
+  const linked = join(base, 'ws-link')
+  symlinkSync(target, linked)
+  inWs(linked, `rmdir '${join(linked, '.git')}'`)
+  check('a workspace given by a link under the .git keeps its own', existsSync(join(target, '.git')))
+  rmSync(target, { recursive: true, force: true })
+  // A workspace given as a relative name: the walk up from it never reached "/" and every command hung.
+  // (From a directory with no .git: from one with a .git, the walk stopped there at once.)
+  const bare = realpathSync(mkdtempSync(join(tmpdir(), 'runner-bare-')))
+  mkdirSync(join(bare, 'w2', '.git'), { recursive: true })
+  const relative = (() => { try { return execFileSync(RUNNER, ['--ro-bind', '/', '/', '--bind', 'w2', 'w2', '--', '/bin/echo', 'relative-3e4'], { encoding: 'utf8', env, cwd: bare, stdio: 'pipe', timeout: 10000 }) } catch (e) { return `failed: ${e.code ?? e.status}` } })()
+  rmSync(bare, { recursive: true, force: true })
+  check('a workspace given by a relative name does not hang the runner', relative.includes('relative-3e4'), relative.slice(0, 60))
   rmSync(base, { recursive: true, force: true })
   // With no .git above, the workspace's own .git is not a marker: a home that is a repository can remove it.
   const solo = realpathSync(mkdtempSync(join(tmpdir(), 'runner-solo-')))

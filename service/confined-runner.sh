@@ -88,15 +88,21 @@ profile() {
     done
     # And its .git, when a directory above has one and the adapter keeps one here as the instruction root:
     # removed or moved aside, the harness's loader, which looks again on every step, would climb past the
-    # workspace to the instructions above. What is in it stays writable (git init works); the workspace's
-    # own mode stays too, since an unreadable directory makes skill discovery climb. With nothing above,
-    # its .git is no marker, and a repository there can remove its own.
+    # workspace to the instructions above. What is in it stays writable (git init works). The workspace's
+    # own entry stays as it is too — its mode, an ACL, its flags — since an unreadable directory makes skill
+    # discovery climb; the files in it are still written. With nothing above, its .git is no marker, and a
+    # repository there can remove its own. Judged on either name (the loader climbs the one it was given,
+    # Seatbelt matches the resolved one), and written on both.
+    needs_root=0
     for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
-      if [ -d "$name/.git" ] && [ ! -L "$name/.git" ] && root_above "$name"; then
-        printf '(deny file-write* (literal %s))\n' "$(sbpl "$name/.git")"
-        printf '(deny file-write-mode (literal %s))\n' "$(sbpl "$name")"
-      fi
+      if [ -d "$name/.git" ] && [ ! -L "$name/.git" ] && root_above "$name"; then needs_root=1; fi
     done
+    if [ "$needs_root" -eq 1 ]; then
+      for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
+        printf '(deny file-write* (literal %s))\n' "$(sbpl "$name/.git")"
+        printf '(deny file-write* (literal %s))\n' "$(sbpl "$name")"
+      done
+    fi
   else
     echo '(deny file-write*)'
     printf '(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper"))\n'
@@ -215,14 +221,16 @@ profile() {
 
 sbpl() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
 
-# Whether a directory above $1 has a .git: the harness's loader would climb to it.
+# Whether a directory above $1 (an absolute path) has a .git: the harness's loader would climb to it.
 root_above() {
-  local at
+  local at up
+  case "$1" in /*) ;; *) return 1 ;; esac
   at="$(dirname "$1")"
   while :; do
     if [ -e "$at/.git" ]; then return 0; fi
-    if [ "$at" = "/" ]; then return 1; fi
-    at="$(dirname "$at")"
+    up="$(dirname "$at")"
+    if [ "$up" = "$at" ]; then return 1; fi
+    at="$up"
   done
 }
 
