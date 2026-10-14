@@ -303,6 +303,19 @@ export function apply(ctx, config) {
       ? "allowedUsers: quote each id ('123456789') — unquoted, YAML reads a number, and a long one loses digits"
       : 'allowedUsers: a list of user ids (empty: anyone who can reach the bot)')
   }
+  // A misspelt platform ('slak') used to fall through to Slack.
+  const knownPlatforms = ['slack', 'telegram', 'discord', 'local']
+  const listedPlatforms = Array.isArray(cfg.platform) ? cfg.platform : [cfg.platform]
+  if (listedPlatforms.length === 0 || listedPlatforms.some((p) => !knownPlatforms.includes(p))) {
+    problems.push(`platform: 'slack', 'telegram', 'discord' or 'local', or a list of them (got: ${JSON.stringify(cfg.platform)})`)
+  }
+  // One messenger, with the terminal beside it: with two, every conversation the terminal did not claim
+  // went to the first one listed.
+  if (new Set(listedPlatforms).size !== listedPlatforms.length) problems.push(`platform: a platform listed twice would connect twice (got: ${JSON.stringify(cfg.platform)})`)
+  const messengers = [...new Set(listedPlatforms.filter((p) => p !== 'local'))]
+  if (messengers.length > 1) {
+    problems.push(`platform: one messenger at a time, with 'local' beside it (got: ${messengers.join(', ')}) — dsh gateway setup switches to one`)
+  }
   if (problems.length > 0) throw new Error(`deepbot config error:\n  - ${problems.join('\n  - ')}`)
 
   const language = languageOf(cfg.language)
@@ -761,13 +774,19 @@ export function apply(ctx, config) {
     }
     if (origin !== null) {
       const watchConfig = `${cwd}/watches/${origin.channel}-${origin.threadTs}.json`
-      standing.push([
+      // The watch runner reads the home's watches/ alone, which a tenant's commands cannot write: a tenant
+      // conversation is told so, rather than handed a path that fails.
+      standing.push((home === cwd ? [
         '[this conversation]',
         `channel=${origin.channel} thread=${origin.threadTs}`,
         `To set up a watch that reports back here, write ${watchConfig} with`,
         '{"id":"<short-id>","name":"…","command":"<shell command>","intervalSeconds":300,"channel":"' + origin.channel + '","rateLimitMinutes":30}',
         'then tell the user what you will watch and how often.',
-      ].join('\n'))
+      ] : [
+        '[this conversation]',
+        `channel=${origin.channel} thread=${origin.threadTs}`,
+        'Watches are not available in this workspace: say so if asked to watch something on a schedule.',
+      ]).join('\n'))
 
       // The conversation's own link, so a reference to it can be clickable. Slack links its own
       // <#C…> mention, but a description of a thread stays text without this.
@@ -780,17 +799,18 @@ export function apply(ctx, config) {
     }
     // Which directory is writable, stated plainly. Measured: asked to create a
     // file in "홈 디렉터리", the agent read that as the OS home, correctly decided
-    // it was out of scope, and refused — right instinct, wrong map.
+    // it was out of scope, and refused — right instinct, wrong map. The conversation's own: a tenant
+    // was told the shared home, which its commands cannot write, and given the home's notes.
     standing.push([
       '[your files]',
-      `Your home is ${cwd}. Create and edit files there freely.`,
+      `Your home is ${home}. Create and edit files there freely.`,
       'Anything outside it needs the user to ask for it explicitly.',
     ].join('\n'))
-    const notes = memoryIndex(cwd)
+    const notes = memoryIndex(home)
     if (notes !== '') standing.push(defuse(notes))
     // Note hygiene. The advice is stable until the file changes and the standing block is
     // digest-gated, so a request to tidy up is sent once and then cached.
-    const notesAdvice = analyzeNotes(readTextIfPresent(join(cwd, cfg.factsFile), 200000), {
+    const notesAdvice = analyzeNotes(readTextIfPresent(join(home, cfg.factsFile), 200000), {
       budgetChars: cfg.notesBudgetChars,
     }).advice
     if (notesAdvice !== null) {

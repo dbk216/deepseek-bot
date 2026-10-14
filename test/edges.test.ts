@@ -10,7 +10,7 @@
 import './dist-fresh.ts'
 import './scratch-dsh-home.ts'   // the recall index must not land in the real ~/.dsh
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../dist/index.js'
@@ -170,9 +170,14 @@ function boot({ state = {}, config = {} }: { state?: Record<string, unknown>; co
   const dir = mkdtempSync(join(tmpdir(), 'deepbot-scenario-'))
   const broken = join(dir, 'broken.json')
   writeFileSync(broken, '{ this is not json')
-  const run = spawnSync(process.execPath, ['test/run-scenario.ts', broken, '--timeout', '30'], { encoding: 'utf8', cwd: process.cwd() })
+  // Pinned, so this check never writes the user's home: a broken file made the runner create
+  // ~/dsh-agent-test-<time> and exit before removing it, one more on every test run.
+  const pinned = join(dir, 'home')
+  const run = spawnSync(process.execPath, ['test/run-scenario.ts', broken, '--timeout', '30'], { encoding: 'utf8', cwd: process.cwd(), env: { ...process.env, DEEPBOT_TEST_HOME: pinned } })
+  const leftHome = existsSync(pinned)
   rmSync(dir, { recursive: true, force: true })
   check('a broken scenario file exits non-zero', run.status !== 0, `status ${run.status}`)
+  check('and makes no agent home before it has read the file', !leftHome)
   check('and says what is wrong rather than hanging', /json|JSON|parse|not found|scenario/i.test(`${run.stdout}${run.stderr}`), `${run.stdout}${run.stderr}`.trim().split('\n').slice(-1)[0]?.slice(0, 100))
 }
 

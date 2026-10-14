@@ -1136,33 +1136,6 @@ for (const remove of [false, true]) {
   check('a language it has no words for is a config error, not a silent English', /language: must be 'en', 'ko' or 'zh' \(got: fr\)/.test(refused), refused.split('\n')[1] ?? refused)
 }
 
-// 40. Who the agent is: every session's setup tells it it is deepseek-bot, where this conversation is, and which
-// settings are its own and which are the operator's — it was told only that it is "a coding agent".
-{
-  const t = boot({ agent: 'answer', answer: { text: '응' } })
-  await sleep(60)
-  t.transport.deliver(t.transport.message({ text: '너는 누구야?' }))
-  for (let i = 0; i < 100 && t.created.length === 0; i++) await sleep(10)
-  const sections = []
-  await t.created[0]?.setup?.({ systemPrompt: { section: (s) => { sections.push(s); return () => {} } } })
-  const identity = sections.find((s) => s.name === 'deepbot:identity')
-  const text = String(identity?.text ?? '')
-  check('identity: setup registers a section of its own, after the persona prefix and before the tools', identity !== undefined && identity.order > 0 && identity.order < 500 && identity.interpolate === false, JSON.stringify({ name: identity?.name, order: identity?.order }))
-  check('identity: it says it is deepseek-bot, on DeepSeek Harness, and that this conversation is on Slack', /deepseek-bot/.test(text) && /DeepSeek Harness/.test(text) && /This conversation is on Slack/.test(text), text.split('\n')[1])
-  check('identity: it names what it may change itself', /SOUL\.md/.test(text) && /memory\//.test(text) && /\.dsh\/skills\//.test(text) && /watch/.test(text))
-  check('identity: and what only the operator can, and where, without trying', /operator/.test(text) && /model/.test(text) && /provider/.test(text) && /language/.test(text) && /cordis\.patch\.yml/.test(text) && /\.env/.test(text) && /\.credentials\.yaml/.test(text) && /does not try/.test(text))
-  t.done()
-
-  // A turn with no conversation (the self-test diagnostic) gets the section too, instead of a TypeError in setup.
-  const selfTest = boot({ agent: 'ready', config: { selfTest: 'are you there?' } })
-  for (let i = 0; i < 100 && selfTest.created.length === 0; i++) await sleep(10)
-  const own = []
-  let threw = ''
-  try { await selfTest.created[0]?.setup?.({ systemPrompt: { section: (s) => { own.push(s); return () => {} } } }) } catch (e) { threw = String((e as Error).message) }
-  check('identity: a turn outside any conversation is set up, and told so', threw === '' && /not in any conversation/.test(String(own.find((s) => s.name === 'deepbot:identity')?.text ?? '')), threw || String(own[0]?.text ?? '').split('\n')[1])
-  selfTest.done()
-}
-
 // 39. The steps after the agent exists run. They sat after a throw, inside the branch for an agent that
 // did not come back (a0e847e, when the emptied index.ts was restored): no session was ever attached to its
 // workspace, and permissionPreset was a setting that did nothing.
@@ -1193,6 +1166,74 @@ for (const remove of [false, true]) {
   await sleep(400)
   check('setup: an unknown permission preset is named, not set', bogus.permissionSets.length === 0 && bogus.transport.posted.some((p) => /unknown permission preset "no-such-preset"/.test(p.text)), JSON.stringify(bogus.transport.posted.map((p) => p.text.slice(0, 60))))
   bogus.done()
+}
+
+// 40. Who the agent is: every session's setup tells it it is deepseek-bot, where this conversation is, and which
+// settings are its own and which are the operator's — it was told only that it is "a coding agent".
+{
+  const t = boot({ agent: 'answer', answer: { text: '응' } })
+  await sleep(60)
+  t.transport.deliver(t.transport.message({ text: '너는 누구야?' }))
+  for (let i = 0; i < 100 && t.created.length === 0; i++) await sleep(10)
+  const sections = []
+  await t.created[0]?.setup?.({ systemPrompt: { section: (s) => { sections.push(s); return () => {} } } })
+  const identity = sections.find((s) => s.name === 'deepbot:identity')
+  const text = String(identity?.text ?? '')
+  check('identity: setup registers a section of its own, after the persona prefix and before the tools', identity !== undefined && identity.order > 0 && identity.order < 500 && identity.interpolate === false, JSON.stringify({ name: identity?.name, order: identity?.order }))
+  check('identity: it says it is deepseek-bot, on DeepSeek Harness, and that this conversation is on Slack', /deepseek-bot/.test(text) && /DeepSeek Harness/.test(text) && /This conversation is on Slack/.test(text), text.split('\n')[1])
+  check('identity: it names what it may change itself', /SOUL\.md/.test(text) && /memory\//.test(text) && /\.dsh\/skills\//.test(text) && /watch/.test(text))
+  check('identity: and what only the operator can, and where, without trying', /operator/.test(text) && /model/.test(text) && /provider/.test(text) && /language/.test(text) && /cordis\.patch\.yml/.test(text) && /\.env/.test(text) && /\.credentials\.yaml/.test(text) && /does not try/.test(text))
+  t.done()
+
+  // A turn with no conversation (the self-test diagnostic) gets the section too, instead of a TypeError in setup.
+  const selfTest = boot({ agent: 'ready', config: { selfTest: 'are you there?' } })
+  for (let i = 0; i < 100 && selfTest.created.length === 0; i++) await sleep(10)
+  const own = []
+  let threw = ''
+  try { await selfTest.created[0]?.setup?.({ systemPrompt: { section: (s) => { own.push(s); return () => {} } } }) } catch (e) { threw = String((e as Error).message) }
+  check('identity: a turn outside any conversation is set up, and told so', threw === '' && /not in any conversation/.test(String(own.find((s) => s.name === 'deepbot:identity')?.text ?? '')), threw || String(own[0]?.text ?? '').split('\n')[1])
+  selfTest.done()
+}
+
+// 41. A tenant conversation is told its own directory. Its "[your files]", its notes and their tidy-up
+// advice were the shared home's — a directory its commands cannot write. And watches are read from the
+// home alone, so it is told they are not available there, not handed a path it cannot write.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  const tenants = mkdtempSync(join(tmpdir(), 'tenants-'))
+  mkdirSync(join(home, 'memory'), { recursive: true })
+  writeFileSync(join(home, 'memory', 'home-note.md'), '# home-note-5a1\n')
+  mkdirSync(join(tenants, 'acme', 'memory'), { recursive: true })
+  writeFileSync(join(tenants, 'acme', 'memory', 'acme-note.md'), '# acme-note-6b2\n')
+  const t = boot({ agent: 'ready', home, config: { targetChannels: ['*'], tenantIsolation: true, tenantChannels: { C_ALLOWED: 'acme' }, tenantRoot: tenants } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: 'tenant 질문', target: { channel: 'C_ALLOWED', threadTs: 'a1' } }))
+  await sleep(400)
+  const tenantSent = t.followups.map(textOf).join('\n')
+  check('tenant: told its own directory as its home', /Your home is \S*acme\./.test(tenantSent) && !tenantSent.includes(`Your home is ${home}.`), (tenantSent.match(/Your home is [^\n]*/) ?? ['(none)'])[0])
+  check('tenant: its own notes are listed, not the home\'s', tenantSent.includes('acme-note-6b2') && !tenantSent.includes('home-note-5a1'))
+  check('tenant: no watch path it cannot write; told watches are not available here', !tenantSent.includes(`${home}/watches/`) && /watches are not available/i.test(tenantSent), (tenantSent.match(/[^\n]*watch[^\n]*/i) ?? ['(none)'])[0])
+  // The control: a conversation in the home is still told the home, its notes and how to set a watch.
+  const before = t.followups.length
+  t.transport.deliver(t.transport.message({ text: 'home 질문', target: { channel: 'C_HOME', threadTs: 'h1' } }))
+  await sleep(400)
+  const homeSent = t.followups.slice(before).map(textOf).join('\n')
+  check('home: still told the home, its notes and how to set a watch', homeSent.includes(`Your home is ${home}.`) && homeSent.includes('home-note-5a1') && homeSent.includes(`${home}/watches/C_HOME-h1.json`), (homeSent.match(/Your home is [^\n]*/) ?? ['(none)'])[0])
+  for (const dir of [home, tenants]) rmSync(dir, { recursive: true, force: true })
+  t.done()
+}
+
+// 42. A platform the adapter does not know is a config error. 'slak' fell through to Slack, and a deployment
+// meant for another messenger came up on the wrong one.
+{
+  const refusal = (platform) => { try { boot({ config: { platform } }).done(); return '' } catch (e) { return String((e as Error).message) } }
+  check('platform: a misspelt one is refused, named', /platform: .*slak/.test(refusal('slak')), refusal('slak').split('\n')[1] ?? '(started)')
+  check('platform: so is one inside a list, and an empty list', /platform: /.test(refusal(['slack', 'tellegram'])) && /platform: /.test(refusal([])))
+  // One messenger at a time: with two, every conversation the terminal did not claim went to the first.
+  const two = refusal(['slack', 'local', 'telegram'])
+  check('platform: two messengers are refused, named, with the command that switches to one', /platform: .*slack.*telegram/.test(two) && two.includes('dsh gateway setup'), two.split('\n')[1] ?? '(started)')
+  check('platform: a platform listed twice is refused (it would connect twice)', /platform: .*twice/.test(refusal(['slack', 'slack'])) && /platform: .*twice/.test(refusal(['slack', 'local', 'local'])), refusal(['slack', 'slack']).split('\n')[1] ?? '(started)')
+  check('platform: the four it knows, alone or with the terminal, start', refusal('slack') === '' && refusal('telegram') === '' && refusal('discord') === '' && refusal(['slack', 'local']) === '' && refusal('local') === '', [refusal('telegram'), refusal(['slack', 'local'])].join(' | ').slice(0, 160))
 }
 
 const failed = results.filter((r) => !r.ok)

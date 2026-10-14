@@ -23,7 +23,7 @@
 import './dist-fresh.ts'   // a scenario must not run a stale build
 
 import { spawn } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir, tmpdir } from 'node:os'
@@ -66,13 +66,17 @@ const LIVE_HOME = process.env.DEEPBOT_LIVE_HOME ?? join(homedir(), 'dsh-agent')
 // the plugin cannot predict a home that changes every run.
 const RESULT = process.env.DEEPBOT_SCENARIO_RESULT ?? join(tmpdir(), `deepbot-scenario-${process.pid}.json`)
 
-function fail(message) {
+function fail(message: string): never {
   console.error(`setup error: ${message}`)
   process.exit(2)
 }
 
 if (!existsSync(scenario)) fail(`scenario not found: ${scenario}`)
 if (!existsSync(DSH_BIN)) fail(`dsh not found: ${DSH_BIN} (set DSH_BIN)`)
+// Read before anything is made: a file that is not JSON used to fail after the home existed, and left
+// one ~/dsh-agent-test-<time> behind on every test run.
+let spec: { seed?: Record<string, unknown> }
+try { spec = JSON.parse(readFileSync(scenario, 'utf8')) } catch (e) { fail(`could not read the scenario: ${String((e as Error)?.message ?? e)}`) }
 
 console.log(`scenario : ${scenario}`)
 console.log(`profile  : ${PROFILE}`)
@@ -92,7 +96,6 @@ writeFileSync(join(TEST_HOME, '.deepbot-root'), '')
 // which a fresh home never has. Without this the note-hygiene path could not be exercised at all,
 // because there was nothing for it to complain about.
 try {
-  const spec = JSON.parse(readFileSync(scenario, 'utf8'))
   for (const [name, body] of Object.entries(spec.seed ?? {})) {
     const target = join(TEST_HOME, name)
     mkdirSync(dirname(target), { recursive: true })
@@ -126,7 +129,15 @@ for (const [path, body] of outsideFiles) {
   writeFileSync(path, String(body))
   console.log(`outside : ${path}`)
 }
+// The harness's agents home, empty, as the launcher gives it one: the operator's own agent skills
+// (~/.agents/skills) are not the bot's. Under the harness home, as live (~/.dsh/deepbot/agents-home): it
+// sat inside the agent home, and a temp directory would do no better — the agent's commands write both,
+// and a definition left there is loaded as one of the harness's agents.
+mkdirSync(join(homedir(), '.dsh', 'deepbot'), { recursive: true })
+const AGENTS_HOME = mkdtempSync(join(homedir(), '.dsh', 'deepbot', 'agents-home-test-'))
+
 process.on('exit', () => {
+  rmSync(AGENTS_HOME, { recursive: true, force: true })
   // The index outlives the fresh home otherwise, one directory per run under ~/.dsh/recall.
   if (!keep) rmSync(dirname(RECALL_INDEX), { recursive: true, force: true })
   for (const [path] of outsideFiles) rmSync(path, { force: true })
@@ -135,14 +146,12 @@ process.on('exit', () => {
   }
 })
 
-mkdirSync(join(TEST_HOME, '.agents-home-empty'), { recursive: true })
 const child = spawn(DSH_BIN, ['--profile', PROFILE, '--port', PORT, '--no-open'], {
   cwd: TEST_HOME,
   env: {
     ...process.env,
     DEEPBOT_SELF_TEST_SCRIPT: resolvedScenario,
-    // As the launcher does: the operator's own agent skills (~/.agents/skills) are not the bot's.
-    DSH_AGENTS_HOME: join(TEST_HOME, '.agents-home-empty'),
+    DSH_AGENTS_HOME: AGENTS_HOME,
     DEEPBOT_RECALL_SCRIPT: join(REPO, 'dist', 'recall', 'deepbot-recall.js'),
     DEEPBOT_SCENARIO_RESULT: RESULT,
     DEEPBOT_HOME: TEST_HOME,
