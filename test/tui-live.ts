@@ -39,7 +39,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 if (!existsSync(DSH_BIN)) { console.error(`dsh not found: ${DSH_BIN}`); process.exit(2) }
 mkdirSync(join(HOME, 'memory'), { recursive: true })
-writeFileSync(join(HOME, '.deepbot-root'), '')
 for (const file of ['AGENTS.md', 'CLAUDE.md']) if (existsSync(join(LIVE_HOME, file))) cpSync(join(LIVE_HOME, file), join(HOME, file))
 const overlay = join(HOME, 'tui-live.patch.yml')
 writeFileSync(overlay, [

@@ -10,7 +10,7 @@
  * name is never followed: the data goes to a fresh file beside it (O_EXCL, so not through any existing
  * name) and is renamed over the target — rename replaces a link instead of writing through it.
  */
-import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, join, sep } from 'node:path'
 
@@ -38,4 +38,31 @@ export function writeInside(root: string, path: string, data: string | Uint8Arra
   const temp = join(realDir, `.${basename(path)}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`)
   writeFileSync(temp, data, { flag: 'wx' })
   try { renameSync(temp, target) } catch (e) { rmSync(temp, { force: true }); throw e }
+}
+
+/** Make `dir` and its parents, refusing a directory that would resolve outside `root`. */
+export function mkdirInside(root: string, dir: string): void {
+  const realRoot = realpathSync(root)
+  if (!inside(realRoot, resolvedAncestor(dir))) throw new Error(`refusing to make ${dir}: it resolves outside ${realRoot}`)
+  mkdirSync(dir, { recursive: true })
+  const realDir = realpathSync(dir)
+  if (!inside(realRoot, realDir)) throw new Error(`refusing to use ${dir}: it resolves to ${realDir}, outside ${realRoot}`)
+}
+
+/**
+ * Keep `dir` the harness's instruction root: an empty `.git` in it. The loader climbs from a session's
+ * directory to the nearest `.git` — a stat, nothing more — and reads every AGENTS.md and CLAUDE.md on
+ * the way down. Without one, a home under a repository (a dotfiles home) was handed that repository's
+ * files, and a tenant directory under a home with one was handed the home's. git passes over an empty
+ * `.git`: it is not a repository to it. One already there — a repository, a worktree's gitlink, a link
+ * to a directory — is a root as it is and left alone; a link to nothing is not, and is replaced.
+ */
+export function markInstructionRoot(root: string, dir: string): void {
+  const marker = join(dir, '.git')
+  try { statSync(marker); return } catch { /* none, or a link to nothing */ }
+  const realRoot = realpathSync(root)
+  const realDir = realpathSync(dir)
+  if (!inside(realRoot, realDir)) throw new Error(`refusing to mark ${dir}: it resolves outside ${realRoot}`)
+  try { if (lstatSync(join(realDir, '.git')).isSymbolicLink()) rmSync(join(realDir, '.git')) } catch { /* nothing there */ }
+  mkdirSync(join(realDir, '.git'))
 }

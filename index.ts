@@ -59,7 +59,7 @@ import { createCompositeTransport } from './transports/composite.js'
 import { createProgressTracker } from './progress.js'
 import { languageOf } from './i18n.js'
 import { defaultWords, messages } from './messages.js'
-import { writeInside } from './safeWrite.js'
+import { markInstructionRoot, mkdirInside, writeInside } from './safeWrite.js'
 import { createUsageTracker, emptyUsageStore } from './usage.js'
 import { createRecallContext, recallIndexPath } from './recallContext.js'
 import { analyzeNotes } from './notes.js'
@@ -631,10 +631,21 @@ export function apply(ctx, config) {
     return rows
   }
 
+  /**
+   * The harness reads AGENTS.md and CLAUDE.md from a session's directory up to the nearest `.git`: kept
+   * there, every time, since the agent can remove it. A failure is said once, not on every turn.
+   */
+  const rootFailures = new Set<string>()
+  function keepInstructionRoot(guard: string, dir: string): void {
+    try { markInstructionRoot(guard, dir) } catch (e) {
+      if (!rootFailures.has(dir)) { rootFailures.add(dir); log(`instructions: could not keep ${dir} the instruction root — ${String((e as Error)?.message ?? e)}`) }
+    }
+  }
+
   /** The directory a conversation works in: its tenant's, or the shared home. */
   async function cwdFor(key: string | null): Promise<string> {
     const tenant = tenantOf(key)
-    if (tenant === null) return await sessionCwd()
+    if (tenant === null) { const home = await sessionCwd(); keepInstructionRoot(home, home); return home }
     const root = typeof cfg.tenantRoot === 'string' && cfg.tenantRoot !== ''
       ? cfg.tenantRoot
       : join(await sessionCwd(), 'tenants')
@@ -644,10 +655,7 @@ export function apply(ctx, config) {
     // run unconfined, so they are held to the home (or to the configured root) and never follow one.
     const guard = typeof cfg.tenantRoot === 'string' && cfg.tenantRoot !== '' ? cfg.tenantRoot : await sessionCwd()
     if (!existsSync(dir)) {
-      // The marker stops the instruction loader climbing out of the tenant directory —
-      // without it a tenant inherits whatever AGENTS.md is above it, which is exactly the
-      // crossing this feature exists to prevent.
-      writeInside(guard, join(dir, '.deepbot-root'), `deepbot tenant ${tenant}\n`)
+      mkdirInside(guard, dir)
       const policy = tenantPolicy(tenant)
       const template = typeof policy.persona === 'string' && policy.persona !== '' ? policy.persona : cfg.tenantTemplateDir
       if (typeof template === 'string' && template !== '' && existsSync(template)) {
@@ -659,6 +667,8 @@ export function apply(ctx, config) {
       }
       log(`tenant ${tenant} created at ${dir}`)
     }
+    // A tenant must not be handed the home's AGENTS.md, or anything above it: its directory is its root.
+    keepInstructionRoot(guard, dir)
     return dir
   }
 

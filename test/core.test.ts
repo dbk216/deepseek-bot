@@ -16,7 +16,7 @@
 import './dist-fresh.ts'   // fails loudly on a stale dist
 import './scratch-dsh-home.ts'   // the recall index must not land in the real ~/.dsh
 
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, realpathSync } from 'node:fs'
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, realpathSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, basename } from 'node:path'
 import { apply } from '../dist/index.js'
@@ -575,7 +575,9 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   t.transport.deliver(t.transport.message({ text: '안녕' }))
   await sleep(400)
   check('the tenant directory exists after a message', existsSync(join(tenants, 'acme')), join(tenants, 'acme'))
-  check('it carries the marker that stops the instruction loader climbing out', existsSync(join(tenants, 'acme', '.deepbot-root')))
+  // The harness's loader climbs to the nearest .git: one in the tenant directory is where it stops.
+  const marker = (() => { try { return statSync(join(tenants, 'acme', '.git')).isDirectory() && readdirSync(join(tenants, 'acme', '.git')).length === 0 } catch { return false } })()
+  check('it is the instruction root: an empty .git in it', marker)
   check('the template persona is seeded', existsSync(join(tenants, 'acme', 'SOUL.md')), readFileSync(join(tenants, 'acme', 'SOUL.md'), 'utf8').trim())
   check('non-markdown template files are not copied', !existsSync(join(tenants, 'acme', 'notes.txt')))
   check('creation and seeding are logged', t.logs.some((l) => /tenant acme created at/.test(l)) && t.logs.some((l) => /tenant acme seeded from/.test(l)))
@@ -1193,6 +1195,43 @@ for (const remove of [false, true]) {
   await sleep(400)
   check('setup: an unknown permission preset is named, not set', bogus.permissionSets.length === 0 && bogus.transport.posted.some((p) => /unknown permission preset "no-such-preset"/.test(p.text)), JSON.stringify(bogus.transport.posted.map((p) => p.text.slice(0, 60))))
   bogus.done()
+}
+
+// 43. The harness reads AGENTS.md and CLAUDE.md from a session's directory up to the nearest .git. With
+// none in the home or a tenant directory, a home under a repository (a dotfiles home) was handed that
+// repository's files, and a tenant under a home with one was handed the home's. The .deepbot-root marker
+// meant to stop that was never read by the harness. Kept on every turn, since the agent can remove it.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  const tenants = join(home, 'tenants')
+  const t = boot({ home, agent: 'answer', answer: { text: '응' }, config: { targetChannels: ['*'], tenantIsolation: true, tenantChannels: { C_ALLOWED: 'acme' } } })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '하나', target: { channel: 'C_HOME', threadTs: 'h1' } }))
+  t.transport.deliver(t.transport.message({ text: '둘', target: { channel: 'C_ALLOWED', threadTs: 'a1' } }))
+  await sleep(500)
+  const isRoot = (dir) => { try { return statSync(join(dir, '.git')).isDirectory() } catch { return false } }
+  check('root: the home is the instruction root', isRoot(home))
+  check('root: so is a tenant directory', isRoot(join(tenants, 'acme')))
+  // The agent removes them, or leaves a link to nothing in their place: the next turn puts them back.
+  rmSync(join(home, '.git'), { recursive: true, force: true })
+  rmSync(join(tenants, 'acme', '.git'), { recursive: true, force: true })
+  symlinkSync(join(home, 'nowhere'), join(tenants, 'acme', '.git'))
+  t.transport.deliver(t.transport.message({ text: '셋', target: { channel: 'C_HOME', threadTs: 'h1' } }))
+  t.transport.deliver(t.transport.message({ text: '넷', target: { channel: 'C_ALLOWED', threadTs: 'a1' } }))
+  await sleep(500)
+  check('root: a removed one is back on the next turn', isRoot(home))
+  check('root: a link to nothing is replaced by one', isRoot(join(tenants, 'acme')) && !lstatSync(join(tenants, 'acme', '.git')).isSymbolicLink())
+  t.done()
+  // A .git already there is a root as it is: a repository, or a worktree's gitlink file, is left alone.
+  const repo = mkdtempSync(join(tmpdir(), 'home-'))
+  writeFileSync(join(repo, '.git'), 'gitdir: /elsewhere/.git/worktrees/x\n')
+  const r = boot({ home: repo, agent: 'answer', answer: { text: '응' }, config: { targetChannels: ['*'] } })
+  await sleep(80)
+  r.transport.deliver(r.transport.message({ text: '하나' }))
+  await sleep(400)
+  check('root: a worktree\'s .git file is left as it is', readFileSync(join(repo, '.git'), 'utf8') === 'gitdir: /elsewhere/.git/worktrees/x\n')
+  r.done()
+  for (const dir of [home, repo]) rmSync(dir, { recursive: true, force: true })
 }
 
 const failed = results.filter((r) => !r.ok)

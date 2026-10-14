@@ -7,6 +7,11 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **The instruction root is kept where the agent works.** The harness reads `AGENTS.md` and
+  `CLAUDE.md` from a session's directory up to the nearest `.git`. The `.deepbot-root` marker the
+  setup and tenant code wrote was never read by it, so a tenant under a home with a `.git` got the
+  home's files, and a home under a repository got that repository's. The adapter now keeps an empty
+  `.git` in the home and each tenant directory, on every turn; git passes over it.
 - **`dsh gateway` sees a harness that was set up before it.** It read only `~/.dsh/.env`. A key
   entered in the DeepSeek Harness app sits in the app's store (`~/.dsh/.credentials.yaml`), which
   the harness reads first. So `status` called the model key missing on a working deployment, and
