@@ -48,7 +48,7 @@ is built before the thing it stands on. The detailed history of each milestone i
   dsh-jobs disposes an agent's jobs with it, so "I'll tell you when it finishes" cannot be kept — on
   any platform. A continuable subagent can be messaged only while its parent's turn runs, for the
   same reason. Keeping an agent while it owns work is a lifecycle change, not made.
-- **`dsh gateway`, what hermes' gateway has and this does not yet:** a restart that waits for running
+- **`dsh gateway`, what other bots' gateways have and this does not yet:** a restart that waits for running
   turns instead of cutting them (they are reported as lost); health per platform — `connected` in the
   health file is one flag for every platform, so `status` cannot say which one is down, and
   `lastError` one field: a clear names the error it clears, so two platforms failing with the same
