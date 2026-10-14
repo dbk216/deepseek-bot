@@ -274,6 +274,8 @@ for (const resolved of [false, true]) {
   if (acl) execFileSync('/bin/chmod', ['-N', marked])
   check('nor give it an ACL that denies reading it', !acl)
   check('while files in it are still written', inWs(marked, `echo x > '${join(marked, 'note.md')}'`) && existsSync(join(marked, 'note.md')))
+  // Its time is not its readability: tar -C and rsync -a set it, and reported a failure after writing every file.
+  check('and its time can be set (tar -C, rsync -a)', inWs(marked, `touch '${marked}'`))
   // Given by a link that sits under the .git, its target elsewhere: the loader climbs the name it was given,
   // and Seatbelt matches the target, so the rule goes on both names.
   const target = realpathSync(mkdtempSync(join(tmpdir(), 'runner-target-')))

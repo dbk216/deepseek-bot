@@ -89,7 +89,7 @@ profile() {
     # And its .git, when a directory above has one and the adapter keeps one here as the instruction root:
     # removed or moved aside, the harness's loader, which looks again on every step, would climb past the
     # workspace to the instructions above. What is in it stays writable (git init works). The workspace's
-    # own entry stays as it is too — its mode, an ACL, its flags — since an unreadable directory makes skill
+    # own entry keeps its mode, ACL, flags and attributes too, since an unreadable directory makes skill
     # discovery climb; the files in it are still written. With nothing above, its .git is no marker, and a
     # repository there can remove its own. Judged on either name (the loader climbs the one it was given,
     # Seatbelt matches the resolved one), and written on both.
@@ -100,7 +100,12 @@ profile() {
     if [ "$needs_root" -eq 1 ]; then
       for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
         printf '(deny file-write* (literal %s))\n' "$(sbpl "$name/.git")"
-        printf '(deny file-write* (literal %s))\n' "$(sbpl "$name")"
+        # Its mode, flags, extended attributes and ACL, each named: a blanket deny took its times as well,
+        # which tar -C and rsync -a set (they reported a failure after writing every file). Moving it aside
+        # needs its parent, which is not writable.
+        for op in file-write-mode file-write-flags file-write-xattr file-write-acl; do
+          printf '(deny %s (literal %s))\n' "$op" "$(sbpl "$name")"
+        done
       done
     fi
   else
