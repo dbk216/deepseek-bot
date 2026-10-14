@@ -157,9 +157,10 @@ check('env: set appends to a file without a final newline', envSet('A=1', 'K', '
 {
   const lists = readProfile(TEMPLATE)
   check('template: read', !('error' in lists) && lists.platform.join() === 'slack' && lists.targetChannels.join() === '*' && lists.allowedUsers.length === 0, JSON.stringify(lists))
-  const text = writeProfile(TEMPLATE, { platform: ['slack', 'discord'] }) as string
+  // Values a profile can hold: one messenger and the terminal (two messengers are a config error).
+  const text = writeProfile(TEMPLATE, { platform: ['slack', 'local'] }) as string
   const changed = TEMPLATE.split('\n').map((line, i) => [line, text.split('\n')[i]]).filter(([a, b]) => a !== b)
-  check('template: a second platform turns the scalar into a list, and only that line changes', changed.length === 1 && changed[0][1] === "    platform: ['slack', 'discord']", JSON.stringify(changed))
+  check('template: a second platform turns the scalar into a list, and only that line changes', changed.length === 1 && changed[0][1] === "    platform: ['slack', 'local']", JSON.stringify(changed))
   const users = writeProfile(TEMPLATE, { allowedUsers: ['U1'] }) as string
   const at = users.split('\n').indexOf("    allowedUsers: ['U1']")
   check('template: allowedUsers is put right after targetChannels', at > 0 && users.split('\n')[at - 1] === "    targetChannels: ['*']" && users.split('\n').length === TEMPLATE.split('\n').length + 1)
@@ -168,8 +169,8 @@ check('env: set appends to a file without a final newline', envSet('A=1', 'K', '
 {
   const lists = readProfile(HAND)
   check('hand-edited: a block list is read', !('error' in lists) && lists.targetChannels.join() === 'C0AAAAAAA,tui' && lists.platform.join() === 'slack,local', JSON.stringify(lists))
-  const text = writeProfile(HAND, { platform: ['slack', 'local', 'discord'], targetChannels: ['C0AAAAAAA', 'tui', 'C0BBBBBBB'] }) as string
-  check('hand-edited: a flow list stays a flow list', text.includes("    platform: ['slack', 'local', 'discord']"))
+  const text = writeProfile(HAND, { platform: ['local', 'discord'], targetChannels: ['C0AAAAAAA', 'tui', 'C0BBBBBBB'] }) as string
+  check('hand-edited: a flow list stays a flow list', text.includes("    platform: ['local', 'discord']"))
   check('hand-edited: a block list stays a block list, at its indent', text.includes("    targetChannels:\n      - 'C0AAAAAAA'\n      - 'tui'\n      - 'C0BBBBBBB'\n    replyMode: mention"), text)
   const [before, after] = [HAND.split('- id: deepbot')[0], HAND.split('    approvalPatterns')[1]]
   check('hand-edited: every line outside the lists is as it was', text.startsWith(before) && text.endsWith(after) && text.includes('    # Slack and the terminal\n'))
