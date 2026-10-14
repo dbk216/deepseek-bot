@@ -17,6 +17,24 @@ the caveat about version numbers is at the bottom.
 
 ### Changed
 
+- **`dsh gateway setup` is a guided setup, and the installer no longer does messengers.** Connecting
+  Slack took a skipped installer prompt, a manifest to copy, three pages in the browser and a second
+  command with flags. Now the installer asks only for the model's key (when the harness has none) and
+  leaves a bot that talks in the terminal (`platform: ['local']`, every channel). `dsh gateway setup` at
+  a terminal shows each messenger with where it stands, and is chosen with ↑↓ and Enter: it opens the
+  browser where a token is made (Slack's create-from-manifest page, filled in; @BotFather; Discord's
+  Developer Portal), checks each token as it is pasted (shown as `*`) and asks again when it is wrong,
+  asks who may talk to it, and offers one restart at Done; a token already saved is offered again
+  instead of asked for. Discord's step reads the
+  application from the token: it warns while the Message Content intent is off, opens an invite link
+  with the permissions the bot needs, and offers "only me" as the application's owner. Without a
+  terminal `setup` asks nothing, as before: a platform, tokens from the environment, flags. The
+  installer's channel, platform and messenger-token prompts and their helpers are gone.
+- **One messenger at a time.** The composite transport sends every conversation the terminal does not
+  claim to the first messenger, so a second one set up beside it was never answered. `setup` now
+  replaces the messenger there (the guided setup asks first); the old one's tokens stay, its channel
+  ids give way to every channel and its people to the ones given. `--yes`, which guarded a `*` that
+  opened several messengers at once, is gone.
 - **The terminal uses its bottom as Claude Code does.** On a short conversation the input box sat at
   the last rows with the conversation at the top, so `/model`'s list appeared far from where one types.
   The box now follows the conversation and stays at the bottom once the screen is full. `/model` and
@@ -31,6 +49,10 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **A gateway serving only the terminal is connected once it has started.** Only a messenger set the
+  health file's `connected`, so a terminal-only gateway read as down, and the health probe restarted
+  it every five minutes. `install-service.sh` likewise looked for Slack's "Socket Mode connected" in
+  the log; it now reads the health file.
 - **A `/model` switch reached only the terminal that made it.** Every terminal on the conversation is
   told now; an effort step updates their status lines without a line in the transcript. Two steps sent
   together are taken one after the other.
@@ -79,8 +101,7 @@ the caveat about version numbers is at the bottom.
   (mode 600), checks them with the platform (`auth.test` and `apps.connections.open`, `getMe`,
   `users/@me`; for Slack, that both tokens are from one app), adds the platform, channels and people
   to the profile's deepbot row without touching any other line, restarts the gateway and waits for
-  it to connect — with several platforms, a few seconds more for another reporting an error. `*` for
-  the channels, which the platforms share, needs `--yes` when another platform is served. `remove`,
+  it to connect. `remove`,
   `start`, `stop` (with the health probe, which would otherwise alert), `restart`, `status [--json]`
   and `manifest slack` (an app manifest) go with it. Every answer can come without a terminal — a
   token from the environment variable of its name, `--channels`, `--users` — so an agent can run it;

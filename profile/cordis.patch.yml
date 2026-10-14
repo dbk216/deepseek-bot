@@ -169,8 +169,8 @@
   disabled: true
 
 # ── The deepbot row ──────────────────────────────────────────
-# `config` replaces the bundle's whole config, so every setting is restated here. install.sh fills in
-# the platform and the channels.
+# `config` replaces the bundle's whole config, so every setting is restated here. install.sh sets the
+# terminal alone; `dsh gateway setup` puts a messenger, its channels and its people here.
 #   targetChannels: ['*'] answers in every channel the bot is invited to; a list of ids narrows it.
 #   replyMode: mention answers @-mentions in channels; DMs are always answered.
 #   language: what the bot itself says (approvals, stops, failures) and the terminal: en, ko or zh. The

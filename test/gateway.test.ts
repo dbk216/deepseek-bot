@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
-import { gateway, mergeIds, parseIds, readProfile, slackManifest, storeRefs, terminalAsk, writeProfile, envSet, envValue, type GatewayIO, type RunResult } from '../dist/service/gateway.js'
+import { gateway, mergeIds, parseIds, readProfile, slackManifest, storeRefs, terminalSession, keyReader, writeProfile, envSet, envValue, type GatewayIO, type RunResult } from '../dist/service/gateway.js'
 import { route, usage } from '../dist/tui/cli.js'
 
 const results = []
@@ -49,9 +49,11 @@ const HAND = `# a profile edited by hand
 const OK = { status: 0, stdout: '', stderr: '' }
 
 /** A scratch home with a profile, a credential file, and fakes for everything outside. */
-function scene({ profile = TEMPLATE, env = 'DEEPSEEK_API_KEY=sk-test\n', envMode = 0o600, installed = true, loaded = ['ai.deepbot.gateway', 'ai.deepbot.health'], vars = {}, answers = undefined, fetchReply = undefined, connects = true, lastError = null, noPid = [], boots = true, failBootout = [], store = null }: {
+function scene({ profile = TEMPLATE, env = 'DEEPSEEK_API_KEY=sk-test\n', envMode = 0o600, installed = true, loaded = ['ai.deepbot.gateway', 'ai.deepbot.health'], vars = {}, answers = undefined, picks = undefined, fetchReply = undefined, connects = true, lastError = null, noPid = [], boots = true, failBootout = [], store = null }: {
   profile?: string; env?: string | null; envMode?: number; installed?: boolean; loaded?: string[]; vars?: Record<string, string>
-  answers?: Array<string | null>; fetchReply?: (url: string, init: any) => { ok: boolean; status: number; body: unknown }; connects?: boolean; lastError?: string | null
+  answers?: Array<string | null>
+  /** A terminal's menu choices, in order: with these the setup is the guided one. */ picks?: Array<number | 'back' | 'quit'>
+  fetchReply?: (url: string, init: any) => { ok: boolean; status: number; body: unknown }; connects?: boolean; lastError?: string | null
   /** Loaded, with no process: launchd between restarts. */ noPid?: string[]
   /** Whether a (re)started gateway gets as far as writing its health file. */ boots?: boolean
   failBootout?: string[]
@@ -99,6 +101,9 @@ function scene({ profile = TEMPLATE, env = 'DEEPSEEK_API_KEY=sk-test\n', envMode
     return OK
   }
   const queue = answers === undefined ? undefined : [...answers]
+  const choices = picks === undefined ? undefined : [...picks]
+  const menus: Array<{ title: string; options: Array<{ label: string; hint?: string }>; initial: number }> = []
+  const opened: string[] = []
   const io: GatewayIO = {
     home, uid: 501,
     env: { ...vars },
@@ -109,13 +114,18 @@ function scene({ profile = TEMPLATE, env = 'DEEPSEEK_API_KEY=sk-test\n', envMode
       return { ok: r.ok, status: r.status, json: async () => r.body }
     },
     ask: queue === undefined ? undefined : async (question) => { asked.push(question); return queue.length > 0 ? queue.shift() : '' },
+    // The guided setup's menus: each records what it offered and answers the next pick (out of picks: quit).
+    ...(choices === undefined ? {} : {
+      choose: async (title: string, options: Array<{ label: string; hint?: string }>, initial: number) => { menus.push({ title, options, initial }); return choices.length > 0 ? choices.shift() : 'quit' },
+      openUrl: (url: string) => { opened.push(url); return true },
+    }),
     out: (t) => out.push(t), err: (t) => err.push(t),
     sleep: async (ms) => { clock += ms },
     now: () => clock,
     waitMs: 5000,
   }
   return {
-    home, io, calls, fetched, asked, out, err, profilePath, envPath, healthPath, storePath,
+    home, io, calls, fetched, asked, out, err, profilePath, envPath, healthPath, storePath, menus, opened,
     launchctl: () => calls.filter((c) => c[0] === 'launchctl' && c[1] !== 'print').map((c) => c.slice(1, 3).join(' ')),
     profile: () => readFileSync(profilePath, 'utf8'),
     env: () => readFileSync(envPath, 'utf8'),
@@ -237,7 +247,7 @@ for (const [name, vars, why] of [
   const code = await gateway(['setup', 'telegram', '--users', '111 222'], s.io)
   check('telegram: checked with getMe at its token\'s URL', s.fetched.length === 1 && s.fetched[0].url === `https://api.telegram.org/bot${token}/getMe`, s.fetched[0]?.url)
   const lists = readProfile(s.profile()) as any
-  check('telegram: added beside slack, with its people', code === 0 && lists.platform.join() === 'slack,telegram' && lists.allowedUsers.join() === '111,222', s.text())
+  check('telegram: replaces slack — one messenger at a time — with its people', code === 0 && lists.platform.join() === 'telegram' && lists.allowedUsers.join() === '111,222', s.text())
   s.done()
 }
 {
@@ -249,17 +259,33 @@ for (const [name, vars, why] of [
   s.done()
 }
 {
-  const s = scene({ profile: HAND, vars: { DISCORD_BOT_TOKEN: 'a.b.c' } })
-  const code = await gateway(['setup', 'discord', '--channels', 'C0BBBBBBB,C0AAAAAAA', '--no-verify'], s.io)
+  const s = scene({ profile: HAND, vars: { ...SLACK } })
+  const code = await gateway(['setup', 'slack', '--channels', 'C0BBBBBBB,C0AAAAAAA', '--no-verify'], s.io)
   const lists = readProfile(s.profile()) as any
   check('channels: added to a narrowed list, once each', code === 0 && lists.targetChannels.join() === 'C0AAAAAAA,tui,C0BBBBBBB', lists.targetChannels.join())
   s.done()
 }
 {
-  const s = scene({ vars: { DISCORD_BOT_TOKEN: 'a.b.c' } })
-  const code = await gateway(['setup', 'discord', '--channels', 'C0BBBBBBB', '--no-verify'], s.io)
+  const s = scene({ vars: { ...SLACK } })
+  const code = await gateway(['setup', 'slack', '--channels', 'C0BBBBBBB', '--no-verify'], s.io)
   check('channels: a list that is * is left as it is', code === 0 && (readProfile(s.profile()) as any).targetChannels.join() === '*')
   s.done()
+}
+// One messenger at a time: the composite transport sends whatever the terminal does not claim to the first
+// messenger, so a second one listed would never be answered. A new one replaces the old.
+{
+  const s = scene({ profile: HAND, env: `SLACK_BOT_TOKEN=${SLACK.SLACK_BOT_TOKEN}\n`, vars: { DISCORD_BOT_TOKEN: 'a.b.c' } })
+  const code = await gateway(['setup', 'discord', '--no-verify', '--no-restart'], s.io)
+  const lists = readProfile(s.profile()) as any
+  check('one at a time: discord replaces slack, and the terminal stays', code === 0 && lists.platform.join() === 'local,discord', lists.platform.join())
+  check('one at a time: the old messenger\'s channel ids go; it answers in every channel', lists.targetChannels.join() === '*' && s.out.some((l) => l.includes('the channel list was slack')), s.text())
+  check('one at a time: it says so, and slack\'s token stays where it was', s.out.some((l) => l.includes('discord replaces slack')) && s.env().includes(`SLACK_BOT_TOKEN=${SLACK.SLACK_BOT_TOKEN}`))
+  s.done()
+  const t = scene({ profile: HAND, vars: { DISCORD_BOT_TOKEN: 'a.b.c' } })
+  await gateway(['setup', 'discord', '--channels', 'D1', '--users', 'U9', '--no-verify', '--no-restart'], t.io)
+  const given = readProfile(t.profile()) as any
+  check('one at a time: on a switch, the channels and people given replace the old ones', given.targetChannels.join() === 'D1,tui' && given.allowedUsers.join() === 'U9', JSON.stringify(given))
+  t.done()
 }
 {
   const s = scene({ vars: { DISCORD_BOT_TOKEN: 'a.b.c' } })
@@ -308,25 +334,11 @@ for (const [name, profile] of [['no deepbot row', '- id: other\n  config: {}\n']
   s.done()
 }
 
-// 5. setup at a terminal.
+// 5. setup without a terminal asks nothing: a platform has to be named. (At a terminal it is the guided setup, §14.)
 {
-  const s = scene({ answers: ['', 'xapp-new-1', '7'] })
-  const code = await gateway(['setup', 'slack', '--no-verify'], s.io)
-  check('terminal: a token not set and not typed is missing, exit 2', code === 2 && s.err.join().includes('missing: SLACK_BOT_TOKEN') && !s.err.join().includes('run this at a terminal'), s.text())
-  s.done()
-}
-{
-  const s = scene({ env: 'SLACK_BOT_TOKEN=xoxb-kept\n', answers: ['', 'xapp-new-1', 'U0CCCCCCC'] })
-  const code = await gateway(['setup', 'slack', '--no-verify'], s.io)
-  check('terminal: Enter keeps a token that is set; a typed one is saved', code === 0 && s.env() === 'SLACK_BOT_TOKEN=xoxb-kept\nSLACK_APP_TOKEN=xapp-new-1\n', JSON.stringify(s.env()))
-  check('terminal: it asks who may talk to it, and lists them', s.asked[2]?.startsWith('Who may talk to it?') && (readProfile(s.profile()) as any).allowedUsers.join() === 'U0CCCCCCC', JSON.stringify(s.asked))
-  s.done()
-}
-{
-  const s = scene({ answers: [null] })
-  const before = [s.env(), s.profile()]
-  const code = await gateway(['setup', 'telegram'], s.io)
-  check('terminal: ctrl+c is exit 130, nothing written', code === 130 && s.env() === before[0] && s.profile() === before[1], s.text())
+  const s = scene()
+  const code = await gateway(['setup'], s.io)
+  check('setup: without a terminal, no platform is exit 2, and says a terminal gives the guided setup', code === 2 && s.err.join().includes('guided setup') && s.calls.length === 0, s.text())
   s.done()
 }
 
@@ -409,26 +421,50 @@ for (const [name, profile] of [['no deepbot row', '- id: other\n  config: {}\n']
   s.done()
 }
 
-// 10. The terminal prompt: raw mode, backspace, no echo for a secret, ctrl+c.
+// 10. The terminal: one session for the whole guided setup — raw mode and one reader from the first question
+// to the end, keys parsed out of what arrives however it is split, and keys typed between prompts dropped.
+const fakeTerminal = () => {
+  const input = new EventEmitter() as any
+  const modes: boolean[] = []
+  input.setRawMode = (on: boolean) => { modes.push(on) }
+  input.resume = () => {}
+  input.pause = () => {}
+  const term = { input, modes, shown: '', interrupted: 0, send: (...chunks: string[]) => { for (const c of chunks) input.emit('data', Buffer.from(c)) } }
+  const output = { write: (t: string) => { term.shown += t; return true } } as any
+  return { input, modes, send: term.send, output, session: terminalSession(input, output, () => { term.interrupted++ }), get text() { return term.shown }, get interrupted() { return term.interrupted } }
+}
 {
-  const prompt = (secret: boolean, ...chunks: string[]) => {
-    const input = new EventEmitter() as any
-    const modes: boolean[] = []
-    input.setRawMode = (on: boolean) => { modes.push(on) }
-    input.resume = () => {}
-    input.pause = () => {}
-    let shown = ''
-    const output = { write: (t: string) => { shown += t; return true } } as any
-    const answer = terminalAsk(input, output)('Token:', secret)
-    for (const chunk of chunks) input.emit('data', Buffer.from(chunk))
-    return answer.then((value) => ({ value, shown, modes, listeners: input.listenerCount('data') }))
-  }
-  const typed = await prompt(false, 'abx', '\x7f', '\x1b[A', 'c\r')
-  check('prompt: typed, backspace, an arrow key ignored, Enter', typed.value === 'abc' && typed.shown === 'Token: abx\b \bc\n' && typed.modes.join() === 'true,false' && typed.listeners === 0, JSON.stringify(typed))
-  const secret = await prompt(true, 'xoxb-1-2\r')
-  check('prompt: a secret is not echoed', secret.value === 'xoxb-1-2' && secret.shown === 'Token: \n', JSON.stringify(secret.shown))
-  const cancelled = await prompt(true, 'xo\x03')
-  check('prompt: ctrl+c is null, and raw mode is undone', cancelled.value === null && cancelled.modes.join() === 'true,false')
+  const t = fakeTerminal()
+  const answer = t.session.ask('Token:', false)
+  t.send('abx', '\x7f', '\x1b[A', 'c\r')
+  check('prompt: typed, backspace, an arrow key ignored, Enter', await answer === 'abc' && t.text === 'Token: abx\b \bc\n', JSON.stringify(t.text))
+  const secret = t.session.ask('Token:', true)
+  t.send('xoxb-1-2\r')
+  check('prompt: a secret shows a * per character, never the character', await secret === 'xoxb-1-2' && t.text.endsWith('Token: ********\n'), JSON.stringify(t.text.slice(-20)))
+  const cancelled = t.session.ask('Token:', true)
+  t.send('xo\x03')
+  check('prompt: ctrl+c is null', await cancelled === null)
+  const esc = t.session.ask('Id:', false)
+  t.send('12\x1b')
+  check('prompt: Esc is back (empty), after the wait that tells it from a key', await esc === '')
+  check('session: raw mode is taken once, for every prompt', t.modes.join() === 'true', t.modes.join())
+  // Typed while no prompt is open — an Enter while a token is checked — is dropped, not the next answer.
+  t.send('x\r')
+  const next = t.session.ask('Next:', false)
+  t.send('y\r')
+  check('session: keys typed between prompts are dropped', await next === 'y')
+  t.send('\x03')
+  check('session: Ctrl+C with no prompt open quits', t.interrupted === 1)
+  t.session.close()
+  check('session: closed, raw mode and the reader are given back', t.modes.join() === 'true,false' && t.input.listenerCount('data') === 0)
+}
+{
+  const t = fakeTerminal()
+  const word = t.session.ask('Name:', false)
+  const euro = Buffer.from('€\r')
+  t.input.emit('data', euro.subarray(0, 1)); t.input.emit('data', euro.subarray(1))
+  check('prompt: a character split across two reads arrives whole', await word === '€')
+  t.session.close()
 }
 
 // 11. Usage.
@@ -451,12 +487,14 @@ for (const [name, profile] of [['no deepbot row', '- id: other\n  config: {}\n']
   s.done()
 }
 {
-  const s = scene({ vars: { TELEGRAM_BOT_TOKEN: '1:a' }, lastError: 'Conflict: terminated by other getUpdates request' })
-  const code = await gateway(['setup', 'telegram', '--no-verify', '--users', '1'], s.io)
+  // setup never leaves two messengers now; a profile edited by hand still can, and restart reads it.
+  const two = TEMPLATE.replace('    platform: slack\n', "    platform: ['slack', 'telegram']\n")
+  const s = scene({ profile: two, lastError: 'Conflict: terminated by other getUpdates request' })
+  const code = await gateway(['restart'], s.io)
   check('M2: with two platforms, one connected and another failing after it is exit 1, with its error', code === 1 && s.err.join().includes('another reported an error: Conflict'), s.text())
   s.done()
-  const t = scene({ vars: { TELEGRAM_BOT_TOKEN: '1:a' } })
-  const ok = await gateway(['setup', 'telegram', '--no-verify', '--users', '1'], t.io)
+  const t = scene({ profile: two })
+  const ok = await gateway(['restart'], t.io)
   check('M2 control: with none failing it is exit 0, and says it cannot tell which connected', ok === 0 && t.out.some((l) => l.includes('does not say which')), t.text())
   t.done()
 }
@@ -470,20 +508,6 @@ for (const [name, profile] of [['no deepbot row', '- id: other\n  config: {}\n']
   writeFileSync(s.healthPath, JSON.stringify({ pid: 1, startedAt: 1, connected: true, updatedAt: 1 }))
   const code = await gateway(['setup', 'slack', '--no-verify'], s.io)
   check('M4: the last process\'s "connected" does not count after a restart that never comes up', code === 1 && s.err.join().includes('not connected within'), s.text())
-  s.done()
-}
-{
-  const s = scene({ profile: HAND, vars: { TELEGRAM_BOT_TOKEN: '1:a' } })
-  const before = s.profile()
-  const code = await gateway(['setup', 'telegram', '--channels', '*', '--no-verify'], s.io)
-  check('M6: * for one platform, with another served, is refused without --yes, nothing written', code === 2 && s.err.join().includes('every channel on slack') && s.err.join().includes('--yes') && s.profile() === before && !s.env().includes('TELEGRAM'), s.text())
-  const yes = await gateway(['setup', 'telegram', '--channels', '*', '--no-verify', '--yes', '--no-restart'], s.io)
-  check('M6: and taken with --yes', yes === 0 && (readProfile(s.profile()) as any).targetChannels.join() === '*', s.text())
-  // At a terminal it is asked, and answered the way the other confirmation is: y or yes.
-  const u = scene({ profile: HAND, vars: { TELEGRAM_BOT_TOKEN: '1:a' }, answers: ['', 'y'] })
-  const asked = await gateway(['setup', 'telegram', '--channels', '*', '--no-verify', '--no-restart'], u.io)
-  check('M6: at a terminal, y is enough', asked === 0 && u.asked[1]?.includes('[y/N]') && (readProfile(u.profile()) as any).targetChannels.join() === '*', JSON.stringify({ asked: u.asked, text: u.text() }))
-  u.done()
   s.done()
 }
 {
@@ -506,16 +530,6 @@ for (const [name, profile] of [['no deepbot row', '- id: other\n  config: {}\n']
 }
 check('L3: a CRLF profile is refused by name', /line endings/.test((readProfile(HAND.replace(/\n/g, '\r\n')) as any).error ?? ''))
 check('L4: in a CRLF .env the key is replaced, not added twice, and every line keeps CRLF', envSet('A=1\r\nK=old\r\nB=2\r\n', 'K', 'new') === 'A=1\r\nK=new\r\nB=2\r\n' && envValue('K=old\r\n', 'K') === 'old', JSON.stringify(envSet('A=1\r\nK=old\r\nB=2\r\n', 'K', 'new')))
-{
-  const s = scene({ env: 'TELEGRAM_BOT_TOKEN=1:saved\n', vars: { TELEGRAM_BOT_TOKEN: '1:fromshell' }, answers: ['n'] })
-  const code = await gateway(['setup', 'telegram', '--no-verify', '--no-restart'], s.io)
-  check('L5: at a terminal, a shell token that differs from the saved one is asked about; No keeps the saved one', code === 0 && s.asked[0]?.includes('differs from the saved one') && s.env() === 'TELEGRAM_BOT_TOKEN=1:saved\n', JSON.stringify({ asked: s.asked, env: s.env() }))
-  s.done()
-  const t = scene({ env: 'TELEGRAM_BOT_TOKEN=1:saved\n', vars: { TELEGRAM_BOT_TOKEN: '1:fromshell' }, answers: ['y'] })
-  await gateway(['setup', 'telegram', '--no-verify', '--no-restart'], t.io)
-  check('L5 control: Yes takes the shell\'s', t.env() === 'TELEGRAM_BOT_TOKEN=1:fromshell\n', JSON.stringify(t.env()))
-  t.done()
-}
 check('L6: a Slack token typed where ids go is not an id', parseIds('xoxb-1-2-abc', false) === null && parseIds('U1 xapp-1-def', false) === null)
 {
   const reply = (app: string) => (url: string) => (url.includes('auth.test') ? { ok: true, status: 200, body: { ok: true, user: 'bot', team: 'acme', bot_id: 'B1' } }
@@ -603,12 +617,6 @@ check('store: quoted keys, a space before the colon, and a flow mapping are name
   t.done()
 }
 {
-  const s = scene({ store: STORE, answers: ['xapp-1-new', ''] })
-  const code = await gateway(['setup', 'slack', '--no-verify', '--no-restart'], s.io)
-  check('store: at a terminal the token the app holds is not asked for', code === 0 && !s.asked.some((q) => q.includes('SLACK_BOT_TOKEN') || q.includes('bot token')), JSON.stringify(s.asked))
-  s.done()
-}
-{
   const s = scene({ store: STORE, env: `SLACK_APP_TOKEN=${SLACK.SLACK_APP_TOKEN}\n` })
   writeFileSync(s.healthPath, JSON.stringify({ pid: 4242, startedAt: 999_000, connected: true, connectedAt: 999_000, lastError: null, updatedAt: 999_990 }))
   const code = await gateway(['status', '--json'], s.io)
@@ -647,6 +655,229 @@ check('store: quoted keys, a space before the colon, and a flow mapping are name
   try { only = JSON.parse(u.out.join('\n')) } catch { /* checked below */ }
   check('status: only the llm-pi-ai row\'s keys are the model\'s', only?.credentials.OG_API_KEY === 'store' && !('SEARCH_KEY' in (only?.credentials ?? {})), JSON.stringify(only?.credentials))
   u.done()
+}
+
+// 14. The guided setup at a terminal: a menu of the messengers, each step chosen with ↑↓ and Enter, the
+// browser opened where a token is made, each token checked as it is pasted. The fakes answer the menus.
+const MENU_DONE = 4                     // Slack, Telegram, Discord, Terminal, Done
+const slackReply = (bad = 'never') => (url: string, init: any) => (url.includes('auth.test')
+  ? (String(init?.headers?.Authorization).includes(bad) ? { ok: true, status: 200, body: { ok: false, error: 'invalid_auth' } } : { ok: true, status: 200, body: { ok: true, user: 'deepbot', team: 'acme', bot_id: 'B1' } })
+  : url.includes('bots.info') ? { ok: true, status: 200, body: { ok: true, bot: { app_id: 'A0M' } } } : { ok: true, status: 200, body: { ok: true } })
+{
+  const s = scene({ picks: [MENU_DONE], answers: [] })
+  const before = [s.env(), s.profile()]
+  const code = await gateway(['setup'], s.io)
+  const menu = s.menus[0]
+  check('guided: the first screen lists each messenger with where it stands', menu?.options.map((o) => o.hint ?? '').join('|') === '⚠️  tokens missing|⬜ not set up|⬜ not set up|⬜ off|' && menu.options[4].label.includes('Done'), JSON.stringify(menu?.options))
+  check('guided: with nothing set up the cursor starts on the first messenger', menu?.initial === 0, String(menu?.initial))
+  check('guided: Done with nothing chosen changes nothing', code === 0 && s.env() === before[0] && s.profile() === before[1] && s.launchctl().length === 0, s.text())
+  s.done()
+}
+{
+  const s = scene({ picks: [0, 0, 0, MENU_DONE, 0], answers: [SLACK.SLACK_BOT_TOKEN, 'xapp-1-A0M-2'], fetchReply: slackReply() })
+  const code = await gateway(['setup'], s.io)
+  const url = s.opened[0] ?? ''
+  let manifest = null
+  try { manifest = JSON.parse(decodeURIComponent(url.split('manifest_json=')[1] ?? '')) } catch { /* checked below */ }
+  check('guided Slack: the browser opens Slack\'s create-from-manifest page, filled in', url.startsWith('https://api.slack.com/apps?new_app=1&manifest_json=') && manifest?.settings?.socket_mode_enabled === true, url.slice(0, 80))
+  check('guided Slack: both tokens are asked for, hidden, and saved', s.env().includes(`SLACK_BOT_TOKEN=${SLACK.SLACK_BOT_TOKEN}`) && s.env().includes('SLACK_APP_TOKEN=xapp-1-A0M-2') && s.asked.length === 2, JSON.stringify(s.asked))
+  check('guided Slack: each token is checked as it is pasted, and who the bot is said', s.out.some((l) => l.includes('@deepbot in acme')) && s.out.some((l) => l.includes('Socket Mode is on')))
+  check('guided Slack: Done goes to one restart, and it connects', code === 0 && s.launchctl().join() === 'kickstart -k' && s.text().includes('connected (pid 4242)'), s.text())
+  check('guided Slack: it ends saying what to do in Slack', s.out.some((l) => l.includes('🎉')) && s.out.some((l) => l.includes('/invite @deepbot')), s.text())
+  check('guided Slack: after a save the menu\'s cursor waits on Done', s.menus.filter((m) => m.title.includes('Which messenger?'))[1]?.initial === MENU_DONE)
+  check('guided Slack: no token is printed', !s.text().includes(SLACK.SLACK_BOT_TOKEN) && !s.text().includes('xapp-1-A0M-2'))
+  s.done()
+}
+{
+  const s = scene({ picks: [0, 1, 0, MENU_DONE, 1], answers: ['xoxb-9-9-bad', SLACK.SLACK_BOT_TOKEN, 'xapp-1-A0M-2'], fetchReply: slackReply('bad') })
+  const code = await gateway(['setup'], s.io)
+  check('guided: a token the platform refuses is asked for again, not the end', code === 0 && s.asked.length === 3 && s.out.some((l) => l.includes('invalid_auth')) && s.env().includes(`SLACK_BOT_TOKEN=${SLACK.SLACK_BOT_TOKEN}`) && !s.env().includes('bad'), s.text())
+  check('guided: Later restarts nothing', s.launchctl().length === 0)
+  s.done()
+}
+{
+  // The third ask gets Enter alone: back to the menu, then Done.
+  const s = scene({ picks: [0, 0, MENU_DONE], answers: [SLACK.SLACK_BOT_TOKEN, 'xapp-1-AOT-2'], fetchReply: slackReply() })
+  await gateway(['setup'], s.io)
+  check('guided: an app-level token from another Slack app is refused and asked again', s.out.some((l) => l.includes('both must come from one app')) && s.asked.length === 3 && s.asked[2].includes('app-level') && !s.env().includes('AOT'), JSON.stringify(s.asked))
+  s.done()
+}
+{
+  const s = scene({ picks: [0, 'back', MENU_DONE], answers: [] })
+  const before = s.env()
+  const code = await gateway(['setup'], s.io)
+  check('guided: Esc in a platform\'s steps goes back to the menu, nothing written', code === 0 && s.menus.filter((m) => m.title.includes('Which messenger?')).length === 2 && s.env() === before, s.text())
+  s.done()
+}
+{
+  const s = scene({ picks: [0, 0], answers: [null] })
+  const before = [s.env(), s.profile()]
+  const code = await gateway(['setup'], s.io)
+  check('guided: Ctrl+C is exit 130, and what was not saved is not written', code === 130 && s.env() === before[0] && s.profile() === before[1] && s.out.some((l) => l.includes('quit')), s.text())
+  s.done()
+}
+{
+  const s = scene({ picks: [1, 0, 1, 0, MENU_DONE, 1], answers: ['123456:AAbb_cc-dd', '111'] })
+  const code = await gateway(['setup'], s.io)
+  const lists = readProfile(s.profile()) as any
+  check('guided Telegram: token checked, "only me" asks the id, and lists it', code === 0 && lists.platform.includes('telegram') && lists.allowedUsers.join() === '111' && s.env().includes('TELEGRAM_BOT_TOKEN='), JSON.stringify(lists))
+  check('guided Telegram: it ends saying whom to message', s.out.some((l) => l.includes('message @deep_bot')), s.text())
+  s.done()
+}
+{
+  let reads = 0
+  const app = (url: string) => (url.includes('applications/@me')
+    ? { ok: true, status: 200, body: { id: '777', name: 'deepbot', bot: { username: 'deepbot' }, flags: reads++ === 0 ? 0 : 1 << 18, owner: { id: '42', username: 'owner' } } }
+    : { ok: true, status: 200, body: {} })
+  const s = scene({ picks: [2, 0, 1, 0, 0, 0, MENU_DONE, 1], answers: ['MTA.abc_d.ef-g'], fetchReply: app })
+  const code = await gateway(['setup'], s.io)
+  const lists = readProfile(s.profile()) as any
+  check('guided Discord: the Message Content intent is checked, and checked again once turned on', s.out.filter((l) => l.includes('Message Content Intent is off')).length === 1 && reads === 2, s.text())
+  check('guided Discord: the invite link is made from the token, with the permissions it needs', s.opened.some((u) => u === 'https://discord.com/oauth2/authorize?client_id=777&scope=bot&permissions=274878008320'), JSON.stringify(s.opened))
+  check('guided Discord: "only me" is the application\'s owner, with nothing to type', code === 0 && lists.allowedUsers.join() === '42' && s.asked.length === 1, JSON.stringify({ users: lists.allowedUsers, asked: s.asked }))
+  s.done()
+}
+{
+  const set = `DEEPSEEK_API_KEY=sk-test\nSLACK_BOT_TOKEN=${SLACK.SLACK_BOT_TOKEN}\nSLACK_APP_TOKEN=${SLACK.SLACK_APP_TOKEN}\n`
+  const s = scene({ env: set, picks: [0, 0, MENU_DONE], answers: [] })
+  const code = await gateway(['setup'], s.io)
+  check('guided: a messenger already set up is marked so, and the cursor starts on Done', s.menus[0]?.options[0].hint === '✅ set up' && s.menus[0]?.initial === MENU_DONE, JSON.stringify(s.menus[0]))
+  check('guided: choosing it offers keep; keeping changes nothing', code === 0 && s.menus[1]?.options[0].label.includes('Keep') && s.env() === set, s.text())
+  s.done()
+  const t = scene({ profile: HAND, env: set, picks: [0, 2, MENU_DONE, 1], answers: [] })
+  await gateway(['setup'], t.io)
+  check('guided: or removes it from the bot, its tokens staying', (readProfile(t.profile()) as any).platform.join() === 'local' && t.env() === set, t.text())
+  t.done()
+}
+{
+  const s = scene({ store: 'refs:\n  SLACK_BOT_TOKEN: stored-bot-value\n', picks: [0, 1, 0, MENU_DONE, 1], answers: ['xapp-1-A0M-2'], fetchReply: slackReply() })
+  const code = await gateway(['setup'], s.io)
+  check('guided: a token the DeepSeek Harness app holds is not asked for', code === 0 && s.asked.length === 1 && s.asked[0].includes('app-level') && !s.env().includes('SLACK_BOT_TOKEN') && !s.text().includes('stored-bot-value'), JSON.stringify(s.asked))
+  s.done()
+}
+{
+  const s = scene({ picks: [3, MENU_DONE, 1], answers: [] })
+  const code = await gateway(['setup'], s.io)
+  const lists = readProfile(s.profile()) as any
+  check('guided: the terminal is turned on from the menu, every channel already letting it in', code === 0 && lists.platform.join() === 'slack,local' && lists.targetChannels.join() === '*', JSON.stringify(lists))
+  s.done()
+}
+{
+  const s = scene({ installed: false, loaded: [], picks: [3, MENU_DONE], answers: [] })
+  const code = await gateway(['setup'], s.io)
+  check('guided: saved with no service installed is exit 0, and says to install it', code === 0 && s.out.some((l) => l.includes('not installed')) && s.launchctl().length === 0, s.text())
+  s.done()
+}
+{
+  // The profile serves Slack: Telegram's first question is the switch, then its own steps.
+  const s = scene({ picks: [0, 'quit'], answers: [] })
+  const code = await gateway(['setup', 'telegram'], s.io)
+  check('guided: setup <platform> at a terminal goes straight to that platform', s.menus.length === 2 && s.menus[0].title.includes('One messenger at a time') && s.menus[1].title.includes('@BotFather') && code === 130, JSON.stringify(s.menus.map((m) => m.title)))
+  s.done()
+}
+
+{
+  // Switching in the guided setup: asked first, Back keeps everything, and the old people do not carry over.
+  const listed = TEMPLATE.replace("    targetChannels: ['*']\n", "    targetChannels: ['*']\n    allowedUsers: ['U0SLACK']\n")
+  const s = scene({ profile: listed, picks: [1, 1, MENU_DONE], answers: [] })
+  const before = s.profile()
+  const back = await gateway(['setup'], s.io)
+  check('guided switch: choosing another messenger asks first, and Back changes nothing', back === 0 && s.menus[1]?.title.includes('The bot is on Slack') && s.menus[1].options[0].label.includes('Switch to Telegram') && s.profile() === before, JSON.stringify(s.menus[1]))
+  s.done()
+  const t = scene({ profile: listed, picks: [1, 0, 1, 1, MENU_DONE, 1], answers: ['123456:AAbb_cc-dd'] })
+  await gateway(['setup'], t.io)
+  const who = t.menus.find((m) => m.title.includes('Who may talk to it?'))
+  const lists = readProfile(t.profile()) as any
+  check('guided switch: the old messenger\'s people are not the new one\'s — "anyone" is offered again', who?.options.some((o) => o.label.includes('Anyone')) === true, JSON.stringify(who?.options))
+  check('guided switch: Telegram replaces Slack; anyone chosen clears the old ids', lists.platform.join() === 'telegram' && lists.allowedUsers.length === 0 && t.out.some((l) => l.includes('Slack switched off')), JSON.stringify(lists))
+  t.done()
+}
+
+{
+  // At a terminal, answers that came with the command are not dropped for menus: a flag, or a token in the
+  // environment, means a script or an agent, and takes the path that reads them.
+  const s = scene({ picks: [], answers: [], vars: { TELEGRAM_BOT_TOKEN: '1:a' } })
+  const code = await gateway(['setup', 'telegram', '--users', '999', '--no-verify', '--no-restart'], s.io)
+  const lists = readProfile(s.profile()) as any
+  check('guided: at a terminal, flags and an env token take the flag path — none dropped', code === 0 && s.menus.length === 0 && lists.allowedUsers.join() === '999' && s.env().includes('TELEGRAM_BOT_TOKEN=1:a'), s.text())
+  s.done()
+}
+{
+  // A token already saved in ~/.dsh/.env is offered, not asked for again — a switch back, or a re-setup.
+  const set = `SLACK_BOT_TOKEN=${SLACK.SLACK_BOT_TOKEN}\nSLACK_APP_TOKEN=xapp-1-A0M-2\n`
+  const s = scene({ env: set, picks: [0, 1, 0, 0, 0, MENU_DONE], answers: [], fetchReply: slackReply() })
+  const code = await gateway(['setup'], s.io)
+  check('guided: saved tokens are offered, and used — nothing typed, nothing changed', code === 0 && s.asked.length === 0 && s.menus.filter((m) => m.options[0].label.includes('Use the saved one')).length === 2 && s.env() === set, JSON.stringify(s.asked))
+  s.done()
+  const t = scene({ env: 'SLACK_BOT_TOKEN=xoxb-saved-1\nSLACK_APP_TOKEN=xapp-1-A0M-2\n', picks: [0, 1, 0, 1, 0, 0, MENU_DONE, 1], answers: [SLACK.SLACK_BOT_TOKEN], fetchReply: slackReply('saved') })
+  await gateway(['setup'], t.io)
+  check('guided: a saved token the platform refuses is asked for again', t.out.some((l) => l.includes('the saved one: Slack refused it')) && t.asked.length === 1 && t.env().includes(`SLACK_BOT_TOKEN=${SLACK.SLACK_BOT_TOKEN}`), t.text())
+  t.done()
+}
+{
+  // People: with some listed, Keep keeps them, Only me replaces them (it used to add to them).
+  const tg = TEMPLATE.replace('    platform: slack\n', "    platform: telegram\n").replace("    targetChannels: ['*']\n", "    targetChannels: ['*']\n    allowedUsers: ['111', '222']\n")
+  const s = scene({ profile: tg, env: 'TELEGRAM_BOT_TOKEN=1:a\n', picks: [1, 1, 0, 2, MENU_DONE, 1], answers: ['333'] })
+  await gateway(['setup'], s.io)
+  const who = s.menus.find((m) => m.title.includes('Who may talk to it?'))
+  check('guided people: with some listed, the choices are keep, add, only me, anyone', who?.options.map((o) => o.label.split(' ').slice(1).join(' ')).join('|') === 'Keep the 2 listed|Add people|Only me|Anyone who finds the bot', JSON.stringify(who?.options))
+  check('guided people: Only me replaces the list', (readProfile(s.profile()) as any).allowedUsers.join() === '333', JSON.stringify(readProfile(s.profile())))
+  s.done()
+  const t = scene({ profile: tg, env: 'TELEGRAM_BOT_TOKEN=1:a\n', picks: [1, 1, 0, 0, MENU_DONE], answers: [] })
+  const code = await gateway(['setup'], t.io)
+  check('guided people: Keep keeps it, and nothing changes', code === 0 && t.profile() === tg && t.out.some((l) => l.includes('nothing changed')), t.text())
+  t.done()
+}
+{
+  // Not running: Start it now bootstraps the gateway and its probe, and waits for it.
+  const s = scene({ loaded: [], picks: [3, MENU_DONE, 0], answers: [] })
+  const code = await gateway(['setup'], s.io)
+  check('guided: Start it now starts the gateway and its probe, and it connects', code === 0 && s.launchctl().filter((c) => c.startsWith('bootstrap')).length === 2 && s.text().includes('connected (pid 4242)'), s.text())
+  s.done()
+}
+{
+  // A team's Discord application: its owner is the team, a pseudo-user; "only me" is the team's owner.
+  const app = (url: string) => (url.includes('applications/@me')
+    ? { ok: true, status: 200, body: { id: '777', bot: { username: 'deepbot' }, flags: 1 << 18, owner: { id: '900', username: 'team900' }, team: { owner_user_id: '55', members: [{ user: { id: '55', username: 'lead' } }] } } }
+    : { ok: true, status: 200, body: {} })
+  const s = scene({ picks: [2, 0, 1, 1, 0, MENU_DONE, 1], answers: ['MTA.abc_d.ef-g'], fetchReply: app })
+  await gateway(['setup'], s.io)
+  const who = s.menus.find((m) => m.title.includes('Who may talk to it?'))
+  check('guided Discord: for a team\'s app, "only me" is the team\'s owner, not the team', who?.options[0].hint === '@lead' && (readProfile(s.profile()) as any).allowedUsers.join() === '55', JSON.stringify({ hint: who?.options[0].hint, users: (readProfile(s.profile()) as any).allowedUsers }))
+  s.done()
+}
+
+{
+  // A token in the DeepSeek Harness app that the platform refuses is said so, with where to change it.
+  const reply = (url: string) => (url.includes('auth.test') ? { ok: true, status: 200, body: { ok: false, error: 'token_revoked' } } : { ok: true, status: 200, body: { ok: true } })
+  const s = scene({ store: 'refs:\n  SLACK_BOT_TOKEN: stored-bot-value\n', picks: [0, MENU_DONE], answers: [], fetchReply: reply })
+  const before = s.profile()
+  const code = await gateway(['setup'], s.io)
+  check('guided: a token in the app the platform refuses is refused, with where to change it, nothing written', code === 0 && s.out.some((l) => l.includes('token_revoked') && l.includes('change it in the app')) && s.profile() === before && !s.text().includes('stored-bot-value'), s.text())
+  s.done()
+}
+check('keys: a private-parameter sequence (SGR mouse) is one key, not Esc', (() => { const keys: string[] = []; keyReader((k) => keys.push(k))('\x1b[<0;10;5M'); return keys.length === 1 })())
+
+// 15. The menu: ↑↓ and j/k move, Enter or a digit chooses, Esc goes back, Ctrl+C quits — keys parsed out of
+// whatever arrives: an arrow split over two reads (ssh) is an arrow, not Esc; an arrow and Enter in one read are both.
+{
+  const menu = async (...chunks: string[]) => {
+    const t = fakeTerminal()
+    const answer = t.session.choose('   Pick:', [{ label: 'one' }, { label: 'two', hint: 'second' }, { label: 'three' }], 0)
+    t.send(...chunks)
+    const value = await answer
+    t.session.close()
+    return { value, shown: t.text }
+  }
+  const moved = await menu('\x1b[B', '\x1b[B', '\x1b[A', '\r')
+  check('menu: down, down, up, Enter is the second line', moved.value === 1, String(moved.value))
+  check('menu: the cursor line is marked, and what was chosen stays as one line', moved.shown.includes('❯') && moved.shown.includes('   Pick: \x1b[2m›\x1b[22m two\n'), JSON.stringify(moved.shown.slice(-80)))
+  check('menu: lines are not wrapped while it is up, and wrapping is given back', moved.shown.startsWith('\x1b[?25l\x1b[?7l') && moved.shown.includes('\x1b[?7h'))
+  check('menu: j and k move too, and wrap', (await menu('k', '\r')).value === 2 && (await menu('j', 'j', 'j', '\r')).value === 0)
+  check('menu: a digit chooses its line', (await menu('3')).value === 2)
+  check('menu: Esc goes back, Ctrl+C quits', (await menu('\x1b')).value === 'back' && (await menu('\x03')).value === 'quit')
+  check('menu: an arrow split over two reads is an arrow, not Esc', (await menu('\x1b', '[B', '\r')).value === 1)
+  check('menu: an arrow and Enter in one read are two keys', (await menu('\x1b[B\r')).value === 1)
 }
 
 const failed = results.filter((r) => !r.ok)

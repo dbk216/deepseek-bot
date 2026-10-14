@@ -297,6 +297,24 @@ async function failingOnce(otherError: string | null) {
   r.done()
 }
 
+// 13. A gateway that serves only the terminal is connected once its socket is up. No messenger is there to
+// say so, and the health probe read "not connected" as down and restarted it every five minutes.
+for (const [platform, expected] of [['local', true], ['slack', false]] as const) {
+  const dir = mkdtempSync(join(tmpdir(), 'deepbot-health-'))
+  const healthFile = join(dir, 'health.json')
+  const t = boot({ config: { platform, healthFile } })
+  let h = null
+  for (const deadline = Date.now() + 5000; h?.connected !== true && Date.now() < deadline;) {
+    await sleep(25)
+    try { h = JSON.parse(readFileSync(healthFile, 'utf8')) } catch { /* not yet */ }
+  }
+  check(platform === 'local'
+    ? 'health: a terminal-only gateway is connected once it has started'
+    : 'health: with a messenger, connected waits for that platform to say so (control)', (h?.connected === true) === expected, JSON.stringify(h))
+  t.done()
+  rmSync(dir, { recursive: true, force: true })
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

@@ -490,7 +490,7 @@ terminal gets the persona, the workspace's notes, recall, approvals and the turn
 goes through the same core. The conversation lives in the gateway; the terminal is only the screen,
 so quitting loses nothing.
 
-**Serve it.** `dsh gateway setup local` does this and restarts the gateway. By hand: put `local` in
+**Serve it.** A new install serves it already; `dsh gateway setup` turns it on or off. By hand: put `local` in
 the deepbot row's `platform` — alone, or in a list — and allow its channel. `config` replaces the
 whole row, so restate what you keep:
 
@@ -508,7 +508,7 @@ A terminal may open, message or stop only the subagents and jobs its own panel o
 only its own conversation's buttons.
 
 **Use it.** `dsh` (`install.sh` writes it to `~/.local/bin`, and a new profile it writes serves the terminal
-beside the platform; from a clone, run `node dist/tui/main.js`) finds the running gateway;
+alone until `dsh gateway setup` adds a messenger; from a clone, run `node dist/tui/main.js`) finds the running gateway;
 `--name` picks one by `tuiName`, `--socket` names the path, `--tenant` talks in a tenant's workspace
 (needs `tenantIsolation`; without it a new conversation goes where the configuration sends any other,
 `tenantDefault` or the home), `--resume <id>` continues a conversation (the id is printed on exit).

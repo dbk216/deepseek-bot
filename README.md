@@ -29,16 +29,19 @@
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rlaope/deepseek-bot/master/install.sh | bash
-dsh
+dsh                    # talk to it in the terminal
+dsh gateway setup      # connect Slack, Telegram or Discord: ↑↓ and Enter
 ```
 
-The first line installs it, and running it again updates; `dsh` opens it in the terminal. It needs
-macOS with Node.js 22+, the DeepSeek Harness app, a DeepSeek API key and a bot token for the platform
-you choose; it asks for the rest on the terminal. DeepSeek's own API is the default and needs nothing
-else; OpenGateway or another OpenAI-compatible endpoint is an option the installer offers. Creating
-the Slack, Telegram or Discord bot is in [docs/setup.md](docs/setup.md). To add another platform later,
-or replace a token: `dsh gateway setup <slack|telegram|discord>`. It also runs without a terminal, so an
-agent can do it for you; `dsh gateway status` says whether it is up.
+The first line installs it, and running it again updates. It needs macOS with Node.js 22+, the
+DeepSeek Harness app and a DeepSeek API key — none asked for if the harness already has one. DeepSeek's
+own API is the default and needs nothing else; OpenGateway or another OpenAI-compatible endpoint is an
+option the installer offers. The bot starts with the terminal, `dsh`.
+
+`dsh gateway setup` connects a messenger: pick one with ↑↓ and Enter, and it opens the page where each
+token is made, checks each token as you paste it, and offers to restart the bot. Without a terminal it takes the
+tokens from the environment instead, so an agent can do it for you ([docs/setup.md](docs/setup.md));
+`dsh gateway status` says whether it is up.
 
 <img src="docs/opengateway-logo.svg" height="16" alt="OpenGateway"> **Optional: faster on [OpenGateway](https://opengateway.ai).** It serves `deepseek/deepseek-v4.1-flash-ultrafast`
 on an OpenAI-compatible endpoint (`https://apis.opengateway.ai/v1`), which it lists at 12× the speed and
