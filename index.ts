@@ -2066,8 +2066,6 @@ export function apply(ctx, config) {
         ? body
         : [{ type: 'text', text: body }, ...refs.map((attachment) => ({ type: 'image', attachment }))]))
       await agent.whenIdle()
-      // Recorded once the turn has run: a turn that died answered nothing, and is not named as having answered.
-      if (sessionKey !== null) state.routes = { ...(state.routes ?? {}), [sessionKey]: route }
       await sessions.flush(agent.session)
       // Refresh here, not in the Slack event handler: this is the one place every
       // path passes through (Slack messages, the test harness, any other caller),
@@ -2096,6 +2094,9 @@ export function apply(ctx, config) {
         }
       } catch (e) { log(`token readout failed: ${String(e?.message ?? e)}`) }
       const outcome = summarize(agent.session, firstSeq)
+      // Recorded once the turn has answered: one the provider refused ended without throwing, with an error
+      // reason, and is not named later as having answered.
+      if (sessionKey !== null && (outcome.reason?.kind === 'completed' || outcome.text !== '')) state.routes = { ...(state.routes ?? {}), [sessionKey]: route }
       // The harness records a cancelled turn with no reason of its own, so the
       // adapter — which is the party that asked for the stop — supplies it. Without
       // this a stopped turn reached the user as "the turn did not complete

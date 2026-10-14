@@ -511,11 +511,22 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   }
   // Turns after the first resume the session: an agent that can be resumed, and keeps what it was told. A turn
   // whose message says FAILTURN dies after its prompt was sent.
+  // A turn answers, as the harness records one; one whose message says FAILTURN ends as a refused model call
+  // does: no answer, a turn/end with an error reason, and whenIdle returning normally.
   const told = []
-  let dying = false
-  const agent = (o) => ({ agent: { session: { header: { id: o?.sessionId ?? o?.resumeSessionId ?? 's1' }, seq: 0, eventAt: () => undefined },
-    followup: (m) => { const text = (m?.content ?? []).map((b) => b?.text ?? '').join(''); told.push(text); dying = /FAILTURN/.test(text) },
-    whenIdle: async () => { if (dying) { dying = false; throw new Error('fake: the turn died') } }, cancel: () => {} }, dispose: async () => {} })
+  const agent = (o) => {
+    const events = []
+    const session = { header: { id: o?.sessionId ?? o?.resumeSessionId ?? 's1' }, get seq() { return events.length }, eventAt: (i) => events[i] }
+    return { agent: { session,
+      followup: (m) => {
+        const text = (m?.content ?? []).map((b) => b?.text ?? '').join('')
+        told.push(text)
+        events.push({ type: 'turn/start' })
+        if (/FAILTURN/.test(text)) events.push({ type: 'turn/end', data: { reason: { kind: 'error', message: 'fake: the provider refused' } } })
+        else { events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '응' }] } } }); events.push({ type: 'turn/end', data: { reason: { kind: 'completed' } } }) }
+      },
+      whenIdle: async () => {}, cancel: () => {} }, dispose: async () => {} }
+  }
   const agents = { create: async (o) => agent(o), resume: async (o) => agent(o) }
   // A route recorded for this conversation with no session behind it yet (a first turn that died): no line.
   const t = boot({ state: { routes: { 'tui:conv-note': 'zz/old' } }, services: { llm, agents, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm1' }) } } })
@@ -543,8 +554,6 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   // A turn on another route that dies answered nothing: going back, the line does not name it.
   await switchTo('og', 'm1')
   await turn('FAILTURN 여섯')
-  // Its failure is said before the next message is taken (the failed turn is retried first).
-  for (let i = 0; i < 300 && !c.frames.some((f) => f.type === 'post' && /fake: the turn died/.test(f.text)); i++) await sleep(10)
   await sleep(300)
   await switchTo('ds', 'm2')
   const back = await turn('일곱')
