@@ -135,11 +135,14 @@ process.on('exit', () => {
   }
 })
 
+mkdirSync(join(TEST_HOME, '.agents-home-empty'), { recursive: true })
 const child = spawn(DSH_BIN, ['--profile', PROFILE, '--port', PORT, '--no-open'], {
   cwd: TEST_HOME,
   env: {
     ...process.env,
     DEEPBOT_SELF_TEST_SCRIPT: resolvedScenario,
+    // As the launcher does: the operator's own agent skills (~/.agents/skills) are not the bot's.
+    DSH_AGENTS_HOME: join(TEST_HOME, '.agents-home-empty'),
     DEEPBOT_RECALL_SCRIPT: join(REPO, 'dist', 'recall', 'deepbot-recall.js'),
     DEEPBOT_SCENARIO_RESULT: RESULT,
     DEEPBOT_HOME: TEST_HOME,

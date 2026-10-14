@@ -1144,8 +1144,17 @@ for (const remove of [false, true]) {
   check('identity: setup registers a section of its own, after the persona prefix and before the tools', identity !== undefined && identity.order > 0 && identity.order < 500 && identity.interpolate === false, JSON.stringify({ name: identity?.name, order: identity?.order }))
   check('identity: it says it is deepseek-bot, on DeepSeek Harness, and that this conversation is on Slack', /deepseek-bot/.test(text) && /DeepSeek Harness/.test(text) && /This conversation is on Slack/.test(text), text.split('\n')[1])
   check('identity: it names what it may change itself', /SOUL\.md/.test(text) && /memory\//.test(text) && /\.dsh\/skills\//.test(text) && /watch/.test(text))
-  check('identity: and what only the operator can, and where, without trying', /operator/.test(text) && /model/.test(text) && /provider/.test(text) && /language/.test(text) && /cordis\.patch\.yml/.test(text) && /\.env/.test(text) && /does not try/.test(text))
+  check('identity: and what only the operator can, and where, without trying', /operator/.test(text) && /model/.test(text) && /provider/.test(text) && /language/.test(text) && /cordis\.patch\.yml/.test(text) && /\.env/.test(text) && /\.credentials\.yaml/.test(text) && /does not try/.test(text))
   t.done()
+
+  // A turn with no conversation (the self-test diagnostic) gets the section too, instead of a TypeError in setup.
+  const selfTest = boot({ agent: 'ready', config: { selfTest: 'are you there?' } })
+  for (let i = 0; i < 100 && selfTest.created.length === 0; i++) await sleep(10)
+  const own = []
+  let threw = ''
+  try { await selfTest.created[0]?.setup?.({ systemPrompt: { section: (s) => { own.push(s); return () => {} } } }) } catch (e) { threw = String((e as Error).message) }
+  check('identity: a turn outside any conversation is set up, and told so', threw === '' && /not in any conversation/.test(String(own.find((s) => s.name === 'deepbot:identity')?.text ?? '')), threw || String(own[0]?.text ?? '').split('\n')[1])
+  selfTest.done()
 }
 
 const failed = results.filter((r) => !r.ok)
