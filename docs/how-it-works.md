@@ -142,6 +142,24 @@ agent has no tools at all — that failure was silent and looked like a memory b
 resume is bound to the recorded working directory, so moving the agent home orphans every old
 thread.
 
+### Who the agent is told it is
+
+The harness's preset says only "You are a coding agent powered by the {{model}} model". Every session's
+`setup` adds a section of the adapter's own to the system prompt (`deepbot:identity`, order 10: after
+the preset's persona prefix, before plan and tool guidance, scoped to that agent): that it is
+deepseek-bot on DeepSeek Harness, whether this conversation is on Slack, Telegram, Discord or in the
+terminal, the language of the bot's own notices, what it may change itself (the persona files, its
+notes, its watches, its skills under `.dsh/skills/`) and what only the operator can (the model and
+provider, platforms and channels, the language, keys and tokens, approval rules, the sandbox) —
+which it names and points to (`~/.dsh/profiles/<profile>/cordis.patch.yml`, `~/.dsh/.env`) rather
+than trying. The name and voice stay the persona's (`SOUL.md`).
+
+**Skills.** The harness lists skills from `<project root>/.dsh/skills` and `.agents/skills` (the
+project root is the nearest `.git`, else the agent home), `~/.dsh/skills`, and `<agents home>/skills`.
+The last is `~/.agents` by default — the operator's own coding agents' skills — so the launcher sets
+`DSH_AGENTS_HOME` to an empty directory of the bot's own (`~/.dsh/deepbot/agents-home`). A skill the
+agent writes goes in `.dsh/skills/<name>/SKILL.md` in its home; `skills/` was never read.
+
 ### Prompt assembly, and why the standing block is digest-gated
 
 Prompt caching reuses a stable prefix, so anything that changes early in the prompt throws away

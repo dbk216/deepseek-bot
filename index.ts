@@ -54,7 +54,7 @@ import { fileURLToPath } from 'node:url'
 import { createSlackTransport } from './transports/slack.js'
 import { createTelegramTransport } from './transports/telegram.js'
 import { createDiscordTransport } from './transports/discord.js'
-import { createLocalTransport } from './transports/local.js'
+import { createLocalTransport, LOCAL_CHANNEL } from './transports/local.js'
 import { createCompositeTransport } from './transports/composite.js'
 import { createProgressTracker } from './progress.js'
 import { languageOf } from './i18n.js'
@@ -89,6 +89,9 @@ export const inject = [
   'permissionPresets',
   'workspaceRegistry',
 ]
+
+/** Where the identity section sits: after the preset's persona prefix (0), before plan and tool guidance (500+). */
+const IDENTITY_ORDER = 10
 
 // Config is validated by hand instead of with a schemastery schema, to keep the
 // dependency surface at zero.
@@ -1831,6 +1834,8 @@ export function apply(ctx, config) {
 
     const setup = async (agentCtx) => {
       if (presetId && agentPresets?.mount) await agentPresets.mount(agentCtx, presetId)
+      // Scoped to this agent, so it goes with it. The preset says only "a coding agent".
+      agentCtx.systemPrompt?.section?.({ name: 'deepbot:identity', order: IDENTITY_ORDER, interpolate: false, text: identityText(sessionKey) })
     }
 
     // A workspace is what the harness's own instruction loader and other
@@ -2072,6 +2077,28 @@ export function apply(ctx, config) {
   // Socket Mode connection and its reconnect loop, event parsing, rendering,
   // history deltas, attachments. The core keeps mapping, the turn loop, policy,
   // watches and reminders.
+  // ── Who the agent is ───────────────────────────────────────────────────
+  /** Where a conversation is, in words: the terminal, or the platform its channel belongs to. */
+  function platformOf(key: string): string {
+    if (key.startsWith(`${LOCAL_CHANNEL}:`)) return 'in the terminal (dsh)'
+    const name = String(platforms.find((p) => p !== 'local') ?? platforms[0] ?? 'slack')
+    return `on ${({ slack: 'Slack', telegram: 'Telegram', discord: 'Discord' })[name] ?? name}`
+  }
+
+  /**
+   * What every session is told about itself: that it is deepseek-bot, where this conversation is, and
+   * which settings are its own and which are the operator's. Asked to change the model or a channel, it
+   * used to look for them in its own home.
+   */
+  function identityText(key: string): string {
+    return [
+      'This agent is deepseek-bot: a bot people talk to on Slack, Telegram, Discord or in a terminal (dsh), running on DeepSeek Harness. Its name and voice are the persona in SOUL.md.',
+      `This conversation is ${platformOf(key)}. The bot's own notices (approvals, stops, failures) are in ${({ en: 'English', ko: 'Korean', zh: 'Chinese' })[language]}; answers follow the persona and the person.`,
+      'It may change, in its home: SOUL.md, USER.md and MEMORY.md (who it is, who it works for, what it knows), its notes under memory/, its watches, and its skills under .dsh/skills/<name>/SKILL.md.',
+      'Only the operator can change, outside its home, where it can neither read nor write: the model and provider, the platforms and channels it answers in, the language setting, API keys and tokens, the approval rules and the sandbox. Asked to change one, it says which setting it is and that the operator changes it in the gateway profile (~/.dsh/profiles/<profile>/cordis.patch.yml) or ~/.dsh/.env, and does not try to; in the terminal, /model moves one conversation to another model the providers list.',
+    ].join('\n')
+  }
+
   const transportHost = {
     cfg, log, sessionCwd, stateDir,
     workspaceFor: (key: string) => cwdFor(key),

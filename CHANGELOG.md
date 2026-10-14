@@ -7,6 +7,12 @@ the caveat about version numbers is at the bottom.
 
 ### Added
 
+- **The agent knows what it is and which settings are its own.** Every session's setup adds a
+  system-prompt section: it is deepseek-bot on DeepSeek Harness; this conversation's platform (or the
+  terminal) and the language of its notices; what it may change in its home (persona files, notes,
+  watches, skills in `.dsh/skills/`); and what only the operator can (model, provider, platforms,
+  channels, language, keys, approvals, sandbox), which it points to instead of trying. It was told only
+  that it is "a coding agent".
 - **English, Korean and Chinese.** A `language` setting in the deepbot row (`en` by default, `ko`,
   `zh`) sets what the bot itself says on every platform (approvals and their buttons, stops,
   failures, the working message, Slack's status, the usage report) and everything `dsh` draws; `dsh`
@@ -18,6 +24,11 @@ the caveat about version numbers is at the bottom.
 
 ### Changed
 
+- **The bot no longer loads the operator's own skills.** The harness also lists the skills in
+  `~/.agents/skills`, where an operator's coding agents keep theirs; the launcher now gives the
+  gateway an empty agents home of its own (`DSH_AGENTS_HOME=~/.dsh/deepbot/agents-home`). Takes effect
+  when `install-service.sh` is run again. The agent template points skills at `.dsh/skills/`, the
+  directory the harness reads, instead of `skills/`, which it never did, and names the terminal.
 - **A service that fails to install fails the install.** On an account with no
   `~/Library/LaunchAgents`, all four installers failed to write their plist and `install.sh` still
   said "done" and exited 0. The installers make the directory; `install.sh` says which service failed,

@@ -379,6 +379,9 @@ function boot({ state = {}, config = {} } = {}) {
   const typingOn = await c.waitFor((f) => f.type === 'typing' && f.on === true)
   await sleep(300)
   check('core: a terminal message starts a session named tui-…', t.created.length === 1 && /^tui-[0-9a-f-]{36}$/.test(t.created[0]?.sessionId ?? ''), t.created[0]?.sessionId)
+  const idSections = []
+  await t.created[0]?.setup?.({ systemPrompt: { section: (s) => { idSections.push(s); return () => {} } } })
+  check('identity: a terminal conversation is told it is in the terminal', /This conversation is in the terminal \(dsh\)/.test(String(idSections.find((s) => s.name === 'deepbot:identity')?.text ?? '')), String(idSections[0]?.text ?? '').split('\n')[1])
   check('core: the terminal gets typing, not a working message', typingOn !== null && !c.frames.some((f) => f.type === 'post' && /is working/.test(f.text)))
   check('core: the turn\'s reply reaches the terminal', (await c.waitFor((f) => f.type === 'post', 2000)) !== null)
 
