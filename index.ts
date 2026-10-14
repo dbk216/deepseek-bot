@@ -2211,6 +2211,23 @@ export function apply(ctx, config) {
     return null
   }
 
+  /**
+   * shift+tab in the terminal: the conversation's next (or previous) effort, round, of those its model
+   * takes. Kept as the conversation's own choice, as /model keeps one, so what runs is what is shown.
+   */
+  async function stepEffort(key: string, step: 1 | -1): Promise<null | { code: 'no-efforts'; model: string }> {
+    const route = modelFor(key)
+    const { efforts } = await modelInfo(route.provider, route.model)
+    if (efforts.length === 0) return { code: 'no-efforts', model: `${route.provider}/${route.model}` }
+    const now = shownEffort(key)
+    const at = now === null ? -1 : efforts.indexOf(now)
+    const next = efforts[at === -1 ? (step > 0 ? 0 : efforts.length - 1) : (at + step + efforts.length) % efforts.length]
+    state.models = { ...(state.models ?? {}), [key]: { provider: route.provider, model: route.model, reasoningEffort: next, at: Date.now() } }
+    saveStateNow()
+    log(`models: ${key} effort ${now ?? 'default'} -> ${next}`)
+    return null
+  }
+
   const transportHost = {
     cfg, log, sessionCwd, stateDir,
     workspaceFor: (key: string) => cwdFor(key),
@@ -2221,6 +2238,8 @@ export function apply(ctx, config) {
     modelChoice: async (key: string) => { const m = modelFor(key); const efforts = await effortsOf(m.provider, m.model); return { provider: m.provider ?? '', model: m.model ?? '', effort: shownEffort(key), efforts } },
     listModels: () => listModels(),
     setModel: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => setModel(key, choice),
+    effortsFor: (provider: string, model: string) => effortsOf(provider, model),
+    stepEffort: (key: string, step: 1 | -1) => stepEffort(key, step),
     // The tenant a conversation is recorded in (null: the home), or undefined when none is recorded.
     boundTenant: (key: string) => (cfg.tenantIsolation === true ? state.tenantOf?.[key] : undefined),
     // The tenant a conversation is in right now, however it was decided.

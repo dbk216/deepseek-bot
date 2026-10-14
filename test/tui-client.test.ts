@@ -60,36 +60,82 @@ async function until(predicate, ms = 3000) {
   const quit = createCommands(fakeApp, { conversation: null, tenant: undefined, switchTo: () => {}, send: () => true })
   check('/exit: leaves like /quit', quit.intercept('/exit') === true && quit.intercept('/quit') === true && JSON.stringify(stops) === '[0,0]', JSON.stringify(stops))
 
-  // /model: lists, then switches by number or by provider/model, with an effort; default goes back.
+  // /model: a picker above the input box, then switches by it, by number or by provider/model, with an
+  // effort; default goes back. The list used to be printed into the transcript, at the top of a short one.
   const sent = []
   const notices = []
   const statusSeen = []
-  const modelApp = { stop: () => {}, notice: (text, kind) => notices.push([kind, text]), clear: () => {}, setStatus: (s) => statusSeen.push(s), status: {} }
-  const link = { conversation: 'c-1', tenant: undefined, switchTo: () => {}, send: (f) => { sent.push(f); return true } }
+  const pickers = []
+  const switched = []
+  const modelApp = { stop: () => {}, notice: (text, kind) => notices.push([kind, text]), clear: () => {}, setStatus: (s) => statusSeen.push(s), status: {}, openPicker: (spec) => pickers.push(spec) }
+  const link = { conversation: 'c-1', tenant: undefined, switchTo: (c, tenant) => switched.push([c, tenant]), send: (f) => { sent.push(f); return true } }
   const cmds = createCommands(modelApp, link)
   cmds.intercept('/model 1')
   check('/model <n> before a list: says to list first, sends nothing', sent.length === 0 && notices.some(([k, s]) => k === 'error' && s === 'list the models first: /model'), JSON.stringify(notices))
   cmds.intercept('/model')
   check('/model: asks the gateway for the models', JSON.stringify(sent) === JSON.stringify([{ type: 'models' }]), JSON.stringify(sent))
-  const items = [{ provider: 'deepseek-official', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }, { provider: 'og', id: 'deepseek/deepseek-v4.1-flash-ultrafast', name: 'Ultrafast' }]
+  const items = [{ provider: 'deepseek-official', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', efforts: ['low', 'high'] }, { provider: 'og', id: 'deepseek/deepseek-v4.1-flash-ultrafast', name: 'Ultrafast' }]
   const current = { provider: 'og', model: 'deepseek/deepseek-v4.1-flash-ultrafast', effort: 'medium', efforts: ['off', 'low', 'medium', 'high'] }
+  const noticesBefore = notices.length
   bind(modelApp, { type: 'models', current, items }, cmds)
-  const list = notices.at(-1)?.[1] ?? ''
-  check('/model: the list is numbered, provider/model, the current one marked, its efforts named', /^ {2}1\. deepseek-official\/deepseek-v4-flash {2}DeepSeek V4 Flash$/m.test(list) && /^● 2\. og\/deepseek\/deepseek-v4\.1-flash-ultrafast {2}Ultrafast$/m.test(list) && list.includes('medium') && list.includes('off, low, medium, high'), list)
+  const picker = pickers.at(-1)
+  const rows = picker?.rows ?? []
+  check('/model: the list opens a picker, not a notice in the transcript', picker !== undefined && notices.length === noticesBefore, JSON.stringify(notices.slice(noticesBefore)))
+  check('/model: a row per model, provider/model with its name, the current one marked with its effort and efforts',
+    rows[0]?.label === 'deepseek-official/deepseek-v4-flash' && rows[0].detail === 'DeepSeek V4 Flash' && rows[0].current !== true && JSON.stringify(rows[0].efforts) === '["low","high"]'
+      && rows[1]?.label === 'og/deepseek/deepseek-v4.1-flash-ultrafast' && rows[1].current === true && rows[1].effort === 'medium' && rows[1].efforts.join() === 'off,low,medium,high', JSON.stringify(rows))
+  check('/model: and a last row that goes back to the configured model', rows.length === 3 && rows[2].current !== true, JSON.stringify(rows[2]))
   check('/model: the list also brings the status up to date', statusSeen.at(-1)?.model === current.model && statusSeen.at(-1)?.effort === 'medium')
+  picker.onPick(0, 'high')
+  picker.onPick(1, null)
+  picker.onPick(2, null)
+  check('/model: picking a row sends it, with the effort chosen in the picker; the last row goes back', JSON.stringify(sent.slice(1)) === JSON.stringify([
+    { type: 'model', provider: 'deepseek-official', model: 'deepseek-v4-flash', effort: 'high' },
+    { type: 'model', provider: 'og', model: 'deepseek/deepseek-v4.1-flash-ultrafast', effort: null },
+    { type: 'model', provider: null },
+  ]), JSON.stringify(sent.slice(1)))
+  const typed = sent.length
   cmds.intercept('/model 1')
   cmds.intercept('/model og/deepseek/deepseek-v4.1-flash-ultrafast high')
   cmds.intercept('/model default')
-  check('/model: by number, by provider/model with a slash in the model, with an effort, and default', JSON.stringify(sent.slice(1)) === JSON.stringify([
+  check('/model: typed, by number, by provider/model with a slash in the model, with an effort, and default', JSON.stringify(sent.slice(typed)) === JSON.stringify([
     { type: 'model', provider: 'deepseek-official', model: 'deepseek-v4-flash', effort: null },
     { type: 'model', provider: 'og', model: 'deepseek/deepseek-v4.1-flash-ultrafast', effort: 'high' },
     { type: 'model', provider: null },
-  ]), JSON.stringify(sent.slice(1)))
+  ]), JSON.stringify(sent.slice(typed)))
   const before = sent.length
   cmds.intercept('/model nonsense')
   check('/model: something that is neither is refused, not sent', sent.length === before && notices.at(-1)?.[0] === 'error')
   bind(modelApp, { type: 'model', current: { ...current, effort: 'high' } }, cmds)
   check('/model: the gateway\'s answer is said, and the status shows the effort', notices.at(-1)?.[0] === 'ok' && notices.at(-1)?.[1].includes('effort high') && statusSeen.at(-1)?.effort === 'high', JSON.stringify(notices.at(-1)))
+  const quiet = notices.length
+  bind(modelApp, { type: 'model', current: { ...current, effort: 'low' }, cause: 'effort' }, cmds)
+  check('effort: a step shows in the status line only, not as a line in the transcript', notices.length === quiet && statusSeen.at(-1)?.effort === 'low', JSON.stringify(notices.slice(quiet)))
+  cmds.stepEffort()
+  check('effort: shift+tab asks the gateway for the next effort', JSON.stringify(sent.at(-1)) === JSON.stringify({ type: 'effort', step: 1 }), JSON.stringify(sent.at(-1)))
+
+  // /sessions: a picker too; picking one resumes it in its own tenant.
+  cmds.intercept('/sessions')
+  check('/sessions: asks the gateway for the list', JSON.stringify(sent.at(-1)) === JSON.stringify({ type: 'sessions' }))
+  const now = Date.now()
+  bind(modelApp, { type: 'sessions', items: [
+    { conversation: 'c-1', sessionId: 's1', lastAt: now - 5000, turns: 3, tenant: null, title: 'first' },
+    { conversation: 'c-2', sessionId: 's2', lastAt: now - 120000, turns: 1, tenant: 'acme', title: '' },
+  ] }, cmds)
+  const sessions = pickers.at(-1)
+  check('/sessions: a row per conversation, titled, with when, turns and tenant, this one marked', sessions !== picker && sessions.rows.length === 2 && sessions.rows[0].label === 'first' && sessions.rows[0].current === true
+    && sessions.rows[1].label === '(untitled)' && /2m ago · 1 turn · tenant acme · c-2/.test(sessions.rows[1].detail), JSON.stringify(sessions?.rows))
+  sessions.onPick(1, null)
+  check('/sessions: picking one resumes it in its tenant', JSON.stringify(switched.at(-1)) === JSON.stringify(['c-2', 'acme']), JSON.stringify(switched))
+  const listedNone = notices.length
+  bind(modelApp, { type: 'sessions', items: [] }, cmds)
+  check('/sessions: none says so rather than opening an empty picker', notices.length === listedNone + 1 && pickers.at(-1) === sessions)
+
+  // A gateway older than this terminal does not know a frame it sends: say that, in the terminal's words.
+  bind(modelApp, { type: 'error', code: 'bad-frame', message: 'unknown frame type effort' }, cmds)
+  check('protocol: an old gateway\'s "unknown frame type" is explained', /older/.test(notices.at(-1)?.[1] ?? '') && /effort/.test(notices.at(-1)?.[1] ?? ''), JSON.stringify(notices.at(-1)))
+  bind(modelApp, { type: 'error', code: 'unknown-frame', message: 'unknown frame type models' }, cmds)
+  check('protocol: and so is a new one\'s, by its code', /older/.test(notices.at(-1)?.[1] ?? '') && /models/.test(notices.at(-1)?.[1] ?? ''), JSON.stringify(notices.at(-1)))
 
   // End to end: the arguments reach the harness CLI unchanged, and its exit status comes back.
   const bin = mkdtempSync(join(tmpdir(), 'deepbot-dshbin-'))
@@ -175,7 +221,7 @@ async function until(predicate, ms = 3000) {
   })
   app.start()
   connection.start()
-  check('connect: the screen shows the gateway as connected', await until(() => app.status.connected && term.screen.text().includes('▸▸ ask')))
+  check('connect: the screen shows the gateway as connected', await until(() => app.status.connected && !term.screen.text().includes('○')))
   const conversation = connection.conversation
   check('connect: the gateway assigned a conversation, shown in the header', typeof conversation === 'string' && term.screen.text().includes(conversation.slice(0, 12)))
   bind(app, { type: 'panel', agents: [], jobs: [], usage: { tokens: 8100, contextPct: 23.4 } })
@@ -186,7 +232,7 @@ async function until(predicate, ms = 3000) {
   check('language: and back, when it says so', await until(() => term.screen.text().includes('↵ send')))
   setLanguage('en')
   await until(() => term.screen.text().includes('8.1k tok'))
-  check('usage: the conversation\'s tokens and context fill the status line', /ctx ▰▰▱▱▱▱▱▱ 23% · 8\.1k tok/.test(term.screen.text()), term.screen.text().split('\n').find((l) => l.includes('▸▸')))
+  check('usage: the conversation\'s tokens and context fill the status line', /ctx ▰▰▱▱▱▱▱▱ 23% · 8\.1k tok/.test(term.screen.text()), term.screen.text().split('\n').find((l) => l.includes('tok')))
   check('model: the gateway\'s model is named in the info line', term.screen.text().includes('deepseek-v4.1 · /home/agent'))
 
   term.type('배포 일정\r')
@@ -255,8 +301,11 @@ async function until(predicate, ms = 3000) {
   term.type('/sessions\r')
   check('/sessions: the list is shown, numbered, with titles', await until(() => /1\. 오늘 날씨 어때/.test(term.screen.text()) && /2\. 배포 일정 정리해줘/.test(term.screen.text())))
   check('/sessions: the command itself is not echoed as a message', !term.screen.text().includes('› /sessions'))
-  term.type('/resume 2\r')
-  check('/resume <n>: switches to that conversation', await until(() => connection.conversation === 'conv-a' && app.status.session === 'conv-a'))
+  const listRow = term.screen.find('2. 배포 일정 정리해줘')?.row ?? -1
+  const boxRow = term.screen.find('╭')?.row ?? -1
+  check('/sessions: the list sits just above the input box, where the eye is', listRow >= 0 && boxRow > listRow && boxRow - listRow <= 4, `list row ${listRow}, box row ${boxRow}`)
+  term.type('\x1b[B\r')
+  check('/sessions: ↓ then ↵ resumes the second one', await until(() => connection.conversation === 'conv-a' && app.status.session === 'conv-a'))
   check('/resume: the earlier messages are shown', await until(() => term.screen.text().includes('earlier in this conversation') && term.screen.text().includes('staging 먼저.')))
   check('/resume: asked for once, after the gateway confirmed the conversation', JSON.stringify(historyCalls) === JSON.stringify(['conv-a']), JSON.stringify(historyCalls))
   term.type('이어서 질문\r')

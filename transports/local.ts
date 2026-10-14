@@ -57,6 +57,10 @@ interface LocalHost {
   modelChoice?: (key: string) => Promise<ModelChoice>
   /** Every model the registered providers advertise. */
   listModels?: () => Promise<ModelItem[]>
+  /** The efforts a model takes ([] for none, or when they cannot be read), for the /model picker. */
+  effortsFor?: (provider: string, model: string) => Promise<string[]>
+  /** Step a conversation's effort through the ones its model takes; what was wrong, or null. */
+  stepEffort?: (key: string, step: 1 | -1) => Promise<null | { code: 'no-efforts'; model: string }>
   /** Set (or with null, clear) a conversation's own model; what was wrong with it, or null. */
   setModel?: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => Promise<null | { code: 'unknown-model' } | { code: 'effort'; efforts: string[] }>
   /** The tenant a conversation is recorded in (null: the home), or undefined when none is recorded. */
@@ -191,6 +195,24 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
     }
   }
 
+  /** To every terminal on the conversation now, and nothing kept for later. */
+  function toConversation(conversation: string, frame: ServerFrame): void {
+    for (const c of clients) if (c.conversation === conversation) send(c, frame)
+  }
+
+  /**
+   * A conversation's model and effort changes, one after another: two shift+tabs sent together each
+   * step from where the other left it, not both from where they started.
+   */
+  const modelChanges = new Map<string, Promise<void>>()
+  function oneAtATime(conversation: string, work: () => Promise<void>): Promise<void> {
+    const run = (modelChanges.get(conversation) ?? Promise.resolve()).then(work)
+    const settled = run.catch(() => {})
+    modelChanges.set(conversation, settled)
+    void settled.then(() => { if (modelChanges.get(conversation) === settled) modelChanges.delete(conversation) })
+    return run
+  }
+
   /** Deliver to every terminal on the conversation; keep it when there is none (live frames are not kept). */
   function deliver(conversation: string, frame: ServerFrame): void {
     let reached = false
@@ -312,7 +334,10 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         if (client.conversation === null) return refuse(client, 'no-hello', 'say hello first')
         const asked = client.conversation
         const key = `${LOCAL_CHANNEL}:${asked}`
-        const items = await (host.listModels?.() ?? Promise.resolve([])).catch(() => [])
+        const listed = await (host.listModels?.() ?? Promise.resolve([])).catch(() => [])
+        // Each with the efforts it takes, read side by side; one that cannot be read has none to step.
+        const items = await Promise.all(listed.map(async (item) => host.effortsFor === undefined ? item
+          : { ...item, efforts: await host.effortsFor(item.provider, item.id).catch(() => []) }))
         const current = await host.modelChoice?.(key).catch(() => null)
         // An answer for a conversation the terminal has since left is not sent: it would land on the new one.
         if (client.conversation !== asked) return
@@ -324,20 +349,37 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         if (client.conversation === null) return refuse(client, 'no-hello', 'say hello first')
         const asked = client.conversation
         const key = `${LOCAL_CHANNEL}:${asked}`
-        if (host.setModel === undefined || host.modelChoice === undefined) return refuse(client, 'models-unavailable', say.noModels)
+        const { setModel, modelChoice } = host
+        if (setModel === undefined || modelChoice === undefined) return refuse(client, 'models-unavailable', say.noModels)
         const clear = frame.provider === null
         if (!clear && (typeof frame.provider !== 'string' || typeof frame.model !== 'string' || (frame.effort != null && typeof frame.effort !== 'string'))) return refuse(client, 'bad-frame', 'a model is a provider and a model id')
         const wanted = clear ? null : { provider: frame.provider as string, model: frame.model as string, effort: typeof frame.effort === 'string' ? frame.effort : null }
-        let problem: Awaited<ReturnType<NonNullable<LocalHost['setModel']>>>
-        try { problem = await host.setModel(key, wanted) } catch (e) { return refuse(client, 'model', String((e as Error)?.message ?? e).slice(0, 200)) }
-        const current = await host.modelChoice(key)
-        // The choice holds for the conversation that made it; the answer goes only to a terminal still there.
-        if (client.conversation !== asked) return
-        if (problem !== null && wanted !== null) {
-          return refuse(client, 'model', problem.code === 'unknown-model' ? say.unknownModel(`${wanted.provider}/${wanted.model}`) : say.noSuchEffort(`${wanted.provider}/${wanted.model}`, String(wanted.effort), problem.efforts))
-        }
-        send(client, { type: 'model', current })
-        return
+        return oneAtATime(asked, async () => {
+          let problem: Awaited<ReturnType<typeof setModel>>
+          try { problem = await setModel(key, wanted) } catch (e) { if (client.conversation === asked) refuse(client, 'model', String((e as Error)?.message ?? e).slice(0, 200)); return }
+          if (problem !== null && wanted !== null) {
+            if (client.conversation === asked) refuse(client, 'model', problem.code === 'unknown-model' ? say.unknownModel(`${wanted.provider}/${wanted.model}`) : say.noSuchEffort(`${wanted.provider}/${wanted.model}`, String(wanted.effort), problem.efforts))
+            return
+          }
+          // The choice holds for the conversation that made it: every terminal still on it is told, and
+          // one that has left is not (it would land on the conversation it is on now).
+          toConversation(asked, { type: 'model', current: await modelChoice(key) })
+        })
+      }
+      case 'effort': {
+        if (client.conversation === null) return refuse(client, 'no-hello', 'say hello first')
+        if (frame.step !== 1 && frame.step !== -1) return refuse(client, 'bad-frame', 'an effort step is 1 or -1')
+        const asked = client.conversation
+        const key = `${LOCAL_CHANNEL}:${asked}`
+        const { stepEffort, modelChoice } = host
+        if (stepEffort === undefined || modelChoice === undefined) return refuse(client, 'models-unavailable', say.noModels)
+        const step = frame.step
+        return oneAtATime(asked, async () => {
+          let problem: Awaited<ReturnType<typeof stepEffort>>
+          try { problem = await stepEffort(key, step) } catch (e) { if (client.conversation === asked) refuse(client, 'effort', String((e as Error)?.message ?? e).slice(0, 200)); return }
+          if (problem !== null) { if (client.conversation === asked) refuse(client, 'effort', say.noEfforts(problem.model)); return }
+          toConversation(asked, { type: 'model', current: await modelChoice(key), cause: 'effort' })
+        })
       }
       case 'sessions': {
         const items = await (host.listConversations?.(LOCAL_CHANNEL) ?? Promise.resolve([])).catch(() => [])
@@ -360,7 +402,8 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         return
       }
       default:
-        return refuse(client, 'bad-frame', `unknown frame type ${String(frame.type)}`)
+        // Its own code: a terminal newer than this gateway can say so, instead of showing this line.
+        return refuse(client, 'unknown-frame', `unknown frame type ${String(frame.type)}`)
     }
   }
 

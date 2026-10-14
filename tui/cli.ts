@@ -59,12 +59,12 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       commands?.listed(frame.items)
       return
     case 'models':
-      app.setStatus({ model: frame.current.model, effort: frame.current.effort })
       commands?.models(frame.items, frame.current)
       return
     case 'model':
       app.setStatus({ model: frame.current.model, effort: frame.current.effort })
-      app.notice(t().modelNow(`${frame.current.provider}/${frame.current.model}`, frame.current.effort), 'ok')
+      // A shift+tab shows in the status line; a line in the transcript for each would bury the conversation.
+      if (frame.cause !== 'effort') app.notice(t().modelNow(`${frame.current.provider}/${frame.current.model}`, frame.current.effort), 'ok')
       return
     case 'history':
       app.history(frame.items)
@@ -88,7 +88,7 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       if (frame.language !== undefined) setLanguage(languageOf(frame.language))
       commands?.ready()
       app.setBusy(frame.busy)
-      app.setStatus({ connected: true, workspace: frame.workspace, session: frame.conversation, model: frame.model, effort: frame.effort ?? null, preset: app.status.preset || 'ask' })
+      app.setStatus({ connected: true, workspace: frame.workspace, session: frame.conversation, model: frame.model, effort: frame.effort ?? null })
       if (frame.tenant !== null) app.notice(t().tenantTalking(frame.tenant), 'info')
       return
     case 'typing':
@@ -109,9 +109,12 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
     case 'remove':
       app.unpost(frame.ts)
       return
-    case 'error':
-      app.notice(`gateway: ${frame.message}`, 'error')
+    case 'error': {
+      // A gateway older than this terminal refuses a frame it does not know; say why, not its line.
+      const unknown = frame.code === 'unknown-frame' || frame.code === 'bad-frame' ? /^unknown frame type (\S+)/.exec(frame.message) : null
+      app.notice(unknown !== null ? t().gatewayOlder(unknown[1]) : `gateway: ${frame.message}`, 'error')
       return
+    }
   }
 }
 
@@ -152,28 +155,6 @@ function ago(ms: number, now: number): string {
   return t().ago(Math.max(0, Math.round((now - ms) / 1000)))
 }
 
-/** The /model list, numbered for /model <n>, with what this conversation runs on marked. */
-export function formatModels(items: ModelItem[], current: ModelChoice): string {
-  const lines = items.map((item, i) => {
-    const mark = item.provider === current.provider && item.id === current.model ? '●' : ' '
-    const name = item.name !== item.id ? `  ${item.name}` : ''
-    return `${mark}${String(i + 1).padStart(2)}. ${item.provider}/${item.id}${name}`
-  })
-  const effort = current.efforts.length > 0 ? `\n${t().modelEfforts(current.effort, current.efforts)}` : ''
-  return `${lines.join('\n')}${effort}\n${t().modelHow}`
-}
-
-/** The /sessions list, numbered for /resume <n>. */
-export function formatSessions(items: Array<{ conversation: string; lastAt: number; turns: number; tenant: string | null; title: string }>, now: number, current: string | null): string {
-  if (items.length === 0) return t().noSessions
-  return items.map((item, i) => {
-    const mark = item.conversation === current ? '●' : ' '
-    const where = item.tenant !== null ? ` · tenant ${item.tenant}` : ''
-    const title = item.title === '' ? t().untitled : item.title
-    return `${mark}${String(i + 1).padStart(2)}. ${title}\n     ${ago(item.lastAt, now)} · ${t().turns(item.turns)}${where} · ${item.conversation}`
-  }).join('\n') + `\n${t().resumeHow}`
-}
-
 /** What the commands need of the connection. */
 export interface ConversationLink {
   conversation: string | null
@@ -191,6 +172,8 @@ export interface Commands {
   ready(): void
   /** A switch was refused: the screen goes back to the conversation that is still current. */
   rolledBack(message: string): void
+  /** shift+tab: the conversation's next effort, which the gateway works out. */
+  stepEffort(): void
 }
 
 /**
@@ -203,6 +186,16 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
   let models: ModelItem[] = []
   let wantHistory = options.resumeOnStart === true
   const offline = () => app.notice(t().notConnected, 'error')
+  const send = (frame: ClientFrame) => { if (!link.send(frame)) offline() }
+
+  function resume(id: string, tenant: string | undefined): void {
+    if (!NAME.test(id)) { app.notice(t().resumeUsage, 'error'); return }
+    app.clear()
+    // The listed conversation's own workspace; a bare id lets the gateway use the recorded one.
+    link.switchTo(id, tenant)
+    // Asked for on ready: sent now it would reach the old conversation, and a refusal would show it twice.
+    wantHistory = true
+  }
 
   return {
     intercept(text) {
@@ -228,13 +221,7 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
         case 'resume': {
           const n = Number(args)
           const item = Number.isInteger(n) && n >= 1 && n <= listed.length ? listed[n - 1] : listed.find((i) => i.conversation === args)
-          const id = item?.conversation ?? args
-          if (!NAME.test(id)) { app.notice(t().resumeUsage, 'error'); break }
-          app.clear()
-          // The listed conversation's own workspace; a bare id lets the gateway use the recorded one.
-          link.switchTo(id, item?.tenant ?? undefined)
-          // Asked for on ready: sent now it would reach the old conversation, and a refusal would show it twice.
-          wantHistory = true
+          resume(item?.conversation ?? args, item?.tenant ?? undefined)
           break
         }
         case 'model': {
@@ -281,11 +268,41 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
     },
     listed(items) {
       listed = items
-      app.notice(formatSessions(items, now(), link.conversation), 'info')
+      if (items.length === 0) { app.notice(t().noSessions, 'info'); return }
+      app.openPicker({
+        title: t().pickSession,
+        rows: items.map((item) => ({
+          label: item.title === '' ? t().untitled : item.title,
+          detail: t().sessionDetail(ago(item.lastAt, now()), t().turns(item.turns), item.tenant, item.conversation),
+          current: item.conversation === link.conversation,
+        })),
+        onPick: (i) => { const item = items[i]; if (item !== undefined) resume(item.conversation, item.tenant ?? undefined) },
+      })
     },
     models(items, current) {
       models = items
-      app.notice(formatModels(items, current), 'info')
+      app.setStatus({ model: current.model, effort: current.effort })
+      app.openPicker({
+        title: t().pickModel,
+        rows: [
+          ...items.map((item) => {
+            const on = item.provider === current.provider && item.id === current.model
+            return {
+              label: `${item.provider}/${item.id}`,
+              ...(item.name !== item.id ? { detail: item.name } : {}),
+              ...(on ? { current: true, efforts: current.efforts, effort: current.effort } : item.efforts !== undefined ? { efforts: item.efforts } : {}),
+            }
+          }),
+          { label: t().modelDefault.label, detail: t().modelDefault.detail },
+        ],
+        onPick: (i, effort) => {
+          const item = items[i]
+          send(item === undefined ? { type: 'model', provider: null } : { type: 'model', provider: item.provider, model: item.id, effort })
+        },
+      })
+    },
+    stepEffort() {
+      send({ type: 'effort', step: 1 })
     },
     ready() {
       if (wantHistory && link.send({ type: 'history' })) wantHistory = false

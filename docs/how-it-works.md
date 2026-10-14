@@ -525,12 +525,14 @@ sweeps.
 | Keys | |
 |---|---|
 | `↵` / `alt+↵` | send / new line |
+| `shift+tab`, or a click on it | step this conversation's reasoning effort (shown at the left of the status line) |
 | `esc` | stop the running turn (what was waiting behind it comes back to the input); in a view, back to the conversation |
 | `ctrl+c` twice, `ctrl+d` | quit (the terminal is always restored) |
 | wheel, `PgUp`/`PgDn` | scroll; drag selects and copies (pbcopy locally, OSC 52 over SSH) |
 | `tab`, `↑↓`, `↵`, or a click | the agent panel: open a subagent or a shell |
 | `ctrl+x` | in a subagent view, stop it; in a shell view, stop the job |
-| `/` or `@`, then `↑↓` and `tab` | complete a command, or a file of the workspace (`↵` runs a command that takes nothing) |
+| `/` or `@`, then `↑↓` and `tab` | complete a command, or a file of the workspace (`↵` or a click runs a command that takes nothing) |
+| a click in the input box | puts the cursor there |
 | `ctrl+r` | search what was typed before (`ctrl+r` again: older; `↵` keeps it to edit; `esc` cancels) |
 | `ctrl+o` | unfold or fold the thinking and the tool results |
 
@@ -547,21 +549,29 @@ What appears besides the conversation:
   tool registry), an edit's changed lines, and the result under it — a few lines, all on `ctrl+o`.
 - **Thinking** is shown apart from the answer and folded once the answer starts, when the model
   streams its reasoning (`reasoning-delta`); the route this deployment uses sends none.
+- **The input box follows the conversation.** On a short one it sits right under the last line, and
+  it stays at the bottom once the screen is full, so what a command shows is where the eye already is.
 - **Approvals** are buttons above the input box; **a turn's questions** (`ask_user_question`, a plan
   review) open there too — arrows and Enter, Space on multi-select, or type your own answer.
+- **`/model` and `/sessions` open a picker** above the input box: `↑↓` or the wheel to move, a digit to
+  jump, `↵` or a click to pick, `esc` to close; typing closes it and goes to the input box. `/resume <n>`
+  still works typed.
 - **The agent panel** lists the turn's subagents (running ones first, with their time and tokens)
   and background shells; a subagent's view shows its task, tools and answers.
 - **`/model`** lists the models the registered providers advertise (the harness's `llm` service),
-  numbered, with this conversation's marked and the reasoning efforts it takes. `/model <n>` or
-  `/model <provider>/<model> [effort]` puts this conversation on another one from its next turn — the
-  same session, resumed on the new route — and `/model default` gives it the deployment's back. A
+  with this conversation's marked; `←→` picks the highlighted model's reasoning effort among those it
+  takes, and the last row goes back to the configured model. Picking one, `/model <n>` or
+  `/model <provider>/<model> [effort]` puts this conversation on it from its next turn — the
+  same session, resumed on the new route — and `/model default` gives it the deployment's back. Every
+  terminal on the conversation is told. `shift+tab` steps the effort of the model it is on, round, and
+  keeps it as the conversation's own choice, as `/model` does. A
   model no provider lists, or an effort the model does not take, is refused. The choice is kept per
   conversation in the state file; Slack and the other conversations keep theirs. The list is every
   model a registered route advertises, including a route whose key is in neither `~/.dsh/.env` nor the app's store (`~/.dsh/.credentials.yaml`) — a conversation
   moved to one fails its turns until `/model default`. Reminders the harness delivers on its own
   schedule are not known to follow a conversation's choice (unverified). The deployment's own
   reasoning effort (`agent-default-model`) now reaches a turn too; it was dropped before. The status
-  line shows the effort in sky blue.
+  line shows the effort at its left, in sky blue, and the model at its right.
 - **`/interview <topic>`** runs a deep interview: one question per round, and a strip with the
   model's own estimate of how clear each dimension is. Below 20% ambiguity it writes `specs/<slug>.md`.
   The estimate is the model's judgement, not a measurement.

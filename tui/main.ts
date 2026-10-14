@@ -68,6 +68,7 @@ function main(): void {
     commands: commandInfo,
     files: (query) => findFiles(app.status.workspace, query),
     remember: (text) => appendHistory(history, text),
+    stepEffort: () => commands?.stepEffort(),
     io: processIO(process.stdin, process.stdout),
     env: process.env,
     platform: process.platform,
