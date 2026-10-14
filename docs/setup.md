@@ -26,6 +26,15 @@ a token comes from the environment variable of its own name (`SLACK_BOT_TOKEN` a
 Without a terminal a missing answer is exit 2 and nothing is written. A token is never an argument:
 arguments show in `ps` and in shell history.
 
+A harness set up before deepseek-bot keeps what it has. A key entered in the DeepSeek Harness app
+lives in its store, `~/.dsh/.credentials.yaml`, which the harness reads before `~/.dsh/.env`. `setup`
+uses a token the app already holds as it is and does not ask for it; the same token given again is
+fine. It refuses a different one for that name, since a copy written to `~/.dsh/.env` would never be
+read: change it in the app. `setup` never writes the app's store, and never prints a value from it.
+`status` says where each token and the model's key were found: the app, or `~/.dsh/.env`. The
+model's key is the one the profile's `llm-pi-ai` route names, or `DEEPSEEK_API_KEY` for DeepSeek's
+own API, the default.
+
 ```bash
 TELEGRAM_BOT_TOKEN=… dsh gateway setup telegram --users 123456789
 ```
@@ -33,7 +42,7 @@ TELEGRAM_BOT_TOKEN=… dsh gateway setup telegram --users 123456789
 | Command | What it does |
 |---|---|
 | `setup <platform>` | tokens, the platform in the profile, `--channels`, `--users`; `--no-verify`, `--no-restart`. The channel list is shared too: `--channels '*'` opens every platform the profile serves, so with another one served it needs `--yes` |
-| `remove <platform>` | takes it out of the profile; its tokens stay in `~/.dsh/.env` |
+| `remove <platform>` | takes it out of the profile; its tokens stay where they are |
 | `start` / `stop` / `restart` | the gateway's launchd job. `stop` stops the health probe too, which would otherwise alert that the gateway is down; both come back at login or with `start` |
 | `status [--json]` | exit 0 when the gateway runs, is connected and has its tokens. Token values are never shown |
 | `manifest slack` | the Slack app manifest: Socket Mode, the scopes and events below, interactivity |

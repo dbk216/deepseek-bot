@@ -126,6 +126,13 @@ Define success criteria. Loop until verified.
 - **The agent home's `.env` is refused three ways** — the file-tool gate in `index.ts`, the sandbox
   runner, and the launcher, which moves one aside at start — because the harness reads `<cwd>/.env`
   before the deployment's own credentials.
+- **The harness may be set up before deepseek-bot.** It resolves a credential from the process's
+  environment, then the app store (`~/.dsh/.credentials.yaml`), then `<cwd>/.env`, then `~/.dsh/.env`.
+  A setup step (the installer, `dsh gateway`) checks that chain before asking for a key, says where it
+  found one (by name, never the value), uses a key the harness already has as it is, never writes the
+  app store or a profile deepseek-bot did not create (in its own, only the deepbot row), and refuses a
+  write the app store would shadow. DeepSeek's own API is the default model route; OpenGateway and
+  other endpoints are options, never presented as required.
 - **Seatbelt matches resolved paths.** A rule naming `/var/...` matches nothing; rules are emitted
   for the path as given and as resolved. The volume ignores case.
 - **Slack's working status belongs to the thread**, not to a message. The transport counts the

@@ -167,6 +167,78 @@ export function envSet(text: string, key: string, value: string): string {
   return `${out.join(eol)}${eol}`
 }
 
+/**
+ * The entries the DeepSeek Harness app holds in its own store, ~/.dsh/.credentials.yaml: the keys directly
+ * under `refs:`. Under `records:` are other things (a browser session), not credentials. The values are the
+ * secrets themselves (the file is 0600): they are compared in memory where a check needs it, and never
+ * printed, logged or copied anywhere.
+ *
+ * The harness resolves a credential from the process's environment, then this store, then <cwd>/.env, then
+ * ~/.dsh/.env (docs/harness-api-notes.md §4). The gateway's environment is launchd's, which carries none,
+ * and the launcher moves the agent home's .env aside, so for a running gateway it is the store, then
+ * ~/.dsh/.env.
+ */
+function storeEntries(text: string): Map<string, string> {
+  const entries = new Map<string, string>()
+  const entry = /^\s*(?:"([A-Za-z_][A-Za-z0-9_]*)"|'([A-Za-z_][A-Za-z0-9_]*)'|([A-Za-z_][A-Za-z0-9_]*))\s*:(.*)$/
+  const add = (part: string) => {
+    const m = entry.exec(part)
+    if (m === null) return
+    const raw = m[4].replace(/\s+#.*$/, '').trim()
+    entries.set(m[1] ?? m[2] ?? m[3], /^(['"])(.*)\1$/.exec(raw)?.[2] ?? raw)
+  }
+  let inRefs = false
+  let indent: string | null = null
+  for (const line of text.split(/\r?\n/)) {
+    // A blank line or a comment does not end a mapping in YAML, at any indent.
+    if (line.trim() === '' || /^\s*#/.test(line)) continue
+    if (/^\S/.test(line)) {
+      const flow = /^refs:\s*\{(.*)\}\s*(#.*)?$/.exec(line)
+      if (flow !== null) for (const part of flow[1].split(',')) add(part)
+      inRefs = flow === null && /^refs:\s*(#.*)?$/.test(line)
+      indent = null
+      continue
+    }
+    if (!inRefs) continue
+    const own = /^\s*/.exec(line)[0]
+    indent ??= own
+    if (own === indent) add(line)
+  }
+  return entries
+}
+
+/** The credential names the DeepSeek Harness app holds (see storeEntries). */
+export function storeRefs(text: string): string[] {
+  return [...storeEntries(text).keys()]
+}
+
+/** Where a running gateway would find a credential: the app's store first, then ~/.dsh/.env; null when neither has it. */
+type Where = 'store' | 'dotenv' | null
+const whereIs = (key: string, held: string[], envText: string): Where =>
+  held.includes(key) ? 'store' : envValue(envText, key) !== undefined ? 'dotenv' : null
+
+/**
+ * The credentials the profile's model routes read: the `apiKeyEnv` lines of its `llm-pi-ai` row. Another
+ * plugin's row (web search) names keys that are not the model's. None means dsh-base's default route,
+ * DeepSeek's own API. A route chosen in the app rather than in this profile is not seen here.
+ */
+function routeKeys(profileText: string): string[] {
+  const lines = profileText.split('\n')
+  const names: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const head = /^(\s*)- id: ['"]?llm-pi-ai['"]?\s*(#.*)?$/.exec(lines[i])
+    if (head === null) continue
+    for (let j = i + 1; j < lines.length; j++) {
+      const line = lines[j]
+      if (line.trim() === '' || /^\s*#/.test(line)) continue
+      if (/^\s*/.exec(line)[0].length <= head[1].length) break
+      const key = /^\s+apiKeyEnv:\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?\s*(#.*)?$/.exec(line)
+      if (key !== null) names.push(key[1])
+    }
+  }
+  return [...new Set(names)]
+}
+
 // With strictNullChecks off, `x !== null && 'error' in x` does not narrow; a guard does.
 const failed = (x: unknown): x is { error: string } => typeof x === 'object' && x !== null && 'error' in x
 
@@ -367,6 +439,7 @@ function paths(io: GatewayIO) {
   return {
     dsh,
     env: join(dsh, '.env'),
+    store: join(dsh, '.credentials.yaml'),
     health: join(dsh, 'slack-state', 'health.json'),
     log: join(dsh, 'slack-state', 'deepbot.log'),
     plist: join(agents, `${GATEWAY_LABEL}.plist`),
@@ -567,14 +640,15 @@ const GATEWAY_USAGE = `dsh gateway — connect the bot to a messenger, and run i
   setup       saves the platform's tokens to ~/.dsh/.env, checks them with the platform, adds the platform
               to the profile and restarts the gateway. A token is read from the environment variable of
               its name (SLACK_BOT_TOKEN and SLACK_APP_TOKEN, TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN), or
-              asked for at a terminal — never taken as an argument.
+              asked for at a terminal — never taken as an argument. One the DeepSeek Harness app already
+              holds (~/.dsh/.credentials.yaml) is used as it is; change that one in the app.
   --channels  channel ids to answer in, added to the list. The list is shared by the platforms, so *
               (every channel the bot is in) opens every platform the profile serves: that needs --yes.
   --users     user ids that may talk to it, added to allowedUsers; with none listed anyone who can
               reach the bot may. The list is shared by the platforms: once it has ids, add yours on
               each platform.
   --no-verify do not ask the platform whether the tokens work
-  remove      takes the platform out of the profile; its tokens stay in ~/.dsh/.env
+  remove      takes the platform out of the profile; its tokens stay where they are
   stop        stops the gateway and its health probe, until the next login or start
   status      exit 0 when the gateway runs, is connected and has its tokens; --json for a program
   manifest    a Slack app manifest: api.slack.com/apps → Create New App → From a manifest
@@ -627,10 +701,22 @@ async function setup(io: GatewayIO, p: Paths, o: Options): Promise<number> {
 
   // Tokens: every answer is gathered and checked before anything is written.
   const envText = readText(p.env)
+  const store = storeEntries(readText(p.store))
   const tokens: Array<{ key: string; value: string; from: string }> = []
   const missing: string[] = []
   for (const t of spec.tokens) {
     const given = io.env[t.key]?.trim()
+    // A harness set up before this: a token the app already holds is used as it is. Another one cannot be put
+    // in its place from here — the harness reads the app's store before ~/.dsh/.env, and this never writes it.
+    // The same token given again is not a conflict (an agent re-running setup); it is compared in memory only.
+    if (store.has(t.key)) {
+      if (given && given !== store.get(t.key)) {
+        io.err(`${t.key} is held by the DeepSeek Harness app (${tilde(io, p.store)}), which the harness reads before ${tilde(io, p.env)}: one written here would never be read. Change it in the app. Nothing was written.`)
+        return 2
+      }
+      io.out(`${t.key}: held by the DeepSeek Harness app${given ? ' (the same token)' : ''}, used as it is`)
+      continue
+    }
     let value: string | undefined
     let from = 'from the environment'
     if (given) {
@@ -668,8 +754,10 @@ async function setup(io: GatewayIO, p: Paths, o: Options): Promise<number> {
       io.out(`${t.key}: works — ${r.who}`)
       if (t.key === 'SLACK_BOT_TOKEN') botApp = r.app
     }
-    // Two tokens from two apps both work, and the bot then listens as one app and posts as another.
-    const appApp = appOfAppToken(tokens.find((t) => t.key === 'SLACK_APP_TOKEN')?.value ?? envValue(envText, 'SLACK_APP_TOKEN'))
+    // Two tokens from two apps both work, and the bot then listens as one app and posts as another. Held
+    // against the app-level token the harness will read: the app's store before anything in ~/.dsh/.env.
+    const appToken = store.has('SLACK_APP_TOKEN') ? store.get('SLACK_APP_TOKEN') : (tokens.find((t) => t.key === 'SLACK_APP_TOKEN')?.value ?? envValue(envText, 'SLACK_APP_TOKEN'))
+    const appApp = appOfAppToken(appToken)
     if (botApp !== undefined && appApp !== undefined && botApp !== appApp) {
       io.err(`the bot token is from Slack app ${botApp} and the app-level token from ${appApp}: both must come from one app. Nothing was written.`)
       return 2
@@ -754,7 +842,7 @@ async function remove(io: GatewayIO, p: Paths, o: Options): Promise<number> {
   if (typeof text !== 'string') { io.err(`${tilde(io, profile.path)}: ${text.error}. Nothing was written.`); return 1 }
   writeFile(profile.path, text, 0o644)
   io.out(`profile ${profile.name}: platform ${rest.join(', ')}`)
-  if (tokenKeys(platform).length > 0) io.out(`  its tokens stay in ${tilde(io, p.env)}: ${tokenKeys(platform).join(', ')}`)
+  if (tokenKeys(platform).length > 0) io.out(`  its tokens stay where they are: ${tokenKeys(platform).join(', ')}`)
   return applyChange(io, p, o, rest)
 }
 const tokenKeys = (platform: Platform) => PLATFORMS[platform].tokens.map((t) => t.key)
@@ -762,7 +850,8 @@ const tokenKeys = (platform: Platform) => PLATFORMS[platform].tokens.map((t) => 
 interface Status {
   service: { installed: boolean; running: boolean; pid: number | null }
   profile: { name: string; path: string; platforms: string[]; channels: string[]; allowedUsers: string[] } | { error: string }
-  credentials: Record<string, boolean>
+  /** Where a running gateway finds each credential: the app's store, ~/.dsh/.env, or nowhere (null). */
+  credentials: Record<string, Where>
   health: { connected: boolean; connectedAt: number | null; lastError: string | null; heartbeatAgeMs: number | null } | null
   healthy: boolean
 }
@@ -771,12 +860,16 @@ function status(io: GatewayIO, p: Paths, o: Options): number {
   const gateway = service(io, GATEWAY_LABEL)
   const loaded = loadProfile(io, p, o.profile)
   const envText = readText(p.env)
-  const credentials: Record<string, boolean> = {}
+  const held = storeRefs(readText(p.store))
+  const credentials: Record<string, Where> = {}
   const platforms = 'error' in loaded ? [] : loaded.lists.platform
-  for (const name of platforms) if (isPlatform(name)) for (const key of tokenKeys(name)) credentials[key] = envValue(envText, key) !== undefined
-  const needed = Object.values(credentials).every(Boolean)
-  // Reported, not required: a profile that routes the model through another gateway needs none.
-  credentials.DEEPSEEK_API_KEY = envValue(envText, 'DEEPSEEK_API_KEY') !== undefined
+  const platformKeys = platforms.filter(isPlatform).flatMap(tokenKeys)
+  for (const key of platformKeys) credentials[key] = whereIs(key, held, envText)
+  const needed = platformKeys.every((key) => credentials[key] !== null)
+  // The model's key — reported, not required: the harness may reach its model another way (a subscription is unverified here).
+  const routed = routeKeys('error' in loaded ? '' : loaded.text)
+  const modelKeys = routed.length > 0 ? routed : ['DEEPSEEK_API_KEY']
+  for (const key of modelKeys) credentials[key] = whereIs(key, held, envText)
   const h = readHealth(p)
   const age = h?.updatedAt === undefined ? null : io.now() - h.updatedAt
   const connected = messengersOf(platforms).length === 0 || h?.connected === true
@@ -801,10 +894,10 @@ function status(io: GatewayIO, p: Paths, o: Options): number {
     io.out(`channels   ${describeChannels(s.profile.channels)}`)
     io.out(`people     ${describeUsers(s.profile.allowedUsers)}`)
   }
-  const platformTokens = Object.entries(credentials).filter(([k]) => k !== 'DEEPSEEK_API_KEY')
-  io.out(`tokens     ${'error' in loaded ? 'unknown — the profile could not be read' : platformTokens.map(([k, ok]) => `${k} ${ok ? 'set' : 'missing'}`).join(', ') || 'none needed'} (in ${tilde(io, p.env)})`)
+  const found = (where: Where) => (where === 'store' ? 'set (DeepSeek Harness app)' : where === 'dotenv' ? `set (${tilde(io, p.env)})` : 'missing')
+  io.out(`tokens     ${'error' in loaded ? 'unknown — the profile could not be read' : platformKeys.map((k) => `${k} ${found(credentials[k])}`).join(', ') || 'none needed'}`)
   if (h !== null && s.service.running && h.pid !== gateway.pid) io.out(`           the health file is from pid ${h.pid ?? '?'}, not the running ${gateway.pid}: its plugin has not started`)
-  io.out(`model key  DEEPSEEK_API_KEY ${credentials.DEEPSEEK_API_KEY ? 'set' : 'not set — needed only by the default DeepSeek route'}`)
+  io.out(`model key  ${modelKeys.map((k) => `${k} ${credentials[k] === null ? `not in the DeepSeek Harness app or ${tilde(io, p.env)}` : found(credentials[k])}`).join(', ')}${routed.length === 0 ? ' — DeepSeek\'s own API, the default route; a route in the profile names its own key' : ''}`)
   if (h === null) io.out('health     no health file yet — the gateway has not started')
   else {
     const since = h.connectedAt ? ` since ${new Date(h.connectedAt).toISOString()}` : ''

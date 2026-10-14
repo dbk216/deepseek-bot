@@ -7,7 +7,9 @@ and what to call the other. The rules for changing the code are in [AGENTS.md](A
 
 - **deepseek-bot** — this project. In code its plugin id is **`deepbot`** (also `DEEPBOT_*`
   variables and `ai.deepbot.*` launchd jobs); the two names mean the same thing.
-- **harness** — DeepSeek Harness, the runtime this is a plugin for. Its CLI is `dsh`.
+- **harness** — DeepSeek Harness, the runtime this is a plugin for. Its CLI is `dsh`. Many use it
+  without deepseek-bot, some on a subscription, and set it up themselves first: its model keys, its
+  own profiles and its app's credential store are theirs. deepseek-bot is added on top of that.
 - **gateway** — the long-running harness process that loads the plugin and serves conversations.
 - **profile** — the harness configuration a gateway runs with: which plugins, which sandbox, which
   approval policy. It lives under the harness home, not in this repository.
@@ -28,6 +30,9 @@ Never say just "home".
 - **harness home** — the harness's own directory (`~/.dsh`): profiles, credentials, the session
   store, the recall index, the deployed service copies. The agent's commands cannot read the
   private parts of it.
+- **app store** — `~/.dsh/.credentials.yaml`, where the DeepSeek Harness app keeps the keys entered
+  in it: the names under `refs:`. The harness reads it before `~/.dsh/.env`. deepseek-bot reads its
+  names and never writes it. Not `~/.dsh/.env`, which is where deepseek-bot's own setup writes.
 - **source checkout** — where the code is (`~/.deepbot` for an install, or a clone).
 - **tenant directory** — with tenant isolation on, a conversation group's own directory under the
   agent home, used in place of the agent home for that group.

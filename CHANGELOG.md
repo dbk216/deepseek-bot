@@ -5,6 +5,19 @@ the caveat about version numbers is at the bottom.
 
 ## Unreleased
 
+### Fixed
+
+- **`dsh gateway` sees a harness that was set up before it.** It read only `~/.dsh/.env`. A key
+  entered in the DeepSeek Harness app sits in the app's store (`~/.dsh/.credentials.yaml`), which
+  the harness reads first. So `status` called the model key missing on a working deployment, and
+  `setup` asked again for a token the harness already had. A token written to `.env` under a name the
+  store holds would never have been read. Now `status` says where each key is (the app, or `.env`;
+  `--json` gives `store`, `dotenv` or `null`) and takes the model's key from the profile's
+  `llm-pi-ai` route, else DeepSeek's own. `setup` uses the app's tokens as they are (the same token
+  given again is fine), refuses a different one under a name the store holds, checks Slack's two
+  tokens against the app-level token the harness will actually read, and never writes the store or
+  prints a value from it.
+
 ### Added
 
 - **`/model` in the terminal.** It lists the models the registered providers advertise, numbered,

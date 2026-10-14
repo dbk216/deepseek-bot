@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
-import { gateway, mergeIds, parseIds, readProfile, slackManifest, terminalAsk, writeProfile, envSet, envValue, type GatewayIO, type RunResult } from '../dist/service/gateway.js'
+import { gateway, mergeIds, parseIds, readProfile, slackManifest, storeRefs, terminalAsk, writeProfile, envSet, envValue, type GatewayIO, type RunResult } from '../dist/service/gateway.js'
 import { route, usage } from '../dist/tui/cli.js'
 
 const results = []
@@ -49,12 +49,13 @@ const HAND = `# a profile edited by hand
 const OK = { status: 0, stdout: '', stderr: '' }
 
 /** A scratch home with a profile, a credential file, and fakes for everything outside. */
-function scene({ profile = TEMPLATE, env = 'DEEPSEEK_API_KEY=sk-test\n', envMode = 0o600, installed = true, loaded = ['ai.deepbot.gateway', 'ai.deepbot.health'], vars = {}, answers = undefined, fetchReply = undefined, connects = true, lastError = null, noPid = [], boots = true, failBootout = [] }: {
+function scene({ profile = TEMPLATE, env = 'DEEPSEEK_API_KEY=sk-test\n', envMode = 0o600, installed = true, loaded = ['ai.deepbot.gateway', 'ai.deepbot.health'], vars = {}, answers = undefined, fetchReply = undefined, connects = true, lastError = null, noPid = [], boots = true, failBootout = [], store = null }: {
   profile?: string; env?: string | null; envMode?: number; installed?: boolean; loaded?: string[]; vars?: Record<string, string>
   answers?: Array<string | null>; fetchReply?: (url: string, init: any) => { ok: boolean; status: number; body: unknown }; connects?: boolean; lastError?: string | null
   /** Loaded, with no process: launchd between restarts. */ noPid?: string[]
   /** Whether a (re)started gateway gets as far as writing its health file. */ boots?: boolean
   failBootout?: string[]
+  /** The DeepSeek Harness app's own credential store, ~/.dsh/.credentials.yaml. */ store?: string | null
 } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'deepbot-gateway-'))
   const dsh = join(home, '.dsh')
@@ -64,6 +65,8 @@ function scene({ profile = TEMPLATE, env = 'DEEPSEEK_API_KEY=sk-test\n', envMode
   writeFileSync(profilePath, profile)
   const envPath = join(dsh, '.env')
   if (env !== null) { writeFileSync(envPath, env); chmodSync(envPath, envMode) }
+  const storePath = join(dsh, '.credentials.yaml')
+  if (store !== null) writeFileSync(storePath, store)
   const agents = join(home, 'Library', 'LaunchAgents')
   mkdirSync(agents, { recursive: true })
   if (installed) {
@@ -112,10 +115,11 @@ function scene({ profile = TEMPLATE, env = 'DEEPSEEK_API_KEY=sk-test\n', envMode
     waitMs: 5000,
   }
   return {
-    home, io, calls, fetched, asked, out, err, profilePath, envPath, healthPath,
+    home, io, calls, fetched, asked, out, err, profilePath, envPath, healthPath, storePath,
     launchctl: () => calls.filter((c) => c[0] === 'launchctl' && c[1] !== 'print').map((c) => c.slice(1, 3).join(' ')),
     profile: () => readFileSync(profilePath, 'utf8'),
     env: () => readFileSync(envPath, 'utf8'),
+    store: () => readFileSync(storePath, 'utf8'),
     text: () => [...out, ...err].join('\n'),
     done: () => rmSync(home, { recursive: true, force: true }),
   }
@@ -374,7 +378,7 @@ for (const [name, profile] of [['no deepbot row', '- id: other\n  config: {}\n']
   let parsed = null
   try { parsed = JSON.parse(s.out.join('\n')) } catch { /* checked below */ }
   check('status --json: parses, healthy, exit 0', code === 0 && parsed?.healthy === true && parsed.service.pid === 4242 && parsed.profile.platforms.join() === 'slack', s.text())
-  check('status --json: tokens are reported as set, never shown', parsed?.credentials.SLACK_BOT_TOKEN === true && !s.text().includes('xoxb-') && !s.text().includes('sk-secret'))
+  check('status --json: tokens are reported by where they are, never shown', parsed?.credentials.SLACK_BOT_TOKEN === 'dotenv' && !s.text().includes('xoxb-') && !s.text().includes('sk-secret'), JSON.stringify(parsed?.credentials))
   s.out.length = 0
   writeFileSync(s.healthPath, JSON.stringify({ pid: 4242, startedAt: 1, connected: true, updatedAt: 1 }))
   const stale = await gateway(['status'], s.io)
@@ -538,6 +542,111 @@ check('L6: a Slack token typed where ids go is not an id', parseIds('xoxb-1-2-ab
   const code = await gateway(['stop'], s.io)
   check('L15: a gateway that will not stop gets its probe back', code === 1 && s.launchctl().join('|') === 'bootout gui/501/ai.deepbot.health|bootout gui/501/ai.deepbot.gateway|bootstrap gui/501', s.launchctl().join('|'))
   s.done()
+}
+
+// 13. A harness set up before deepseek-bot. The DeepSeek Harness app keeps the keys entered in it in its own
+// store, ~/.dsh/.credentials.yaml — names under `refs:` — and the harness reads that before ~/.dsh/.env. Its
+// keys are used as they are: not asked for, not reported missing, and the store is never written.
+const STORE = `version: 1
+
+refs:
+  # entered in the app
+  OG_API_KEY: stored-og-value
+  SLACK_BOT_TOKEN: ${SLACK.SLACK_BOT_TOKEN}
+records:
+  client-connection/browser-session:
+    kind: session
+  DISCORD_BOT_TOKEN:
+    kind: not-a-ref
+`
+check('store: the names under refs: are read, comments and records: are not', storeRefs(STORE).join() === 'OG_API_KEY,SLACK_BOT_TOKEN', storeRefs(STORE).join())
+check('store: a key nested under a ref is not a ref of its own, and CRLF reads the same', storeRefs('refs:\r\n  A_KEY:\r\n    nested: x\r\n  B_KEY: y\r\n').join() === 'A_KEY,B_KEY', storeRefs('refs:\r\n  A_KEY:\r\n    nested: x\r\n  B_KEY: y\r\n').join())
+check('store: no store, or no refs:, holds nothing', storeRefs('').length === 0 && storeRefs('version: 1\nrecords:\n  X_KEY: y\n').length === 0)
+// A comment does not end a mapping in YAML, at any indent: the names after it are still refs.
+check('store: a comment at column 0 inside refs: hides nothing after it', storeRefs('version: 1\nrefs:\n  A_KEY: x\n# note\n  B_KEY: y\nrecords:\n  C_KEY: z\n').join() === 'A_KEY,B_KEY', storeRefs('version: 1\nrefs:\n  A_KEY: x\n# note\n  B_KEY: y\nrecords:\n  C_KEY: z\n').join())
+check('store: quoted keys, a space before the colon, and a flow mapping are names too', storeRefs('refs:\n  "A_KEY": x\n  \'B_KEY\': y\n  C_KEY : z\n').join() === 'A_KEY,B_KEY,C_KEY' && storeRefs('refs: {D_KEY: x, "E_KEY": y}\n').join() === 'D_KEY,E_KEY', `${storeRefs('refs:\n  "A_KEY": x\n  \'B_KEY\': y\n  C_KEY : z\n').join()} | ${storeRefs('refs: {D_KEY: x, "E_KEY": y}\n').join()}`)
+{
+  const s = scene({ store: STORE, vars: { SLACK_APP_TOKEN: SLACK.SLACK_APP_TOKEN } })
+  const code = await gateway(['setup', 'slack'], s.io)
+  check('store: a token the app already holds is not asked for, and is said to be kept there', code === 0 && s.out.some((l) => l.includes('SLACK_BOT_TOKEN') && l.includes('DeepSeek Harness')), s.text())
+  check('store: only the missing token goes to ~/.dsh/.env', !s.env().includes('SLACK_BOT_TOKEN') && s.env().includes('SLACK_APP_TOKEN='), JSON.stringify(s.env()))
+  check('store: and the store is not written', s.store() === STORE)
+  s.done()
+}
+{
+  const s = scene({ store: STORE, vars: { ...SLACK, SLACK_BOT_TOKEN: 'xoxb-9-9-other' } })
+  const before = s.env()
+  const code = await gateway(['setup', 'slack'], s.io)
+  check('store: a different token given for a name the store holds is refused — the harness would read the store\'s — nothing written', code === 2 && s.err.join().includes('SLACK_BOT_TOKEN') && s.err.join().includes('DeepSeek Harness') && s.env() === before && s.store() === STORE, s.text())
+  s.done()
+}
+{
+  // An agent re-running setup with the token the app already holds is not a conflict.
+  const s = scene({ store: STORE, vars: { ...SLACK } })
+  const code = await gateway(['setup', 'slack'], s.io)
+  check('store: the same token the store holds is taken as held, not refused, and not written to .env', code === 0 && !s.env().includes('SLACK_BOT_TOKEN') && s.out.some((l) => l.includes('SLACK_BOT_TOKEN') && l.includes('DeepSeek Harness')), s.text())
+  check('store: and no value of the store is printed', !s.text().includes('stored-og-value') && !s.text().includes(SLACK.SLACK_BOT_TOKEN))
+  s.done()
+}
+{
+  // The store holds this app's app-level token; .env still has an old app's. The harness reads the store's.
+  const reply = (url: string) => (url.includes('auth.test') ? { ok: true, status: 200, body: { ok: true, user: 'bot', team: 'acme', bot_id: 'B1' } }
+    : url.includes('bots.info') ? { ok: true, status: 200, body: { ok: true, bot: { app_id: 'ANEW' } } } : { ok: true, status: 200, body: { ok: true } })
+  const s = scene({ store: 'refs:\n  SLACK_APP_TOKEN: xapp-1-ANEW-2\n', env: 'SLACK_APP_TOKEN=xapp-1-AOLD-2\n', vars: { SLACK_BOT_TOKEN: 'xoxb-1-2-new' }, fetchReply: reply })
+  const code = await gateway(['setup', 'slack'], s.io)
+  check('store: the same-app check is not made against an app-level token the store shadows', code === 0 && !s.err.join().includes('both must come from one app'), s.text())
+  s.done()
+  // Control: it is the store's token that is compared, not skipped — one from another app is still caught.
+  const t = scene({ store: 'refs:\n  SLACK_APP_TOKEN: xapp-1-AOT-2\n', vars: { SLACK_BOT_TOKEN: 'xoxb-1-2-new' }, fetchReply: reply })
+  const other = await gateway(['setup', 'slack'], t.io)
+  check('store: and the store\'s own app-level token, from another app, is caught', other === 2 && t.err.join().includes('both must come from one app') && t.err.join().includes('AOT') && !t.text().includes('xapp-1-AOT-2'), t.text())
+  t.done()
+}
+{
+  const s = scene({ store: STORE, answers: ['xapp-1-new', ''] })
+  const code = await gateway(['setup', 'slack', '--no-verify', '--no-restart'], s.io)
+  check('store: at a terminal the token the app holds is not asked for', code === 0 && !s.asked.some((q) => q.includes('SLACK_BOT_TOKEN') || q.includes('bot token')), JSON.stringify(s.asked))
+  s.done()
+}
+{
+  const s = scene({ store: STORE, env: `SLACK_APP_TOKEN=${SLACK.SLACK_APP_TOKEN}\n` })
+  writeFileSync(s.healthPath, JSON.stringify({ pid: 4242, startedAt: 999_000, connected: true, connectedAt: 999_000, lastError: null, updatedAt: 999_990 }))
+  const code = await gateway(['status', '--json'], s.io)
+  let parsed = null
+  try { parsed = JSON.parse(s.out.join('\n')) } catch { /* checked below */ }
+  check('status: a token in the app\'s store is there, not missing; healthy', code === 0 && parsed?.credentials.SLACK_BOT_TOKEN === 'store' && parsed?.credentials.SLACK_APP_TOKEN === 'dotenv', JSON.stringify(parsed?.credentials))
+  check('status: a name under records: is not a credential', parsed?.credentials.DISCORD_BOT_TOKEN === undefined)
+  s.out.length = 0
+  await gateway(['status'], s.io)
+  check('status: the text says where each token is', s.out.some((l) => /SLACK_BOT_TOKEN set \(DeepSeek Harness app\)/.test(l) && /SLACK_APP_TOKEN set \(~\/\.dsh\/\.env\)/.test(l)), s.text())
+  s.done()
+}
+{
+  // The model's key: the one the profile's route names, else the default route's DEEPSEEK_API_KEY.
+  const routed = `${TEMPLATE}\n- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n`
+  const s = scene({ profile: routed, store: STORE })
+  await gateway(['status', '--json'], s.io)
+  let parsed = null
+  try { parsed = JSON.parse(s.out.join('\n')) } catch { /* checked below */ }
+  check('status: the model key is the one the profile\'s route names, found in the app\'s store', parsed?.credentials.OG_API_KEY === 'store' && !('DEEPSEEK_API_KEY' in (parsed?.credentials ?? {})), JSON.stringify(parsed?.credentials))
+  s.done()
+  const t = scene({ env: '' })
+  await gateway(['status', '--json'], t.io)
+  let plain = null
+  try { plain = JSON.parse(t.out.join('\n')) } catch { /* checked below */ }
+  check('status: with no route of its own, the model key is DeepSeek\'s, and absent is null, not an error', plain?.credentials.DEEPSEEK_API_KEY === null, JSON.stringify(plain?.credentials))
+  t.out.length = 0
+  await gateway(['status'], t.io)
+  check('status: and the text says it is only DeepSeek\'s own API that needs it', t.out.some((l) => l.startsWith('model key') && l.includes('DeepSeek\'s own API')), t.text())
+  t.done()
+  // A key named by another plugin's row (web search) is not the model's.
+  const searched = `${routed}\n- id: web-search-deepseek\n  config:\n    apiKeyEnv: SEARCH_KEY\n`
+  const u = scene({ profile: searched, store: STORE })
+  await gateway(['status', '--json'], u.io)
+  let only = null
+  try { only = JSON.parse(u.out.join('\n')) } catch { /* checked below */ }
+  check('status: only the llm-pi-ai row\'s keys are the model\'s', only?.credentials.OG_API_KEY === 'store' && !('SEARCH_KEY' in (only?.credentials ?? {})), JSON.stringify(only?.credentials))
+  u.done()
 }
 
 const failed = results.filter((r) => !r.ok)

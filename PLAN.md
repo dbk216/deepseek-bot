@@ -65,6 +65,9 @@ Decided against:
 
 ## Unverified
 
+- How a DeepSeek Harness subscription signs in, as against a key entered in the app: `dsh gateway status`
+  reports the model's key from the app store or `~/.dsh/.env` and does not count it toward healthy,
+  so a subscription that needs no key reads "not in the DeepSeek Harness app or ~/.dsh/.env" there.
 - `dsh gateway` against the real services: the suite runs it with fakes for launchctl, plutil and
   the platforms. Not yet run for real: `setup` writing a live profile and restarting a live gateway,
   `stop` and `start` on the installed jobs, and the token checks against Slack, Telegram and Discord
