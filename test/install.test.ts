@@ -265,6 +265,9 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   // And a route the last row no longer has is gone, not kept from the row before.
   writeFileSync(join(dir, 'route-gone.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n- id: llm-pi-ai\n  config:\n    providers:\n      other:\n        apiKeyEnv: OTHER_KEY\n- id: agent-default-model\n  config:\n    provider: og\n`)
   check('provider: a route the last llm-pi-ai row dropped is not read from the row before', withHelpers(`profile_key "${join(dir, 'route-gone.yml')}"`).out === 'DEEPSEEK_API_KEY', withHelpers(`profile_key "${join(dir, 'route-gone.yml')}"`).out)
+  // Only the route's own key: one deeper (a model entry's) is not it.
+  writeFileSync(join(dir, 'inner-key.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n        models:\n          - id: m\n            apiKeyEnv: INNER_KEY\n- id: agent-default-model\n  config:\n    provider: og\n`)
+  check('provider: a key nested under the route is not the route\'s', withHelpers(`profile_key "${join(dir, 'inner-key.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'inner-key.yml')}"`).out)
   writeFileSync(join(dir, 'quoted-id.yml'), `- id: 'llm-pi-ai'\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n- id: "agent-default-model"\n  config:\n    provider: og\n`)
   check('provider: quoted ids are read', withHelpers(`profile_key "${join(dir, 'quoted-id.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'quoted-id.yml')}"`).out)
   writeFileSync(join(dir, 'insert-after.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n      speech:\n        apiKeyEnv: OPENAI_API_KEY\n- id: agent-default-model\n  config:\n    provider: og\n- insert:\n    - id: tts\n      config:\n        provider: speech\n`)

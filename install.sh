@@ -162,9 +162,12 @@ profile_key() {
     # A line at the routes'"'"' indent names the next route, or, if it is not a plain key, ends the one before.
     pi && prov >= 0 && indent($0) == prov + 2 {
       if ($0 ~ /^[[:space:]]+["\047]?[A-Za-z0-9_.-]+["\047]?:[[:space:]]*(#.*)?$/) { r = $0; sub(/:[[:space:]]*(#.*)?$/, "", r); route = bare(r) } else route = ""
+      child = -1
       next
     }
-    pi && route != "" && route == want && $0 ~ /^[[:space:]]+apiKeyEnv:/ { v = $0; sub(/^[[:space:]]+apiKeyEnv:/, "", v); key = bare(v); next }
+    # The route'"'"'s own key: at the indent of its first line, not one nested deeper (a model entry'"'"'s).
+    pi && route != "" && indent($0) > prov + 2 && child < 0 { child = indent($0) }
+    pi && route != "" && route == want && indent($0) == child && $0 ~ /^[[:space:]]+apiKeyEnv:/ { v = $0; sub(/^[[:space:]]+apiKeyEnv:/, "", v); key = bare(v); next }
     END { print key }
   ' "$1" "$1" 2>/dev/null || true)"
   printf '%s\n' "${found:-DEEPSEEK_API_KEY}"
