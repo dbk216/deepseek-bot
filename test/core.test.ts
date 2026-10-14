@@ -1137,14 +1137,32 @@ for (const remove of [false, true]) {
 // did not come back (a0e847e, when the emptied index.ts was restored): no session was ever attached to its
 // workspace, and permissionPreset was a setting that did nothing.
 {
-  const t = boot({ agent: 'ready', workspace: true, config: { permissionPreset: 'read-only' } })
+  const t = boot({ agent: 'ready', workspace: true, config: { permissionPreset: 'read-only', attachSessions: true } })
   await sleep(60)
   t.transport.deliver(t.transport.message({ text: 'hello' }))
   await sleep(400)
   const sessionId = t.created[0]?.sessionId
-  check('setup: the session is attached to its workspace', sessionId !== undefined && JSON.stringify(t.attached) === JSON.stringify([sessionId]), JSON.stringify({ sessionId, attached: t.attached }))
+  check('setup: with attachSessions, the session is attached to its workspace', sessionId !== undefined && JSON.stringify(t.attached) === JSON.stringify([sessionId]), JSON.stringify({ sessionId, attached: t.attached }))
   check('setup: the deployment\'s permission preset is applied to the session', t.permissionSets.length === 1 && t.permissionSets[0].name === 'read-only' && t.permissionSets[0].session?.header?.id === sessionId, JSON.stringify(t.permissionSets.map((p) => p.name)))
   t.done()
+
+  // Off by default: attaching rewrites ~/.dsh/storages/workspace.json, which the desktop app writes too,
+  // last write winning — and all it buys is the desktop sidebar's grouping.
+  const plain = boot({ agent: 'ready', workspace: true })
+  await sleep(60)
+  plain.transport.deliver(plain.transport.message({ text: 'hello' }))
+  await sleep(400)
+  check('setup: by default no session is attached', plain.created.length === 1 && plain.attached.length === 0, JSON.stringify(plain.attached))
+  plain.done()
+
+  // A permission preset that does not exist is refused at the turn, with its name, also without an agent
+  // preset; it used to be checked only when one was named, and then failed inside set() on every turn.
+  const bogus = boot({ agent: 'ready', config: { agentPreset: '', permissionPreset: 'no-such-preset' } })
+  await sleep(60)
+  bogus.transport.deliver(bogus.transport.message({ text: 'hello' }))
+  await sleep(400)
+  check('setup: an unknown permission preset is named, not set', bogus.permissionSets.length === 0 && bogus.transport.posted.some((p) => /unknown permission preset "no-such-preset"/.test(p.text)), JSON.stringify(bogus.transport.posted.map((p) => p.text.slice(0, 60))))
+  bogus.done()
 }
 
 const failed = results.filter((r) => !r.ok)

@@ -254,6 +254,8 @@ const DEFAULTS = {
   // overrule a permission decision the deployment made on purpose.
   permissionPreset: undefined,
   attachWorkspace: true,
+  // Attach each session to its workspace (the desktop app's sidebar grouping). Off: see where it is used.
+  attachSessions: false,
   // Diagnostic: run a single turn with this prompt at startup, log the result,
   // and never touch Slack. This is the only way to exercise in-process session
   // creation without opening a Socket Mode connection.
@@ -1809,16 +1811,17 @@ export function apply(ctx, config) {
     const presetName = policy.preset ?? cfg.agentPreset
     const permissionName = cfg.permissionPreset
     let presetId = null
+    // Only validate a preset this deployment actually named. Passing `undefined`
+    // through resolve() looks up the literal string "undefined" and throws, and
+    // leaving permissionPreset unset is the documented way to accept the
+    // deployment's own default. Checked whether or not an agent preset is named:
+    // without one it used to reach set() unchecked, and fail there on every turn.
+    if (permissionName !== undefined) {
+      try { permissionPresets?.resolve?.(permissionName) }
+      catch (e) { throw new Error(`deepbot: unknown permission preset ${JSON.stringify(permissionName)}${tenant !== null ? ` for tenant ${tenant}` : ''} — ${String(e?.message ?? e)}`) }
+    }
     if (presetName) {
       if (!agentPresets) throw new Error('deepbot: agentPreset is configured but the agentPresets service is not composed — the agent would have no tools')
-      // Only validate a preset this deployment actually named. Passing `undefined`
-      // through resolve() looks up the literal string "undefined" and throws, and
-      // leaving permissionPreset unset is the documented way to accept the
-      // deployment's own default.
-      if (permissionName !== undefined) {
-        try { permissionPresets?.resolve?.(permissionName) }
-        catch (e) { throw new Error(`deepbot: unknown permission preset ${JSON.stringify(permissionName)}${tenant !== null ? ` for tenant ${tenant}` : ''} — ${String(e?.message ?? e)}`) }
-      }
       try {
         const record = await agentPresets.resolve(presetName)
         presetId = record?.id ?? presetName
@@ -1905,7 +1908,9 @@ export function apply(ctx, config) {
     }
 
     // Post-attach steps, in the reference implementation's order.
-    if (workspace?.attachSession && sessionId) {
+    // Attaching is opt-in: it rewrites ~/.dsh/storages/workspace.json, which the desktop app writes too, the
+    // last write winning, and all it buys is grouping the bot's sessions in the desktop sidebar.
+    if (cfg.attachSessions === true && workspace?.attachSession && sessionId) {
       try { await workspace.attachSession(sessionId) }
       catch (e) {
         // Reported loudly: the message it throws is about a cwd mismatch, which is
