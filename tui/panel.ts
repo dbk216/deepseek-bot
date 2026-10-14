@@ -5,6 +5,7 @@
  * row past three, jobs after agents, and a window of at most `max` rows that keeps the selected
  * row in sight with "↓ N more" for the rest.
  */
+import { t } from './strings.js'
 import type { AgentItem, JobItem } from './bridge.js'
 
 export type PanelRow =
@@ -52,11 +53,11 @@ export function formatElapsed(ms: number): string {
 export function rowStatus(row: PanelRow, now: number): string {
   if (row.kind === 'agent') {
     const a = row.agent
-    const tokens = a.tokens > 0 ? ` · ↓ ${formatTokens(a.tokens)} tokens` : ''
+    const tokens = a.tokens > 0 ? ` · ${t().panelTokens(formatTokens(a.tokens))}` : ''
     if (a.status === 'running') return `${formatElapsed(a.settledMs + (a.since !== null ? now - a.since : 0))}${tokens}`
-    return `${a.status}${tokens}`
+    return `${t().status(a.status)}${tokens}`
   }
-  if (row.kind === 'job') return row.job.status === 'running' && row.job.startedAt > 0 ? `running · ${formatElapsed(now - row.job.startedAt)}` : row.job.status
+  if (row.kind === 'job') return row.job.status === 'running' && row.job.startedAt > 0 ? t().jobRunning(formatElapsed(now - row.job.startedAt)) : t().status(row.job.status)
   return ''
 }
 

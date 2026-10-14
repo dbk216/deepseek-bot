@@ -1142,8 +1142,8 @@ export class App {
       }
       if (this.pending.length > 0) x = screen.put(x, y, ` · ${t().queuedCount(this.pending.length)}`, s(theme.muted))
       const counts = panelCounts(this.panel.agents, this.panel.jobs)
-      if (counts.shells > 0) x = screen.put(x, y, ` · ${counts.shells} shell${counts.shells > 1 ? 's' : ''}`, s(theme.muted))
-      if (counts.agents > 0) x = screen.put(x, y, ` · ← ${counts.agents} agent${counts.agents > 1 ? 's' : ''}`, s(theme.muted))
+      if (counts.shells > 0) x = screen.put(x, y, ` · ${t().shells(counts.shells)}`, s(theme.muted))
+      if (counts.agents > 0) x = screen.put(x, y, ` · ${t().agents(counts.agents)}`, s(theme.muted))
     }
     if (this.toast !== null) x = screen.put(x, y, `  ${this.toast.text}`, s(theme.ok))
 

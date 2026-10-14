@@ -537,7 +537,10 @@ What appears besides the conversation:
   `/model <provider>/<model> [effort]` puts this conversation on another one from its next turn — the
   same session, resumed on the new route — and `/model default` gives it the deployment's back. A
   model no provider lists, or an effort the model does not take, is refused. The choice is kept per
-  conversation in the state file; Slack and the other conversations keep theirs. The deployment's own
+  conversation in the state file; Slack and the other conversations keep theirs. The list is every
+  model a registered route advertises, including a route with no key in `~/.dsh/.env` — a conversation
+  moved to one fails its turns until `/model default`. Reminders the harness delivers on its own
+  schedule are not known to follow a conversation's choice (unverified). The deployment's own
   reasoning effort (`agent-default-model`) now reaches a turn too; it was dropped before. The status
   line shows the effort in sky blue.
 - **`/interview <topic>`** runs a deep interview: one question per round, and a strip with the

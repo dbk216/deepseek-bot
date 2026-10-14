@@ -2138,6 +2138,8 @@ export function apply(ctx, config) {
     // unnamed, the harness keeps the effort the session last ran with on the same route.
     const effort = choice.effort ?? (defaultEffort !== null && efforts.includes(defaultEffort) ? defaultEffort : null)
     state.models = { ...(state.models ?? {}), [key]: { provider: choice.provider, model: choice.model, ...(effort !== null ? { reasoningEffort: effort } : {}) } }
+    // Counted as activity, so a choice in a conversation that never runs a turn is pruned with it.
+    state.touched = { ...(state.touched ?? {}), [key]: Date.now() }
     saveStateNow()
     log(`models: ${key} now runs on ${choice.provider}/${choice.model}${effort !== null ? ` (${effort})` : ''}`)
     return null

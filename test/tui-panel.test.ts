@@ -174,6 +174,17 @@ function services(overrides = {}) {
   check('bridge: watch with nothing to watch is harmless', typeof bridge.watch(() => {}) === 'function')
 }
 
+// In the terminal's language: a subagent's state, a shell's run, the tokens.
+{
+  const { setLanguage } = await import('../dist/tui/strings.js')
+  setLanguage('ko')
+  const now = Date.now()
+  const idle = rowStatus({ kind: 'agent', agent: { id: 'a', label: 'a', status: 'idle', since: null, settledMs: 0, tokens: 1200, mode: 'continuable' } }, now)
+  const job = rowStatus({ kind: 'job', job: { id: 'j', owner: 'o', label: 'j', status: 'running', startedAt: now - 5_000 } }, now)
+  setLanguage('en')
+  check('language: the panel speaks the terminal\'s language', idle.startsWith('대기 · ↓') && idle.endsWith('토큰') && job.startsWith('실행 중 · '), `${idle} | ${job}`)
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

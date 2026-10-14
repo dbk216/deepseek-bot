@@ -416,6 +416,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   const chosen = await c.waitFor((f) => f.type === 'model')
   check('model: a listed model is taken for this conversation, with an effort it supports', chosen?.current?.provider === 'opengateway' && chosen.current.model === 'deepseek/deepseek-v4.1-flash-ultrafast' && chosen.current.effort === 'high' && chosen.current.efforts.join() === 'high,low', JSON.stringify(chosen))
   check('model: kept for this conversation in the state file', JSON.stringify(JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`]) === JSON.stringify({ provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'high' }))
+  check('model: and the conversation counts as touched, so the choice is pruned with it', Number(JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).touched?.[`tui:${ready.conversation}`]) > 0)
   c.send({ type: 'message', text: 'hi' })
   for (let i = 0; i < 100 && t.created.length === 0; i++) await sleep(10)
   check('model: the next turn runs on it, effort included', JSON.stringify(t.created[0]?.agentOptions) === JSON.stringify({ provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'high' }), JSON.stringify(t.created[0]?.agentOptions))
