@@ -43,25 +43,15 @@ check('its last line is what starts it, so a download cut short runs nothing', /
 const sourced = withHelpers('true')
 check('sourced, it does nothing', sourced.code === 0 && sourced.out === '', JSON.stringify(sourced.out.slice(0, 60)))
 
-// Channels: what a person types goes into the profile through sed.
-check('* is every channel, not the files in the directory', withHelpers('channel_list "*"').out === "['*']", withHelpers('channel_list "*"').out)
-check('ids separated by spaces or commas', withHelpers('channel_list "C01 C02,C03"').out === "['C01', 'C02', 'C03']", withHelpers('channel_list "C01 C02,C03"').out)
-for (const bad of ['C01/../x', "C0'1", 'C0&1', 'C01 *', '']) {
-  check(`refused: ${JSON.stringify(bad)}`, withHelpers(`channel_list ${JSON.stringify(bad)}`).code !== 0)
-}
-
-// A rerun keeps the profile, and must ask for the tokens of the platform it has.
-const profile = join(dir, 'cordis.patch.yml')
-writeFileSync(profile, 'plugins:\n  - id: deepbot\n    platform: telegram\n    targetChannels: [\'*\']\n')
-check('the platform of an existing profile is read back', withHelpers(`profile_platform "${profile}"`).out === 'telegram', withHelpers(`profile_platform "${profile}"`).out)
-check('and slack when the profile names none', withHelpers(`profile_platform "${join(dir, 'missing.yml')}"`).out === 'slack')
-
-// The terminal: a new profile serves it beside the platform, and `dsh` goes on the PATH.
-writeFileSync(profile, 'plugins:\n  - id: deepbot\n    platform: [\'discord\', \'local\']\n')
-check('a profile that lists the terminal still reads back its platform', withHelpers(`profile_platform "${profile}"`).out === 'discord', withHelpers(`profile_platform "${profile}"`).out)
-// `dsh gateway setup` adds platforms after the first: a rerun still asks for the first one's tokens.
-writeFileSync(profile, 'plugins:\n  - id: deepbot\n    platform: [\'telegram\', \'local\', \'discord\']\n')
-check('a profile with a platform added after the terminal reads back the first', withHelpers(`profile_platform "${profile}"`).out === 'telegram', withHelpers(`profile_platform "${profile}"`).out)
+// The installer is not the messenger setup: no platform, channel or messenger token is asked for, a new
+// profile serves the terminal alone, and the end says how to connect one (`dsh gateway setup`, its own suite).
+const installer = readFileSync(INSTALL, 'utf8')
+check('messengers: no platform, channel or messenger token is asked for', !/ask (platform|channels) /.test(installer) && !/put_key (SLACK|TELEGRAM|DISCORD)_/.test(installer), (installer.match(/ask (platform|channels) .*|put_key (SLACK|TELEGRAM|DISCORD)_.*/) ?? [''])[0])
+const fresh = join(dir, 'fresh.yml')
+writeFileSync(fresh, readFileSync(new URL('../profile/cordis.patch.yml', import.meta.url), 'utf8'))
+execFileSync('/bin/bash', ['-c', `${(installer.match(/^\s*sed -i '' -e "s\/\^    platform: slack\$\/.*$/m) ?? ['false'])[0].replace('"$patch"', '"$1"')}`, 'bash', fresh])
+check('messengers: a new profile serves the terminal alone, answering in every channel', /^    platform: \['local'\]$/m.test(readFileSync(fresh, 'utf8')) && /^    targetChannels: \['\*'\]$/m.test(readFileSync(fresh, 'utf8')), (readFileSync(fresh, 'utf8').match(/^    (platform|targetChannels): .*$/gm) ?? []).join(' | '))
+check('messengers: the end says to connect one with dsh gateway setup', /Connect Slack, Telegram or Discord: .*dsh gateway setup/.test(installer))
 
 // The language a new profile starts in: the environment's, by the POSIX order, English otherwise.
 const lang = (env) => withHelpers('env_language', { LC_ALL: '', LC_MESSAGES: '', LANG: '', ...env }).out
@@ -74,8 +64,6 @@ check('language: the template names it, for the installer to fill', /^    langua
 writeFileSync(join(dir, 'lang.yml'), template)
 check('language: the installer writes the chosen one into the profile', withHelpers(`set_profile_language "${join(dir, 'lang.yml')}" zh`).code === 0
   && /^    language: zh$/m.test(readFileSync(join(dir, 'lang.yml'), 'utf8')) && !/^    language: en$/m.test(readFileSync(join(dir, 'lang.yml'), 'utf8')))
-check('every channel already includes the terminal\'s', withHelpers(`with_terminal "['*']"`).out === "['*']", withHelpers(`with_terminal "['*']"`).out)
-check('a list of channels gets the terminal\'s, tui', withHelpers(`with_terminal "['C01', 'C02']"`).out === "['C01', 'C02', 'tui']", withHelpers(`with_terminal "['C01', 'C02']"`).out)
 const launcher = join(dir, '.local', 'bin', 'dsh')
 const installed = withHelpers('install_terminal /opt/checkout')
 check('dsh is written to ~/.local/bin and runs the checkout\'s build', installed.code === 0 && existsSync(launcher) && readFileSync(launcher, 'utf8').includes('exec node "/opt/checkout/dist/tui/main.js" "$@"') && (statSync(launcher).mode & 0o111) !== 0, installed.out)

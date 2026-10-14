@@ -141,10 +141,12 @@ echo "── verify"
 launchctl print "gui/$UID_N/$LABEL" >/dev/null 2>&1 && launchctl print "gui/$UID_N/$LABEL" | grep -E "^\s+(state|pid) " | sed 's/^/   /' || { echo "   ❌ not registered"; exit 1; }
 curl -s -o /dev/null -w "   http://127.0.0.1:$PORT -> HTTP %{http_code}\n" --max-time 5 "http://127.0.0.1:$PORT" || true
 
-if tail -30 "$HOME/.dsh/slack-state/deepbot.log" 2>/dev/null | grep -q "Socket Mode connected"; then
-  echo "   ✅ Slack connected"
+# What the plugin says of itself: connected once its platforms are — the terminal alone, as soon as it is up.
+# The log's "Socket Mode connected" is Slack's alone, and a new install serves the terminal first.
+if grep -q '"connected": true' "$HOME/.dsh/slack-state/health.json" 2>/dev/null; then
+  echo "   ✅ connected"
 else
-  echo "   ⚠️  no 'Socket Mode connected' yet — check:"
+  echo "   ⚠️  not connected yet — check:"
   tail -12 "$LOG_DIR/gateway.err.log" 2>/dev/null | sed 's/^/   /'
 fi
 

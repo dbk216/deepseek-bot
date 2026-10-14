@@ -508,7 +508,7 @@ A terminal may open, message or stop only the subagents and jobs its own panel o
 only its own conversation's buttons.
 
 **Use it.** `dsh` (`install.sh` writes it to `~/.local/bin`, and a new profile it writes serves the terminal
-beside the platform; from a clone, run `node dist/tui/main.js`) finds the running gateway;
+alone until `dsh gateway setup` adds a messenger; from a clone, run `node dist/tui/main.js`) finds the running gateway;
 `--name` picks one by `tuiName`, `--socket` names the path, `--tenant` talks in a tenant's workspace
 (needs `tenantIsolation`; without it a new conversation goes where the configuration sends any other,
 `tenantDefault` or the home), `--resume <id>` continues a conversation (the id is printed on exit).

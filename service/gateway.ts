@@ -2,16 +2,18 @@
  * `dsh gateway`: connect the bot to a messenger, and run the gateway service — for a person at a
  * terminal, or for an agent that has none.
  *
- *   dsh gateway setup <slack|telegram|discord|local> [--channels <ids|*>] [--users <ids>] [--profile <name>] [--no-verify] [--no-restart]
+ *   dsh gateway setup [slack|telegram|discord|local]   at a terminal: the guided setup
+ *   dsh gateway setup <platform> [--channels <ids|*>] [--users <ids>] [--profile <name>] [--no-verify] [--no-restart]
  *   dsh gateway remove <platform> [--profile <name>] [--no-restart]
  *   dsh gateway start | stop | restart
  *   dsh gateway status [--json] [--profile <name>]
  *   dsh gateway manifest slack
  *
- * Every answer has a way in that needs no terminal: a token comes from the environment variable of its
- * own name, the channels from --channels, the people from --users. Without a terminal a missing answer
- * is an error that names it, and nothing is written. A token is never taken as an argument: arguments
- * show in `ps` and in shell history.
+ * At a terminal `setup` is a guided setup: menus chosen with ↑↓ and Enter, the browser opened where a
+ * token is made, each token checked as it is pasted. Without a terminal — an agent, a script — every
+ * answer comes another way: a token from the environment variable of its own name, the channels from
+ * --channels, the people from --users; a missing answer is an error that names it, and nothing is
+ * written. A token is never taken as an argument: arguments show in `ps` and in shell history.
  *
  * What it writes: tokens to ~/.dsh/.env (mode 600), and the platform, channel and people lines of the
  * profile's deepbot row. Nothing else in either file changes. The bot's own agent cannot set up or
@@ -22,6 +24,7 @@ import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { stringWidth } from '../tui/render/width.js'
 
 export const GATEWAY_COMMANDS = new Set(['setup', 'remove', 'start', 'stop', 'restart', 'status', 'manifest'])
 const GATEWAY_LABEL = 'ai.deepbot.gateway'
@@ -45,6 +48,10 @@ export interface GatewayIO {
   fetch: Fetch
   /** A question at the terminal, null when cancelled. Absent without a terminal: every answer must come another way. */
   ask?: (question: string, secret: boolean) => Promise<string | null>
+  /** A menu at the terminal: the index chosen, 'back' (Esc) or 'quit' (Ctrl+C). Absent without a terminal. */
+  choose?: (title: string, options: Choice[], initial: number) => Promise<number | 'back' | 'quit'>
+  /** Open a link in the browser; false when it could not be. */
+  openUrl?: (url: string) => boolean
   out: (text: string) => void
   err: (text: string) => void
   sleep: (ms: number) => Promise<void>
@@ -549,7 +556,7 @@ function stop(io: GatewayIO, p: Paths): number {
 
 // ── Tokens with the platform ──────────────────────────────────────────────────
 
-type Verified = { ok: true; who: string; app?: string } | { ok: false; reason: string; unreachable?: boolean }
+type Verified = { ok: true; who: string; name?: string; app?: string } | { ok: false; reason: string; unreachable?: boolean }
 
 /** The Slack app an app-level token belongs to: the part after `xapp-1-`, up to the next dash. */
 const appOfAppToken = (token: string | undefined) => /^xapp-\d+-([A-Z0-9]+)-/.exec(token ?? '')?.[1]
@@ -575,7 +582,7 @@ async function verifyToken(fetch: Fetch, key: string, token: string): Promise<Ve
     // Which app the bot is, to hold against the app-level token's; unknown when this is refused (users:read).
     const bot = r.body.bot_id ? await call(`https://slack.com/api/bots.info?bot=${encodeURIComponent(r.body.bot_id)}`, { method: 'GET', headers: bearer }) : null
     const app = bot !== null && !('error' in bot) && bot.body?.ok === true ? bot.body.bot?.app_id : undefined
-    return { ok: true, who: `@${r.body.user} in ${r.body.team}`, ...(app ? { app } : {}) }
+    return { ok: true, who: `@${r.body.user} in ${r.body.team}`, name: r.body.user, ...(app ? { app } : {}) }
   }
   if (key === 'SLACK_APP_TOKEN') {
     // Asks for a Socket Mode URL and does not open it, so a running gateway's connection is untouched.
@@ -586,22 +593,38 @@ async function verifyToken(fetch: Fetch, key: string, token: string): Promise<Ve
   if (key === 'TELEGRAM_BOT_TOKEN') {
     const r = await call(`https://api.telegram.org/bot${token}/getMe`, { method: 'GET' })
     if ('error' in r) return unreachable(r.error.split(token).join('…'))
-    return r.body?.ok === true ? { ok: true, who: `@${r.body.result?.username}` } : { ok: false, reason: `Telegram refused it (${r.body?.description ?? `HTTP ${r.status}`})` }
+    return r.body?.ok === true ? { ok: true, who: `@${r.body.result?.username}`, name: r.body.result?.username } : { ok: false, reason: `Telegram refused it (${r.body?.description ?? `HTTP ${r.status}`})` }
   }
   if (key === 'DISCORD_BOT_TOKEN') {
     const r = await call('https://discord.com/api/v10/users/@me', { method: 'GET', headers: { Authorization: `Bot ${token}` } })
     if ('error' in r) return unreachable(r.error)
-    return r.ok && r.body?.id ? { ok: true, who: `${r.body.username} (${r.body.id})` } : { ok: false, reason: `Discord refused it (${r.body?.message ?? `HTTP ${r.status}`})` }
+    return r.ok && r.body?.id ? { ok: true, who: `${r.body.username} (${r.body.id})`, name: r.body.username } : { ok: false, reason: `Discord refused it (${r.body?.message ?? `HTTP ${r.status}`})` }
   }
   return { ok: false, reason: `no check for ${key}` }
 }
 
+/** Discord's application behind a bot token: its id (for the invite link), its intents, and who owns it. */
+type DiscordApp = { ok: true; who: string; name: string; id: string; flags: number; owner: { id: string; username: string } | null } | { ok: false; reason: string; unreachable?: boolean }
+async function discordApp(fetch: Fetch, token: string): Promise<DiscordApp> {
+  try {
+    const r = await fetch('https://discord.com/api/v10/applications/@me', { method: 'GET', headers: { Authorization: `Bot ${token}` }, signal: AbortSignal.timeout(10000) })
+    let body: any = null
+    try { body = await r.json() } catch { /* not JSON */ }
+    if (!r.ok || !body?.id) return { ok: false, reason: `Discord refused it (${body?.message ?? `HTTP ${r.status}`})` }
+    const name = String(body.bot?.username ?? body.name ?? 'the bot')
+    const owner = body.owner?.id ? { id: String(body.owner.id), username: String(body.owner.username ?? body.owner.id) } : null
+    return { ok: true, who: `the bot "${name}"`, name, id: String(body.id), flags: Number(body.flags ?? 0), owner }
+  } catch (e) {
+    return { ok: false, reason: `could not reach discord.com (${String((e as Error)?.message ?? e)})`, unreachable: true }
+  }
+}
+
 // ── Arguments ─────────────────────────────────────────────────────────────────
 
-interface Options { positional: string[]; profile?: string; channels?: string; users?: string; verify: boolean; restart: boolean; json: boolean; yes: boolean; help: boolean }
+interface Options { positional: string[]; profile?: string; channels?: string; users?: string; verify: boolean; restart: boolean; json: boolean; help: boolean }
 
 const ALLOWED: Record<string, string[]> = {
-  setup: ['--profile', '--channels', '--users', '--no-verify', '--no-restart', '--yes'],
+  setup: ['--profile', '--channels', '--users', '--no-verify', '--no-restart'],
   remove: ['--profile', '--no-restart'],
   start: [], stop: [], restart: [],
   status: ['--profile', '--json'],
@@ -609,7 +632,7 @@ const ALLOWED: Record<string, string[]> = {
 }
 
 function parseOptions(command: string, argv: string[]): Options | { error: string } {
-  const o: Options = { positional: [], verify: true, restart: true, json: false, yes: false, help: false }
+  const o: Options = { positional: [], verify: true, restart: true, json: false, help: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '-h' || a === '--help') { o.help = true; continue }
@@ -618,7 +641,6 @@ function parseOptions(command: string, argv: string[]): Options | { error: strin
     if (a === '--no-verify') o.verify = false
     else if (a === '--no-restart') o.restart = false
     else if (a === '--json') o.json = true
-    else if (a === '--yes') o.yes = true
     else {
       const value = argv[i + 1]
       if (value === undefined || value.startsWith('--')) return { error: `${a} needs a value` }
@@ -631,22 +653,25 @@ function parseOptions(command: string, argv: string[]): Options | { error: strin
 
 const GATEWAY_USAGE = `dsh gateway — connect the bot to a messenger, and run its service
 
-  dsh gateway setup <slack|telegram|discord|local> [--channels <ids|*>] [--users <ids>] [--profile <name>] [--no-verify] [--no-restart] [--yes]
+  dsh gateway setup                 at a terminal: pick a messenger with ↑↓ and Enter, and follow along
+  dsh gateway setup <slack|telegram|discord|local> [--channels <ids|*>] [--users <ids>] [--profile <name>] [--no-verify] [--no-restart]
   dsh gateway remove <slack|telegram|discord|local> [--profile <name>] [--no-restart]
   dsh gateway start | stop | restart
   dsh gateway status [--json] [--profile <name>]
   dsh gateway manifest slack
 
-  setup       saves the platform's tokens to ~/.dsh/.env, checks them with the platform, adds the platform
-              to the profile and restarts the gateway. A token is read from the environment variable of
-              its name (SLACK_BOT_TOKEN and SLACK_APP_TOKEN, TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN), or
-              asked for at a terminal — never taken as an argument. One the DeepSeek Harness app already
+  setup       at a terminal, a guided setup: the browser opens where each token is made, each token is
+              checked as it is pasted, and the gateway restarts at the end. Without a terminal (an
+              agent, a script) it saves the platform's tokens to ~/.dsh/.env, checks them, adds the
+              platform to the profile and restarts the gateway. A token is read from the environment
+              variable of its name (SLACK_BOT_TOKEN and SLACK_APP_TOKEN, TELEGRAM_BOT_TOKEN,
+              DISCORD_BOT_TOKEN) — never taken as an argument. One the DeepSeek Harness app already
               holds (~/.dsh/.credentials.yaml) is used as it is; change that one in the app.
-  --channels  channel ids to answer in, added to the list. The list is shared by the platforms, so *
-              (every channel the bot is in) opens every platform the profile serves: that needs --yes.
+              One messenger at a time, beside the terminal: a new one replaces the one there (its
+              tokens stay where they are).
+  --channels  channel ids to answer in, added to the list; * for every channel the bot is in
   --users     user ids that may talk to it, added to allowedUsers; with none listed anyone who can
-              reach the bot may. The list is shared by the platforms: once it has ids, add yours on
-              each platform.
+              reach the bot may
   --no-verify do not ask the platform whether the tokens work
   remove      takes the platform out of the profile; its tokens stay where they are
   stop        stops the gateway and its health probe, until the next login or start
@@ -686,12 +711,17 @@ const describeChannels = (ids: string[]) => (ids.includes('*') ? '* (every chann
 const describeUsers = (ids: string[]) => (ids.length === 0 ? 'anyone who can reach the bot' : ids.join(', '))
 
 async function setup(io: GatewayIO, p: Paths, o: Options): Promise<number> {
-  const platform = o.positional[0]
-  if (!isPlatform(platform)) { io.err(`setup: which platform? slack, telegram, discord or local\n\n${GATEWAY_USAGE}`); return 2 }
+  const named = o.positional[0]
+  if (named !== undefined && !isPlatform(named)) { io.err(`setup: ${named} is not one of slack, telegram, discord or local\n\n${GATEWAY_USAGE}`); return 2 }
+  const platform = named as Platform | undefined
+  // At a terminal it is the guided setup: a menu, the browser, each token checked as it is pasted.
+  if (io.choose !== undefined && io.ask !== undefined) return wizard(io, p, o, platform)
+  // Without one — an agent, a script — every answer comes from the environment and the flags, and nothing is asked.
+  if (platform === undefined) { io.err(`setup: which platform? slack, telegram, discord or local — or run it at a terminal for the guided setup\n\n${GATEWAY_USAGE}`); return 2 }
   const spec = PLATFORMS[platform]
-  let channels = o.channels === undefined ? undefined : parseIds(o.channels, true)
+  const channels = o.channels === undefined ? undefined : parseIds(o.channels, true)
   if (channels === null) { io.err(`--channels: ids are letters, digits, - and _, separated by spaces or commas, or * alone (got: ${o.channels})`); return 2 }
-  let users = o.users === undefined ? undefined : parseIds(o.users, false)
+  const users = o.users === undefined ? undefined : parseIds(o.users, false)
   if (users === null) { io.err(`--users: ids are letters, digits, - and _, separated by spaces or commas (got: ${o.users})`); return 2 }
   const profile = loadProfile(io, p, o.profile)
   if ('error' in profile) { io.err(profile.error); return profile.code }
@@ -702,7 +732,7 @@ async function setup(io: GatewayIO, p: Paths, o: Options): Promise<number> {
   // Tokens: every answer is gathered and checked before anything is written.
   const envText = readText(p.env)
   const store = storeEntries(readText(p.store))
-  const tokens: Array<{ key: string; value: string; from: string }> = []
+  const tokens: TokenAnswer[] = []
   const missing: string[] = []
   for (const t of spec.tokens) {
     const given = io.env[t.key]?.trim()
@@ -717,32 +747,16 @@ async function setup(io: GatewayIO, p: Paths, o: Options): Promise<number> {
       io.out(`${t.key}: held by the DeepSeek Harness app${given ? ' (the same token)' : ''}, used as it is`)
       continue
     }
-    let value: string | undefined
-    let from = 'from the environment'
-    if (given) {
-      // At a terminal, a token that happens to be exported in the shell does not silently replace the saved one.
-      const saved = envValue(envText, t.key)
-      if (io.ask !== undefined && saved !== undefined && saved !== given) {
-        const answer = await io.ask(`${t.key} in your environment differs from the saved one. Use the environment's? [y/N]`, false)
-        if (answer === null) { io.err('cancelled; nothing was written'); return 130 }
-        if (/^y(es)?$/i.test(answer.trim())) value = given
-      } else value = given
-    } else if (io.ask !== undefined) {
-      const saved = envValue(envText, t.key) !== undefined
-      const answer = await io.ask(saved ? `${t.key} is set — paste a new ${t.label}, or Enter to keep it:` : `${t.label} (${t.expect}):`, true)
-      if (answer === null) { io.err('cancelled; nothing was written'); return 130 }
-      if (answer.trim() !== '') { value = answer.trim(); from = 'entered' }
-    }
-    if (value === undefined) {
+    if (!given) {
       if (envValue(envText, t.key) !== undefined) io.out(`${t.key}: already set, kept`)
       else missing.push(t.key)
       continue
     }
-    if (!t.shape.test(value)) { io.err(`${t.key} does not look like a ${t.label} (expected ${t.expect}); nothing was written`); return 2 }
-    tokens.push({ key: t.key, value, from })
+    if (!t.shape.test(given)) { io.err(`${t.key} does not look like a ${t.label} (expected ${t.expect}); nothing was written`); return 2 }
+    tokens.push({ key: t.key, value: given, from: 'from the environment' })
   }
   if (missing.length > 0) {
-    io.err(`missing: ${missing.join(', ')}. Give ${missing.length > 1 ? 'them as environment variables' : 'it as an environment variable'} — ${missing.map((k) => `${k}=…`).join(' ')} dsh gateway setup ${platform}${io.ask === undefined ? ' — or run this at a terminal' : ''}. Nothing was written.`)
+    io.err(`missing: ${missing.join(', ')}. Give ${missing.length > 1 ? 'them as environment variables' : 'it as an environment variable'} — ${missing.map((k) => `${k}=…`).join(' ')} dsh gateway setup ${platform} — or run dsh gateway setup at a terminal. Nothing was written.`)
     return 2
   }
   if (o.verify) {
@@ -764,63 +778,59 @@ async function setup(io: GatewayIO, p: Paths, o: Options): Promise<number> {
     }
   }
 
-  // Channels and people, asked only where an answer is needed and a terminal can give it.
-  const narrowed = !lists.targetChannels.includes('*')
-  if (channels === undefined && narrowed && platform !== 'local' && io.ask !== undefined) {
-    const answer = await io.ask(`The bot answers only in ${lists.targetChannels.join(', ')}. ${platform} channel ids to add (* for every channel, Enter to leave the list):`, false)
-    if (answer === null) { io.err('cancelled; nothing was written'); return 130 }
-    if (answer.trim() !== '') {
-      channels = parseIds(answer, true)
-      if (channels === null) { io.err(`not channel ids: ${answer}; nothing was written`); return 2 }
-    }
-  }
-  if (users === undefined && platform !== 'local' && io.ask !== undefined) {
-    const question = lists.allowedUsers.length === 0
-      ? `Who may talk to it? ${platform} user ids, ${spec.whoami} (Enter: anyone who can reach the bot):`
-      : `Only ${lists.allowedUsers.join(', ')} may talk to it. Your ${platform} user id to add — ${spec.whoami}:`
-    const answer = await io.ask(question, false)
-    if (answer === null) { io.err('cancelled; nothing was written'); return 130 }
-    if (answer.trim() !== '') {
-      users = parseIds(answer, false)
-      if (users === null) { io.err(`not user ids: ${answer}; nothing was written`); return 2 }
-    }
-  }
-  // The channel list is shared: * for this platform is * for every platform the profile serves.
-  const others = messengersOf(lists.platform).filter((name) => name !== platform)
-  if (channels?.includes('*') && narrowed && others.length > 0 && !o.yes) {
-    const warning = `* answers in every channel on ${others.join(', ')} too, since the platforms share the list`
-    if (io.ask === undefined) { io.err(`${warning}. Repeat with --yes to mean it; nothing was written.`); return 2 }
-    const answer = await io.ask(`${warning}. Go on? [y/N]`, false)
-    if (answer === null) { io.err('cancelled; nothing was written'); return 130 }
-    if (!/^y(es)?$/i.test(answer.trim())) { io.err('nothing was written'); return 2 }
-  }
-
-  const next: DeepbotLists = {
-    platform: lists.platform.includes(platform) ? lists.platform : [...lists.platform, platform],
-    targetChannels: mergeIds(lists.targetChannels, platform === 'local' ? [...(channels ?? []), 'tui'] : (channels ?? [])),
-    allowedUsers: users === undefined ? lists.allowedUsers : mergeIds(lists.allowedUsers, users),
-  }
-  const text = writeProfile(profile.text, next)
-  if (typeof text !== 'string') { io.err(`${tilde(io, profile.path)}: ${text.error}. Nothing was written.`); return 1 }
-
-  let env = envText
-  for (const t of tokens) env = envSet(env, t.key, t.value)
-  if (env !== envText) writeFile(p.env, env, 0o600, true)
+  const written = commitPlatform(p, profile, platform, tokens, channels, users)
+  if (failed(written)) { io.err(`${tilde(io, profile.path)}: ${written.error}. Nothing was written.`); return 1 }
+  const { next } = written
   for (const t of tokens) io.out(`${t.key}: saved to ${tilde(io, p.env)} (${t.from})`)
-  if (text !== profile.text) writeFile(profile.path, text, 0o644)
-
   io.out(`profile ${profile.name}: platform ${next.platform.join(', ')}`)
   io.out(`  channels: ${describeChannels(next.targetChannels)}`)
   io.out(`  people:   ${describeUsers(next.allowedUsers)}`)
-  if (platform !== 'local' && channels === undefined && narrowed) io.out(`  note: it answers only in the channels listed; add this platform's with --channels`)
+  if (written.replaced.length > 0) io.out(`  note: ${platform} replaces ${written.replaced.join(', ')} — one messenger at a time; its tokens stay where they are`)
+  if (written.channelsReset) io.out(`  note: the channel list was ${written.replaced.join(', ')}'s; it now answers in every ${platform} channel it is in (--channels narrows it)`)
+  else if (platform !== 'local' && channels === undefined && !next.targetChannels.includes('*')) io.out(`  note: it answers only in the channels listed; add this platform's with --channels`)
   if (platform !== 'local' && users === undefined) {
     io.out(next.allowedUsers.length === 0
       ? `  note: anyone who can message the bot on ${platform} can run it; --users limits who (${spec.whoami})`
       : `  note: no one on ${platform} is answered until their id is in allowedUsers: --users (${spec.whoami})`)
   }
 
-  if (env === envText && text === profile.text) { io.out('nothing changed'); return 0 }
+  if (!written.changed) { io.out('nothing changed'); return 0 }
   return applyChange(io, p, o, next.platform)
+}
+
+interface TokenAnswer { key: string; value: string; from: string }
+
+/**
+ * Write a platform's tokens to ~/.dsh/.env and its lists to the deepbot row. Nothing is restarted here.
+ *
+ * One messenger at a time, beside the terminal: the composite transport sends every conversation the
+ * terminal does not claim to the first messenger, so a second one listed would never be answered. A new
+ * messenger replaces the one there; the old one's channel ids mean nothing to it, so a narrowed channel
+ * list starts again at every channel, and its people are replaced by the ones given (kept when none are,
+ * which answers nobody new: closed, not open).
+ */
+function commitPlatform(p: Paths, profile: Loaded, platform: Platform, tokens: TokenAnswer[], channels: string[] | undefined, users: string[] | undefined): { error: string } | { next: DeepbotLists; changed: boolean; replaced: string[]; channelsReset: boolean } {
+  const { lists } = profile
+  const replaced = platform === 'local' ? [] : messengersOf(lists.platform).filter((name) => name !== platform)
+  const kept = lists.platform.filter((name) => !replaced.includes(name))
+  const terminal = kept.includes('local') || platform === 'local'
+  const switched = replaced.length > 0
+  const channelsReset = switched && channels === undefined && !lists.targetChannels.includes('*')
+  const next: DeepbotLists = {
+    platform: kept.includes(platform) ? kept : [...kept, platform],
+    targetChannels: switched
+      ? (channels === undefined || channels.includes('*') ? ['*'] : [...channels, ...(terminal ? ['tui'] : [])])
+      : mergeIds(lists.targetChannels, platform === 'local' ? [...(channels ?? []), 'tui'] : (channels ?? [])),
+    allowedUsers: users === undefined ? lists.allowedUsers : switched ? users : mergeIds(lists.allowedUsers, users),
+  }
+  const text = writeProfile(profile.text, next)
+  if (typeof text !== 'string') return text
+  const envText = readText(p.env)
+  let env = envText
+  for (const t of tokens) env = envSet(env, t.key, t.value)
+  if (env !== envText) writeFile(p.env, env, 0o600, true)
+  if (text !== profile.text) writeFile(profile.path, text, 0o644)
+  return { next, changed: env !== envText || text !== profile.text, replaced, channelsReset }
 }
 
 async function applyChange(io: GatewayIO, p: Paths, o: Options, platforms: string[]): Promise<number> {
@@ -939,9 +949,402 @@ export async function gateway(argv: string[], io: GatewayIO): Promise<number> {
   return start(io, p, messengers)
 }
 
+// ── The guided setup ──────────────────────────────────────────────────────────
+//
+// `dsh gateway setup` at a terminal: a menu of the messengers with where each one stands, then each step
+// chosen with ↑↓ and Enter. The browser opens where a token is made, each token is checked as it is pasted
+// and asked again when it is wrong, and the gateway is restarted once at the end. Without a terminal the
+// same setup takes its answers from the environment and the flags (above).
+
+/** A line of a menu: what it says, and a dimmer note beside it. */
+export interface Choice { label: string; hint?: string }
+
+/** Ctrl+C anywhere in the guided setup: what was saved stays saved, and nothing more happens. */
+class Quit extends Error {}
+
+const ink = {
+  bold: (s: string) => `\x1b[1m${s}\x1b[22m`,
+  dim: (s: string) => `\x1b[2m${s}\x1b[22m`,
+  ok: (s: string) => `\x1b[32m✓\x1b[39m ${s}`,
+  warn: (s: string) => `\x1b[33m⚠\x1b[39m ${s}`,
+  fail: (s: string) => `\x1b[31m✗\x1b[39m ${s}`,
+}
+
+const TITLE: Record<Platform, string> = { slack: '💬 Slack', telegram: '✈️  Telegram', discord: '🎮 Discord', local: '🖥️  Terminal (dsh)' }
+const ORDER: Platform[] = ['slack', 'telegram', 'discord', 'local']
+const STATE_HINT = { 'set up': '✅ set up', 'tokens missing': '⚠️  tokens missing', 'not set up': '⬜ not set up' }
+/** View channels, send messages, attach files, read message history. */
+const DISCORD_PERMISSIONS = 1024 + 2048 + 32768 + 65536
+/** GATEWAY_MESSAGE_CONTENT and its _LIMITED form, in an application's flags. */
+const DISCORD_MESSAGE_CONTENT = (1 << 18) | (1 << 19)
+
+type Guided = { saved: boolean; tips: string[] }
+const BACK: Guided = { saved: false, tips: [] }
+
+const say = (io: GatewayIO, text: string) => io.out(`   ${text}`)
+const plain = (platform: Platform) => TITLE[platform].replace(/^\S+\s+/, '')
+
+async function pick(io: GatewayIO, title: string, options: Choice[], initial = 0): Promise<number | 'back'> {
+  const r = await io.choose(title, options, initial)
+  if (r === 'quit') throw new Quit()
+  return r
+}
+
+async function line(io: GatewayIO, question: string, secret = false): Promise<string> {
+  const r = await io.ask(question, secret)
+  if (r === null) throw new Quit()
+  return r.trim()
+}
+
+function heading(io: GatewayIO, platform: Platform, step: string): void {
+  io.out('')
+  io.out(`${ink.bold(`◆ ${TITLE[platform]}`)}  ${ink.dim(step)}`)
+}
+
+/** Open a link, or say where it is when no browser could be opened. */
+function browse(io: GatewayIO, url: string, opened: string): void {
+  if (io.openUrl?.(url)) say(io, ink.ok(opened))
+  else { say(io, ink.warn('no browser could be opened — open this link:')); say(io, url) }
+}
+
+function tokenSpec(platform: Platform, key: string): TokenSpec {
+  return PLATFORMS[platform].tokens.find((t) => t.key === key)
+}
+
+/**
+ * A token, asked until one works: its shape, then the platform. Three wrong ones go back to the menu, and so
+ * does Enter alone. A platform that cannot be reached is not a wrong token: try again, or save it unchecked.
+ */
+async function askToken<T extends { ok: true; who: string }>(io: GatewayIO, t: TokenSpec, check: (value: string) => Promise<T | { ok: false; reason: string; unreachable?: boolean }>): Promise<{ value: string; result: T | null } | null> {
+  for (let wrong = 0; wrong < 3;) {
+    const value = await line(io, `   🔑 ${t.label} (${t.expect}):`, true)
+    if (value === '') return null
+    if (!t.shape.test(value)) { say(io, ink.fail(`that is not a ${t.label} (${t.expect}) — paste it again, or Enter to go back`)); wrong++; continue }
+    const r = await check(value)
+    if (r.ok === true) { say(io, ink.ok(r.who)); return { value, result: r } }
+    if (r.unreachable) {
+      say(io, ink.warn(r.reason))
+      const c = await pick(io, '   It could not be checked:', [{ label: '🔁 Try again' }, { label: '💾 Save it unchecked' }])
+      if (c === 'back') return null
+      if (c === 1) return { value, result: null }
+      continue
+    }
+    say(io, ink.fail(`${r.reason} — paste it again, or Enter to go back`))
+    wrong++
+  }
+  say(io, ink.warn('three tokens refused — back to the menu'))
+  return null
+}
+
+function stateOf(p: Paths, profile: Loaded, platform: Platform): keyof typeof STATE_HINT {
+  if (!profile.lists.platform.includes(platform)) return 'not set up'
+  const held = storeRefs(readText(p.store))
+  const envText = readText(p.env)
+  return tokenKeys(platform).every((key) => whereIs(key, held, envText) !== null) ? 'set up' : 'tokens missing'
+}
+
+/** Who may talk to it there: the ids (none: anyone), or 'back'. */
+async function whoMayTalk(io: GatewayIO, profile: Loaded, platform: Platform, owner?: { id: string; username: string } | null): Promise<string[] | undefined | 'back'> {
+  // On a switch the people listed were the old messenger's: their ids mean nothing here, so start afresh.
+  const listed = messengersBesides(profile, platform).length > 0 ? [] : profile.lists.allowedUsers
+  const askIds = async (question: string): Promise<string[] | null> => {
+    for (;;) {
+      const answer = await line(io, question)
+      if (answer === '') return null
+      const ids = parseIds(answer, false)
+      if (ids !== null) return ids
+      say(io, ink.fail('ids are letters, digits, - and _, with spaces between them'))
+    }
+  }
+  if (listed.length > 0) say(io, ink.dim(`Only the ${listed.length} people listed may talk to the bot — add yours here.`))
+  for (;;) {
+    const options: Array<Choice & { kind: 'me' | 'anyone' | 'some' }> = []
+    if (platform !== 'slack') options.push({ kind: 'me', label: '🙋 Only me', hint: owner ? `@${owner.username}` : 'recommended' })
+    if (listed.length === 0) options.push({ kind: 'anyone', label: platform === 'slack' ? '👥 Everyone in the workspace' : '👥 Anyone who finds the bot', hint: platform === 'slack' ? undefined : `⚠️  anyone on ${plain(platform)} could run it` })
+    options.push({ kind: 'some', label: '✍️  Certain people', hint: 'their user ids' })
+    const c = await pick(io, '   Who may talk to it?', options)
+    if (c === 'back') return 'back'
+    const kind = options[c].kind
+    // An empty list, not 'leave it': on a switch the old messenger's people are replaced by it.
+    if (kind === 'anyone') return []
+    if (kind === 'me' && owner) return [owner.id]
+    say(io, ink.dim(`${PLATFORMS[platform].whoami}`))
+    const ids = await askIds(kind === 'me' ? '   🙋 Your user id:' : '   ✍️  User ids, spaces between:')
+    if (ids !== null) return ids
+  }
+}
+
+/** The messengers a profile serves other than this one: the one a switch to it would replace. */
+const messengersBesides = (profile: Loaded, platform: Platform) => (platform === 'local' ? [] : messengersOf(profile.lists.platform).filter((name) => name !== platform))
+
+function save(io: GatewayIO, p: Paths, profile: Loaded, platform: Platform, tokens: TokenAnswer[], users: string[] | undefined, tips: string[]): Guided {
+  const written = commitPlatform(p, profile, platform, tokens, undefined, users)
+  if (failed(written)) { say(io, ink.fail(`${tilde(io, profile.path)}: ${written.error} — nothing was written; edit the deepbot row by hand`)); return BACK }
+  say(io, ink.ok(`${plain(platform)} saved${tokens.length > 0 ? ` — its tokens in ${tilde(io, p.env)}` : ''}`))
+  for (const old of written.replaced) say(io, ink.ok(`${plain(old as Platform)} switched off — its tokens stay where they are`))
+  if (users === undefined && written.next.allowedUsers.length > 0 && platform !== 'local') say(io, ink.warn(`no one on ${plain(platform)} is answered until their id is listed`))
+  return { saved: written.changed, tips }
+}
+
+function removeGuided(io: GatewayIO, profile: Loaded, platform: Platform): Guided {
+  const rest = profile.lists.platform.filter((name) => name !== platform)
+  if (rest.length === 0) { say(io, ink.fail('it is the only platform the bot has — set up another first')); return BACK }
+  const text = writeProfile(profile.text, { platform: rest })
+  if (typeof text !== 'string') { say(io, ink.fail(`${text.error} — nothing was written`)); return BACK }
+  writeFile(profile.path, text, 0o644)
+  say(io, ink.ok(`${plain(platform)} removed — its tokens stay where they are`))
+  return { saved: true, tips: [] }
+}
+
+async function guideSlack(io: GatewayIO, p: Paths, profile: Loaded): Promise<Guided> {
+  const store = storeEntries(readText(p.store))
+  const tokens: TokenAnswer[] = []
+  let name = 'deepseek-bot'
+  let botApp: string | undefined
+  heading(io, 'slack', '1/3  create the app')
+  const made = await pick(io, '   The Slack app:', [{ label: '🌐 Create it in the browser', hint: 'everything filled in' }, { label: '⏭  I already have one' }])
+  if (made === 'back') return BACK
+  if (made === 0) browse(io, `https://api.slack.com/apps?new_app=1&manifest_json=${encodeURIComponent(JSON.stringify(slackManifest()))}`, 'opened — pick your workspace, then Next → Create')
+  heading(io, 'slack', '2/3  install it')
+  if (store.has('SLACK_BOT_TOKEN')) say(io, ink.ok('the bot token is in the DeepSeek Harness app — used as it is'))
+  else {
+    say(io, ink.dim('Install App → Install to Workspace → Allow, then copy the Bot User OAuth Token'))
+    const bot = await askToken(io, tokenSpec('slack', 'SLACK_BOT_TOKEN'), (v) => verifyToken(io.fetch, 'SLACK_BOT_TOKEN', v))
+    if (bot === null) return BACK
+    tokens.push({ key: 'SLACK_BOT_TOKEN', value: bot.value, from: 'entered' })
+    name = bot.result?.name ?? name
+    botApp = bot.result?.app
+  }
+  heading(io, 'slack', '3/3  let it connect')
+  if (store.has('SLACK_APP_TOKEN')) say(io, ink.ok('the app-level token is in the DeepSeek Harness app — used as it is'))
+  else {
+    say(io, ink.dim('Basic Information → App-Level Tokens → Generate Token and Scopes → add connections:write → Generate'))
+    const app = await askToken(io, tokenSpec('slack', 'SLACK_APP_TOKEN'), async (v) => {
+      const r = await verifyToken(io.fetch, 'SLACK_APP_TOKEN', v)
+      const id = appOfAppToken(v)
+      if (r.ok === true && botApp !== undefined && id !== undefined && id !== botApp) return { ok: false as const, reason: `this token is from Slack app ${id} and the bot token from ${botApp}: both must come from one app` }
+      return r
+    })
+    if (app === null) return BACK
+    tokens.push({ key: 'SLACK_APP_TOKEN', value: app.value, from: 'entered' })
+  }
+  const users = await whoMayTalk(io, profile, 'slack')
+  if (users === 'back') return BACK
+  return save(io, p, profile, 'slack', tokens, users, [`💬 In Slack: /invite @${name} into a channel and mention it — or message it directly`])
+}
+
+async function guideTelegram(io: GatewayIO, p: Paths, profile: Loaded): Promise<Guided> {
+  const store = storeEntries(readText(p.store))
+  const tokens: TokenAnswer[] = []
+  let name = 'your bot'
+  heading(io, 'telegram', '1/2  create the bot')
+  if (store.has('TELEGRAM_BOT_TOKEN')) say(io, ink.ok('the bot token is in the DeepSeek Harness app — used as it is'))
+  else {
+    say(io, ink.dim('In Telegram: @BotFather → /newbot → pick a name, and it replies with the token'))
+    const c = await pick(io, '   @BotFather:', [{ label: '🌐 Open @BotFather' }, { label: '⏭  I have the token' }])
+    if (c === 'back') return BACK
+    if (c === 0) browse(io, 'https://t.me/BotFather', 'opened @BotFather')
+    const bot = await askToken(io, tokenSpec('telegram', 'TELEGRAM_BOT_TOKEN'), (v) => verifyToken(io.fetch, 'TELEGRAM_BOT_TOKEN', v))
+    if (bot === null) return BACK
+    tokens.push({ key: 'TELEGRAM_BOT_TOKEN', value: bot.value, from: 'entered' })
+    if (bot.result?.name) name = `@${bot.result.name}`
+  }
+  heading(io, 'telegram', '2/2  who may talk to it')
+  const users = await whoMayTalk(io, profile, 'telegram')
+  if (users === 'back') return BACK
+  return save(io, p, profile, 'telegram', tokens, users, [`✈️  In Telegram: message ${name}`])
+}
+
+async function guideDiscord(io: GatewayIO, p: Paths, profile: Loaded): Promise<Guided> {
+  const store = storeEntries(readText(p.store))
+  const tokens: TokenAnswer[] = []
+  let token = store.get('DISCORD_BOT_TOKEN') ?? ''
+  let app: Extract<DiscordApp, { ok: true }> | null = null
+  heading(io, 'discord', '1/3  create the bot')
+  if (store.has('DISCORD_BOT_TOKEN')) {
+    say(io, ink.ok('the bot token is in the DeepSeek Harness app — used as it is'))
+    const found = await discordApp(io.fetch, token)
+    if (found.ok === true) app = found
+  } else {
+    say(io, ink.dim('New Application → Bot → Reset Token and copy it; on the same page turn on Message Content Intent'))
+    const c = await pick(io, '   The Discord app:', [{ label: '🌐 Open the Developer Portal' }, { label: '⏭  I have the token' }])
+    if (c === 'back') return BACK
+    if (c === 0) browse(io, 'https://discord.com/developers/applications', 'opened the Developer Portal')
+    const bot = await askToken(io, tokenSpec('discord', 'DISCORD_BOT_TOKEN'), (v) => discordApp(io.fetch, v))
+    if (bot === null) return BACK
+    token = bot.value
+    tokens.push({ key: 'DISCORD_BOT_TOKEN', value: bot.value, from: 'entered' })
+    app = bot.result
+  }
+  // Without the Message Content intent Discord hands the bot every message with its text taken out.
+  while (app !== null && (app.flags & DISCORD_MESSAGE_CONTENT) === 0) {
+    say(io, ink.warn('Message Content Intent is off — Discord would hand the bot every message with its text removed'))
+    say(io, ink.dim(`turn it on: https://discord.com/developers/applications/${app.id}/bot`))
+    const c = await pick(io, '   Then:', [{ label: '🔁 It is on — check again' }, { label: '⏭  Go on without it' }])
+    if (c !== 0) break
+    const again = await discordApp(io.fetch, token)
+    if (again.ok === true) app = again
+  }
+  heading(io, 'discord', '2/3  invite it to a server')
+  if (app === null) say(io, ink.warn('the application could not be read, so there is no invite link — make one under OAuth2 → URL Generator'))
+  else {
+    const url = `https://discord.com/oauth2/authorize?client_id=${app.id}&scope=bot&permissions=${DISCORD_PERMISSIONS}`
+    const c = await pick(io, '   📨 The invite link:', [{ label: '🌐 Open it', hint: 'pick a server, then Authorize' }, { label: '⏭  Later' }])
+    if (c === 0) browse(io, url, 'opened — pick a server, then Authorize')
+    else say(io, url)
+  }
+  heading(io, 'discord', '3/3  who may talk to it')
+  const users = await whoMayTalk(io, profile, 'discord', app?.owner)
+  if (users === 'back') return BACK
+  return save(io, p, profile, 'discord', tokens, users, [`🎮 In Discord: mention @${app?.name ?? 'the bot'} in a channel it can see, or message it`])
+}
+
+async function guide(io: GatewayIO, p: Paths, profile: Loaded, platform: Platform): Promise<Guided> {
+  if (platform === 'local') {
+    if (!profile.lists.platform.includes('local')) return save(io, p, profile, 'local', [], undefined, ['🖥️  In a terminal: dsh'])
+    const c = await pick(io, '   🖥️  The terminal (dsh) is on:', [{ label: '✅ Keep it on' }, { label: '🗑️  Turn it off' }])
+    return c === 1 ? removeGuided(io, profile, 'local') : BACK
+  }
+  // One messenger at a time: another one there is replaced, once the person says so.
+  const others = messengersBesides(profile, platform)
+  if (others.length > 0) {
+    const from = others.map((name) => plain(name as Platform)).join(', ')
+    const c = await pick(io, `   The bot is on ${from}. One messenger at a time:`, [{ label: `🔀 Switch to ${plain(platform)}`, hint: `${from} stops answering; its tokens stay` }, { label: '↩️  Back' }])
+    if (c !== 0) return BACK
+  }
+  if (stateOf(p, profile, platform) === 'set up') {
+    const c = await pick(io, `   ${plain(platform)} is set up:`, [{ label: '✅ Keep it' }, { label: '🔁 Set it up again' }, { label: '🗑️  Remove it from the bot', hint: 'its tokens stay' }])
+    if (c === 'back' || c === 0) return BACK
+    if (c === 2) return removeGuided(io, profile, platform)
+  }
+  if (platform === 'slack') return guideSlack(io, p, profile)
+  if (platform === 'telegram') return guideTelegram(io, p, profile)
+  return guideDiscord(io, p, profile)
+}
+
+async function wizard(io: GatewayIO, p: Paths, o: Options, only: Platform | undefined): Promise<number> {
+  try {
+    return await guided(io, p, o, only)
+  } catch (e) {
+    if (!(e instanceof Quit)) throw e
+    io.out('')
+    io.out(ink.dim('quit — what was saved stays saved'))
+    return 130
+  }
+}
+
+async function guided(io: GatewayIO, p: Paths, o: Options, only: Platform | undefined): Promise<number> {
+  io.out('')
+  io.out(ink.bold('🐋 deepseek-bot · messenger setup'))
+  io.out(ink.dim('   ↑↓ move · Enter choose · Esc back · Ctrl+C quit'))
+  const gateway = service(io, GATEWAY_LABEL)
+  const health = readHealth(p)
+  say(io, gateway.loaded && gateway.pid !== null ? ink.ok(`gateway running (pid ${gateway.pid})${health?.connected === true ? ' · connected' : ''}`)
+    : existsSync(p.plist) ? ink.warn('gateway installed, not running') : ink.warn('gateway service not installed — install.sh sets it up'))
+  let saved = false
+  const tips: string[] = []
+  for (let first = true; ; first = false) {
+    const profile = loadProfile(io, p, o.profile)
+    if ('error' in profile) { io.err(profile.error); return profile.code }
+    let platform: Platform
+    if (only !== undefined) {
+      if (!first) break
+      platform = only
+    } else {
+      const rows: Choice[] = ORDER.map((name) => ({
+        label: TITLE[name],
+        hint: name === 'local' ? (profile.lists.platform.includes('local') ? '✅ on' : '⬜ off') : STATE_HINT[stateOf(p, profile, name)],
+      }))
+      rows.push({ label: '✔  Done' })
+      // Nothing set up yet: start on the first messenger. Otherwise on Done, so Enter leaves.
+      const anySet = ORDER.some((name) => name !== 'local' && stateOf(p, profile, name) === 'set up')
+      io.out('')
+      const r = await pick(io, ink.bold('◆ Which messenger?'), rows, saved || anySet ? rows.length - 1 : 0)
+      if (r === 'back' || r === rows.length - 1) break
+      platform = ORDER[r]
+    }
+    const outcome = await guide(io, p, profile, platform)
+    if (outcome.saved) { saved = true; tips.push(...outcome.tips) }
+  }
+  if (!saved) { say(io, ink.dim('nothing changed')); return 0 }
+  return applyGuided(io, p, o, tips)
+}
+
+async function applyGuided(io: GatewayIO, p: Paths, o: Options, tips: string[]): Promise<number> {
+  const profile = loadProfile(io, p, o.profile)
+  const messengers = 'error' in profile ? 1 : messengersOf(profile.lists.platform).length
+  io.out('')
+  io.out(ink.bold('◆ Apply'))
+  let code = 0
+  if (!existsSync(p.plist)) {
+    // Saved all the same: it is read when the service is installed and starts.
+    say(io, ink.warn('the gateway service is not installed: run install.sh, then dsh gateway start'))
+  } else {
+    const loaded = service(io, GATEWAY_LABEL).loaded
+    const r = await pick(io, '   The gateway reads this when it starts:', loaded
+      ? [{ label: '🔄 Restart it now' }, { label: '⏭  Later', hint: 'dsh gateway restart' }]
+      : [{ label: '▶️  Start it now' }, { label: '⏭  Later', hint: 'dsh gateway start' }])
+    if (r === 0) code = loaded ? await restartGateway(io, p, messengers) : await start(io, p, messengers)
+  }
+  if (code === 0) {
+    io.out('')
+    io.out(`🎉 ${ink.bold('Done.')}`)
+    for (const tip of tips) say(io, tip)
+  }
+  return code
+}
+
 // ── The process's own IO ──────────────────────────────────────────────────────
 
-/** A line read from the terminal in raw mode, not echoed when secret. Ctrl+C or Ctrl+D cancel it. */
+/**
+ * A menu in the terminal: ↑↓ (or j/k) move, Enter or Space chooses, a digit chooses that line, Esc or ←
+ * goes back, Ctrl+C quits. When it is done the menu is cleared and one line says what was chosen.
+ */
+export function terminalChoose(input: NodeJS.ReadStream, output: NodeJS.WriteStream) {
+  return (title: string, options: Choice[], initial: number) => new Promise<number | 'back' | 'quit'>((done) => {
+    let at = Math.min(Math.max(initial, 0), options.length - 1)
+    let drawn = 0
+    // The hints in one column, whatever the labels' widths (an emoji takes two cells).
+    const column = Math.max(...options.map((o) => stringWidth(o.label)))
+    const draw = () => {
+      if (drawn > 0) output.write(`\x1b[${drawn}F`)
+      const rows = [title, ...options.map((o, i) => {
+        const padded = o.hint ? o.label + ' '.repeat(column - stringWidth(o.label)) : o.label
+        const label = i === at ? `\x1b[36m❯\x1b[39m \x1b[1m${padded}\x1b[22m` : `  ${padded}`
+        return `   ${label}${o.hint ? `  \x1b[2m${o.hint}\x1b[22m` : ''}`
+      })]
+      output.write(`${rows.map((row) => `\x1b[2K${row}`).join('\n')}\n`)
+      drawn = rows.length
+    }
+    const finish = (value: number | 'back' | 'quit') => {
+      input.off('data', onData)
+      input.setRawMode(false)
+      input.pause()
+      output.write(`\x1b[${drawn}F\x1b[J`)
+      if (typeof value === 'number') output.write(`${title} \x1b[2m›\x1b[22m ${options[value].label}\n`)
+      output.write('\x1b[?25h')
+      done(value)
+    }
+    const onData = (chunk: Buffer | string) => {
+      const key = String(chunk)
+      if (key === '\x1b[A' || key === '\x1bOA' || key === 'k') at = (at + options.length - 1) % options.length
+      else if (key === '\x1b[B' || key === '\x1bOB' || key === 'j') at = (at + 1) % options.length
+      else if (key === '\r' || key === '\n' || key === ' ') return finish(at)
+      else if (/^[1-9]$/.test(key) && Number(key) <= options.length) return finish(Number(key) - 1)
+      else if (key === '\x1b' || key === '\x1b[D' || key === '\x1bOD' || key === 'q') return finish('back')
+      else if (key === '\x03') return finish('quit')
+      else return
+      draw()
+    }
+    output.write('\x1b[?25l')
+    draw()
+    input.setRawMode(true)
+    input.resume()
+    input.on('data', onData)
+  })
+}
+
+/** A line read from the terminal in raw mode; a secret shows a * per character. Ctrl+C or Ctrl+D cancel it. */
 export function terminalAsk(input: NodeJS.ReadStream, output: NodeJS.WriteStream) {
   return (question: string, secret: boolean) => new Promise<string | null>((done) => {
     output.write(`${question} `)
@@ -960,12 +1363,12 @@ export function terminalAsk(input: NodeJS.ReadStream, output: NodeJS.WriteStream
         if (ch === '\r' || ch === '\n') return finish(answer)
         if (ch === '\x03' || ch === '\x04') return finish(null)
         if (ch === '\x7f' || ch === '\b') {
-          if (answer !== '') { answer = answer.slice(0, -1); if (!secret) output.write('\b \b') }
+          if (answer !== '') { answer = answer.slice(0, -1); output.write('\b \b') }
           continue
         }
         if (ch < ' ') continue
         answer += ch
-        if (!secret) output.write(ch)
+        output.write(secret ? '*' : ch)
       }
     }
     input.setRawMode(true)
@@ -986,6 +1389,8 @@ export function processIO(): GatewayIO {
     },
     fetch: (url, init) => fetch(url, init),
     ask: tty ? terminalAsk(process.stdin, process.stdout) : undefined,
+    choose: tty ? terminalChoose(process.stdin, process.stdout) : undefined,
+    openUrl: (url) => process.platform === 'darwin' && spawnSync('/usr/bin/open', [url], { stdio: 'ignore' }).status === 0,
     out: (text) => { process.stdout.write(`${text}\n`) },
     err: (text) => { process.stderr.write(`${text}\n`) },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),

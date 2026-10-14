@@ -3075,6 +3075,12 @@ export function apply(ctx, config) {
     // No platform clears it for a terminal-only gateway, so it stayed for the life of the process.
     if (startupError !== null && health.lastError === startupError) { health.lastError = null; writeHealth() }
     startupError = null
+    // A gateway serving only the terminal is up once its socket is: no messenger is there to say connected,
+    // and the probe read the flag left false as down and restarted it every five minutes.
+    if (platforms.every((name) => name === 'local')) {
+      Object.assign(health, { connected: true, connectedAt: Date.now(), disconnectedAt: null })
+      writeHealth()
+    }
     await recover()
   }
 
