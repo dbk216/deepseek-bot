@@ -1224,6 +1224,10 @@ for (const remove of [false, true]) {
   await t.created[0]?.setup?.({ systemPrompt: { section: (s) => { tenantSections.push(s); return () => {} } } })
   const tenantIdentity = String(tenantSections.find((s) => s.name === 'deepbot:identity')?.text ?? '')
   check('tenant: its identity does not offer watches', tenantIdentity !== '' && !/watch/i.test(tenantIdentity), tenantIdentity.split('\n')[2])
+  // The control: the home's session is still offered them.
+  const homeSections = []
+  await t.created[1]?.setup?.({ systemPrompt: { section: (s) => { homeSections.push(s); return () => {} } } })
+  check('home: its identity still offers watches', /its watches/.test(String(homeSections.find((s) => s.name === 'deepbot:identity')?.text ?? '')))
   for (const dir of [home, tenants]) rmSync(dir, { recursive: true, force: true })
   t.done()
 }

@@ -137,9 +137,6 @@ for (const [path, body] of outsideFiles) {
 mkdirSync(join(homedir(), '.dsh', 'deepbot'), { recursive: true })
 const AGENTS_HOME = mkdtempSync(join(homedir(), '.dsh', 'deepbot', 'agents-home-test-'))
 
-// Stopped with ctrl+c or a kill, 'exit' does not run by itself: these leave through it, so what was made is removed.
-process.on('SIGINT', () => process.exit(130))
-process.on('SIGTERM', () => process.exit(143))
 process.on('exit', () => {
   rmSync(AGENTS_HOME, { recursive: true, force: true })
   // The index outlives the fresh home otherwise, one directory per run under ~/.dsh/recall.
@@ -176,6 +173,16 @@ const deadline = started + timeoutS * 1000
 function stop(signal: NodeJS.Signals = 'SIGTERM') {
   try { child.kill(signal) } catch { /* already gone */ }
 }
+
+// Stopped with ctrl+c or a kill: the gateway goes too (a kill reaches this process alone), the test home is
+// removed as at the end, and 'exit' — which a signal skips — removes the rest.
+function leave(code: number): never {
+  stop()
+  if (!keep && dumpFile === undefined) rmSync(TEST_HOME, { recursive: true, force: true })
+  process.exit(code)
+}
+process.on('SIGINT', () => leave(130))
+process.on('SIGTERM', () => leave(143))
 
 // Poll for the result file; the plugin writes it when the scenario completes.
 while (Date.now() < deadline) {

@@ -184,7 +184,7 @@ function boot({ state = {}, config = {} }: { state?: Record<string, unknown>; co
   rmSync(dir, { recursive: true, force: true })
   check('a broken scenario file exits non-zero', notJson.status !== 0 && nothing.status !== 0, `status ${notJson.status}, ${nothing.status}`)
   check('and makes no agent home before it has read the file', !notJson.leftHome && !nothing.leftHome)
-  check('and says it could not read the scenario', /could not read the scenario/.test(notJson.said) && /could not read the scenario/.test(nothing.said), notJson.said.trim().split('\n').slice(-1)[0]?.slice(0, 100))
+  check('and says it could not read the scenario', /could not read the scenario: /.test(notJson.said) && /could not read the scenario: /.test(nothing.said), notJson.said.trim().split('\n').slice(-1)[0]?.slice(0, 100))
 }
 
 // 10. A link inside the workspace that points outside it is not inside it.
