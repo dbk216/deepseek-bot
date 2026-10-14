@@ -219,6 +219,35 @@ for (const resolved of [false, true]) {
   rmSync(fakeHome, { recursive: true, force: true })
 }
 
+// Third review. A tenant's workspace sits inside the home (<home>/tenants/<t>), which the dsh-agent* glob
+// denies: its own commands could write their files and not read them. A DEEPBOT_DENY_READ entry inside the
+// workspace still holds. The workspace is matched in the case it has on disk, and a name with a quote in
+// it no longer breaks the .env rule's regex.
+{
+  const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'runner-tenant-')))
+  const env = { ...process.env, HOME: fakeHome }
+  const home = join(fakeHome, 'dsh-agent')
+  const tenant = join(home, 'tenants', 'acme')
+  mkdirSync(join(tenant, 'private'), { recursive: true })
+  writeFileSync(join(home, 'SOUL.md'), 'canary-home-5f6\n')
+  writeFileSync(join(tenant, 'note.md'), 'tenant-note-6a7\n')
+  writeFileSync(join(tenant, 'private', 'x'), 'canary-inner-7b8\n')
+  const inWs = (root, cmd, extraEnv = {}) => { try { return execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--bind', root, root, '--', ...cmd], { encoding: 'utf8', env: { ...env, ...extraEnv }, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}: ${String(e.stderr ?? '').slice(0, 80)}` } }
+  check('a tenant workspace inside the home reads its own files', inWs(tenant, ['/bin/cat', join(tenant, 'note.md')]).includes('tenant-note-6a7'), inWs(tenant, ['/bin/cat', join(tenant, 'note.md')]).slice(0, 100))
+  check('and still not the home around it', !inWs(tenant, ['/bin/cat', join(home, 'SOUL.md')]).includes('canary-home-5f6'))
+  check('a DEEPBOT_DENY_READ entry inside the workspace still holds', !inWs(tenant, ['/bin/cat', join(tenant, 'private', 'x')], { DEEPBOT_DENY_READ: join(tenant, 'private') }).includes('canary-inner-7b8'))
+  const upper = join(fakeHome, 'DSH-AGENT')
+  check('a workspace given in another case is still its own (the volume ignores case)', inWs(upper, ['/bin/cat', join(upper, 'SOUL.md')]).includes('canary-home-5f6'), inWs(upper, ['/bin/cat', join(upper, 'SOUL.md')]).slice(0, 100))
+  // A workspace that contains the harness home does not open it.
+  mkdirSync(join(fakeHome, '.dsh'), { recursive: true })
+  writeFileSync(join(fakeHome, '.dsh', 'agent-session-index.db'), 'canary-wide-9d0\n')
+  check('a workspace that contains the harness home does not open it', !inWs(fakeHome, ['/bin/cat', join(fakeHome, '.dsh', 'agent-session-index.db')]).includes('canary-wide-9d0'))
+  const quoted = join(fakeHome, 'ws "q"')
+  mkdirSync(quoted)
+  check('a workspace whose name has a quote in it still runs commands', inWs(quoted, ['/bin/echo', 'ran-8c9']).includes('ran-8c9'), inWs(quoted, ['/bin/echo', 'ran-8c9']).slice(0, 100))
+  rmSync(fakeHome, { recursive: true, force: true })
+}
+
 // A harness home that is itself a link (~/.dsh -> elsewhere). The deny on the link's name blocked reading
 // the link, so every path through it failed — the office skill's node, named through ~/.dsh, could not start.
 {
