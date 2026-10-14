@@ -93,6 +93,10 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **A session is attached to its workspace, and `permissionPreset` is applied.** Both calls sat after a
+  `throw`, inside the branch for an agent that did not come back, since the emptied `index.ts` was
+  restored (a0e847e): workspace-scoped features never saw the bot's sessions, and `permissionPreset`
+  was a setting that did nothing. The branch now closes after its `throw`.
 - **The persona reaches the model again**: `SOUL.md`, `USER.md` and `MEMORY.md` are sent by the
   adapter (the harness's loader reads only `AGENTS.md`), with the speaker named.
 - **One turn at a time per conversation**; a stop withdraws what is waiting, and is reported once.

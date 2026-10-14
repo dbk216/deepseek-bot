@@ -1902,6 +1902,7 @@ export function apply(ctx, config) {
       activeTurns.delete(sessionId)
       liveOrigins.delete(sessionId)
       throw new Error('deepbot: agents.create/resume did not return an Agent')
+    }
 
     // Post-attach steps, in the reference implementation's order.
     if (workspace?.attachSession && sessionId) {
@@ -1921,9 +1922,6 @@ export function apply(ctx, config) {
     // Register before the turn starts, so a message arriving a second later can
     // stop it. The timeout uses the same path: a timeout that only stops the
     // *waiting* leaves the agent running, writing to the session, and eventually
-        runningTurns.delete(turnKey)
-    }
-
     // delivering an answer nobody is waiting for any more.
       // The agent exists now, so cancellation can reach it — and the turn may have been
       // stopped while the agent was being created, which is a stop a human asked for.
