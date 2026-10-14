@@ -56,9 +56,13 @@ on an OpenAI-compatible endpoint (`https://apis.opengateway.ai/v1`), which it li
 **It lives where your team already talks.** Mention it in a Slack channel, a Discord server or a
 Telegram group, or message it directly. Nobody has to open another tool to ask it something.
 
-**It has a terminal too.** `deepbot-tui` opens the same agent fullscreen in a terminal, beside
+**It has a terminal too.** `dsh` opens the same agent fullscreen in a terminal, beside
 Slack or on its own: answers stream in, tool calls show their diffs and results, and approvals and
-questions are answered in place. See [the terminal](docs/how-it-works.md#the-terminal-deepbot-tui).
+questions are answered in place. See [the terminal](docs/how-it-works.md#the-terminal-dsh).
+
+<p align="center">
+  <img src="docs/demo.gif" width="720" alt="dsh: a question to deepseek-v4.1-flash-ultrafast in the terminal, answered in about a second">
+</p>
 
 **You can see it working.** The moment it takes a message the platform's own indicator shows:
 Slack's working status under the thread, "typing…" on Discord and Telegram. The answer is the only

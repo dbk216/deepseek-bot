@@ -7,6 +7,12 @@ the caveat about version numbers is at the bottom.
 
 ### Changed
 
+- **The terminal is `dsh`.** The command was `deepbot-tui`. It shares its name with the DeepSeek
+  Harness CLI, so given anything but its own flags (`--name`, `--socket`, `--tenant`, `--resume`,
+  `--help`) it runs that CLI (`DSH_BIN`, or the one inside the app) with them and exits with its status.
+  The banner reads DEEPSEEK BOT, and the header shows a workspace under the home directory as `~`. The
+  discovery and history paths under `$DSH_HOME` keep their `deepbot-tui` names. `docs/demo.gif` is a
+  recording of it.
 - **The suites, the tools and the runtime scripts are TypeScript.** The suites run as `.ts` under
   Node's type stripping (Node 22.18 or newer, no flag) and `pnpm run typecheck` checks them with
   `test/tsconfig.json`. The health probe, the watch runner and `tools/` are compiled into `dist/`;

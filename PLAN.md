@@ -32,7 +32,7 @@ is built before the thing it stands on. The detailed history of each milestone i
 | M5 Distribution | one-command install, profile template, CI |
 | M6 Transports | one core, Slack / Telegram / Discord, a fake transport for the core's tests, approvals over chat |
 | M7 Agent gaps | attachments and vision, read confinement, per-tenant policy, fetch policy, usage totals |
-| M8 Terminal | `deepbot-tui`: a local socket transport served beside Slack or alone, streaming, approval buttons, a turn's questions and plan reviews, the agent panel (subagents, shells), sessions to resume, a deep interview; recall indexed per workspace; first-turn approvals no longer fail closed; tool calls with their title, diff and result, thinking, tables, highlighted code and links; completion of commands and files, history search and history kept between runs |
+| M8 Terminal | `dsh` (was `deepbot-tui`): a local socket transport served beside Slack or alone, streaming, approval buttons, a turn's questions and plan reviews, the agent panel (subagents, shells), sessions to resume, a deep interview; recall indexed per workspace; first-turn approvals no longer fail closed; tool calls with their title, diff and result, thinking, tables, highlighted code and links; completion of commands and files, history search and history kept between runs |
 | Round 66 | persona restored to the prompt; the platform's own working indicator; one turn at a time per conversation; recall scoped to its channel; documents uploaded; watches and commands confined (credentials, session store, ssh-agent, the launcher and its logs out of the agent's home; no writes through links) |
 | Round 67 | one-line install; the home's `.env` refused; recall read only by the adapter, ranked by rare words and offered without a trigger word; failures in the bot's voice without host paths, a stop reported once; a restart tells the conversation its turn was lost; the probe alerts on failed scenarios; no agent socket of the user's reachable from the sandbox, hard links pinned by a test; uploads send the checked bytes; approval buttons and uploads on every platform; Markdown rendered on Telegram; review fixes — forged conversation blocks defused, approval buttons tied to their request, the .env gate by case and link, per-thread Slack status, separate alert limits, restart recovery race, one index per home, installer validation and kept service settings |
 
@@ -65,7 +65,7 @@ Decided against:
 - Slack's working status in a live workspace: no turn has run on this code there yet. Which method a
   workspace accepts is logged on each refusal ("working status: … refused").
 - Whether a Slack app has `files:write` for uploads; a refusal is logged and told to the conversation.
-- Which terminals support synchronized output, SGR mouse and OSC 52 for `deepbot-tui`; checked in
+- Which terminals support synchronized output, SGR mouse and OSC 52 for `dsh`; checked in
   tmux only. Without them it flickers or loses the mouse, and keeps working.
 - The terminal's thinking block: the model route used here streams no `reasoning-delta`, so it is
   pinned against fakes only. (Tool calls, their results and an edit's diff card are verified live.)

@@ -15,8 +15,9 @@ and what to call the other. The rules for changing the code are in [AGENTS.md](A
 - **transport** — the part that speaks one platform's API (Slack, Telegram, Discord) or serves the
   terminal over a local socket. The adapter talks to a transport only through `types/transport.ts`.
 - **platform** — Slack, Telegram, Discord or the terminal. Not "channel", which is a place inside one.
-- **terminal** — `deepbot-tui`, a fullscreen client that talks to the gateway over a local socket. It
+- **terminal** — `dsh`, a fullscreen client that talks to the gateway over a local socket. It
   is only the screen: the conversation, its session and its memory stay in the gateway.
+  `dsh` shares its name with the harness CLI: given anything but its own flags, it runs that CLI.
 
 ## Places on disk
 

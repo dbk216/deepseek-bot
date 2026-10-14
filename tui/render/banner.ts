@@ -1,8 +1,8 @@
 /**
- * The DeepSeek-Harness mark, in the logo's blue, sized to the terminal.
+ * The deepseek-bot mark, in the logo's blue, sized to the terminal.
  *
- * One line of block letters needs 128 columns, two lines need 70, and anything narrower gets a
- * one-line wordmark — a banner that wraps is worse than a small one.
+ * One line of block letters needs 93 columns. Two lines need 68, with BOT under the end of DEEPSEEK as
+ * in the README. Anything narrower gets a one-line wordmark — a banner that wraps is worse than a small one.
  */
 import { mix, palette, sgr, type ColorMode } from './style.js'
 import type { Line } from './text.js'
@@ -13,19 +13,19 @@ const GLYPHS: Record<string, string[]> = {
   P: ['██████╗ ', '██╔══██╗', '██████╔╝', '██╔═══╝ ', '██║     ', '╚═╝     '],
   S: ['███████╗', '██╔════╝', '███████╗', '╚════██║', '███████║', '╚══════╝'],
   K: ['██╗  ██╗', '██║ ██╔╝', '█████╔╝ ', '██╔═██╗ ', '██║  ██╗', '╚═╝  ╚═╝'],
-  H: ['██╗  ██╗', '██║  ██║', '███████║', '██╔══██║', '██║  ██║', '╚═╝  ╚═╝'],
-  A: [' █████╗ ', '██╔══██╗', '███████║', '██╔══██║', '██║  ██║', '╚═╝  ╚═╝'],
-  R: ['██████╗ ', '██╔══██╗', '██████╔╝', '██╔══██╗', '██║  ██║', '╚═╝  ╚═╝'],
-  N: ['███╗   ██╗', '████╗  ██║', '██╔██╗ ██║', '██║╚██╗██║', '██║ ╚████║', '╚═╝  ╚═══╝'],
-  '-': ['      ', '      ', '█████╗', '╚════╝', '      ', '      '],
+  B: ['██████╗ ', '██╔══██╗', '██████╔╝', '██╔══██╗', '██████╔╝', '╚═════╝ '],
+  O: [' ██████╗ ', '██╔═══██╗', '██║   ██║', '██║   ██║', '╚██████╔╝', ' ╚═════╝ '],
+  T: ['████████╗', '╚══██╔══╝', '   ██║   ', '   ██║   ', '   ██║   ', '   ╚═╝   '],
+  ' ': ['   ', '   ', '   ', '   ', '   ', '   '],
 }
 
 function word(text: string): string[] {
   return GLYPHS[text[0]].map((_, row) => [...text].map((c) => GLYPHS[c][row]).join(''))
 }
 
-const ONE = word('DEEPSEEK-HARNESS')
-const TWO = [...word('DEEPSEEK-'), ...word('HARNESS')]
+const ONE = word('DEEPSEEK BOT')
+const DEEPSEEK = word('DEEPSEEK'), BOT = word('BOT')
+const TWO = [...DEEPSEEK, ...BOT.map((row) => ' '.repeat([...DEEPSEEK[0]].length - [...BOT[0]].length + 4) + row)]
 const width = (rows: string[]) => Math.max(...rows.map((r) => [...r].length))
 
 export const BANNER_WIDTHS = { one: width(ONE), two: width(TWO) }
@@ -37,7 +37,7 @@ export function banner(columns: number, mode: ColorMode, indent = 2): Line[] {
       : null
   const pad = { text: ' '.repeat(indent), style: '', decor: true }
   if (rows === null) {
-    return [{ spans: [pad, { text: '◆ DeepSeek-Harness', style: sgr({ fg: palette.primary, bold: true }, mode) }], soft: false }]
+    return [{ spans: [pad, { text: '◆ deepseek-bot', style: sgr({ fg: palette.primary, bold: true }, mode) }], soft: false }]
   }
   return rows.map((row, i) => ({
     spans: [pad, { text: row, style: sgr({ fg: mix(palette.light, palette.deep, i / (rows.length - 1)) }, mode) }],

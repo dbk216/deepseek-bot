@@ -139,7 +139,7 @@ Define success criteria. Loop until verified.
 |---|---|
 | `index.ts` | the adapter: turn loop, queueing, policy gates, prompt assembly, approvals, uploads |
 | `transports/` | Slack, Telegram, Discord, the terminal's local socket (`local.ts`), several at once (`composite.ts`) and attachments — the platform seam (`types/transport.ts`) |
-| `tui/` | `deepbot-tui`, the terminal client: `render/` (cells, diff, input, Markdown), the app, the panel, questions, `protocol.ts` (the socket's frames), `bridge.ts` (what the gateway reads for it) |
+| `tui/` | `dsh`, the terminal client: `render/` (cells, diff, input, Markdown), the app, the panel, questions, `protocol.ts` (the socket's frames), `bridge.ts` (what the gateway reads for it) |
 | `progress.ts` | the working message, where a platform has no status of its own |
 | `recallContext.ts` | ranking and injecting passages from the recall index; `recallIndexPath` |
 | `recall/` | the indexer that builds the recall index from session logs, and its launchd job |

@@ -903,7 +903,7 @@ export class App {
     // Header, with where the pane is looking.
     let hx = screen.put(1, 0, 'deepseek-bot', s(theme.brand))
     if (this.view.kind !== 'main') hx = screen.put(hx, 0, ` · main › ${this.view.kind === 'agent' ? this.view.label : this.view.id}`, s(theme.accent))
-    const right = [this.status.session && `${this.status.session.slice(0, 12)}…`, this.status.workspace].filter(Boolean).join(' · ')
+    const right = [this.status.session && `${this.status.session.slice(0, 12)}…`, this.shownWorkspace()].filter(Boolean).join(' · ')
     if (right !== '') screen.put(Math.max(hx + 2, cols - 1 - stringWidth(right)), 0, right, s(theme.muted))
 
     // The pane, with the selection drawn inverted.
@@ -1073,7 +1073,15 @@ export class App {
   }
 
   private infoLine(): string {
-    return [this.status.model, this.status.workspace, this.status.session && `session ${this.status.session}`].filter(Boolean).join(' · ')
+    return [this.status.model, this.shownWorkspace(), this.status.session && `session ${this.status.session}`].filter(Boolean).join(' · ')
+  }
+
+  /** The workspace as shown: under the home directory as ~, so a screen, or a recording of one, does not
+   * carry the account's path. The status keeps the real path; file completion reads it. */
+  private shownWorkspace(): string {
+    const home = (this.o.env.HOME ?? '').replace(/\/+$/, '')
+    const w = this.status.workspace
+    return home !== '' && (w === home || w.startsWith(`${home}/`)) ? `~${w.slice(home.length)}` : w
   }
 
   private showToast(text: string): void {

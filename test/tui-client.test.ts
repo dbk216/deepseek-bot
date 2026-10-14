@@ -11,7 +11,8 @@
  */
 import './dist-fresh.ts'   // fails loudly on a stale dist
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -20,7 +21,7 @@ process.env.DSH_HOME = DSH_HOME
 
 const { App } = await import('../dist/tui/app.js')
 const { Connection, discover } = await import('../dist/tui/client.js')
-const { bind, createCommands, parseArgs, USAGE } = await import('../dist/tui/cli.js')
+const { bind, createCommands, parseArgs, resumeHint, route, USAGE } = await import('../dist/tui/cli.js')
 const { createLocalTransport } = await import('../dist/transports/local.js')
 const { fakeTerminal } = await import('./tui-fakes.ts')
 
@@ -44,6 +45,27 @@ async function until(predicate, ms = 3000) {
   check('usage: names the project, deepseek-bot', USAGE.split('\n')[0].includes('deepseek-bot과 대화'), USAGE.split('\n')[0])
   check('args: an unknown flag is an error, not ignored', 'error' in parseArgs(['--verbose']))
   check('args: --help', parseArgs(['--help']).help === true)
+
+  // `dsh` opens the terminal; anything that is not one of its own flags is the harness CLI's.
+  check('route: no arguments, or only the terminal\'s flags, open the terminal', route([]) === 'tui' && route(['--resume', 'c-1']) === 'tui' && route(['--name', 'work']) === 'tui' && route(['-h']) === 'tui' && route(['--help']) === 'tui')
+  check('route: anything else goes to the harness CLI', route(['--profile', 'agent']) === 'harness' && route(['gateway']) === 'harness' && route(['--version']) === 'harness')
+  check('usage: the command is dsh', USAGE.includes('\n  dsh [--name <gateway>]') && !USAGE.includes('deepbot-tui'), USAGE.split('\n')[2])
+  check('exit: the resume hint names dsh', resumeHint('c-1') === '이어서 대화하려면: dsh --resume c-1\n', JSON.stringify(resumeHint('c-1')))
+
+  // End to end: the arguments reach the harness CLI unchanged, and its exit status comes back.
+  const bin = mkdtempSync(join(tmpdir(), 'deepbot-dshbin-'))
+  const fake = join(bin, 'dsh'), seen = join(bin, 'seen')
+  writeFileSync(fake, `#!/bin/sh\nprintf '%s\\n' "$@" > '${seen}'\nexit 3\n`)
+  chmodSync(fake, 0o755)
+  const main = new URL('../dist/tui/main.js', import.meta.url).pathname
+  const forwarded = spawnSync(process.execPath, [main, '--profile', 'agent', '--port', '19500'], { encoding: 'utf8', env: { ...process.env, DSH_BIN: fake } })
+  let got = ''
+  try { got = readFileSync(seen, 'utf8') } catch { /* not run */ }
+  check('forward: the harness CLI gets the arguments as they were given', got === '--profile\nagent\n--port\n19500\n', JSON.stringify(got))
+  check('forward: and its exit status is dsh\'s', forwarded.status === 3, `status ${forwarded.status} ${forwarded.stderr.trim()}`)
+  const missing = spawnSync(process.execPath, [main, 'gateway'], { encoding: 'utf8', env: { ...process.env, DSH_BIN: join(bin, 'nothing-here') } })
+  check('forward: a harness CLI that is not there is said, with how to point at it', missing.status === 127 && missing.stderr.includes('DSH_BIN'), `status ${missing.status} ${missing.stderr.trim()}`)
+  rmSync(bin, { recursive: true, force: true })
 }
 
 // 2. Discovery.

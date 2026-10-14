@@ -1,5 +1,5 @@
 /**
- * The command line and the frame-to-screen mapping of deepbot-tui, apart from the entry point so
+ * The command line and the frame-to-screen mapping of the terminal (`dsh`), apart from the entry point so
  * the tests can import them without starting a terminal.
  */
 import type { App } from './app.js'
@@ -25,15 +25,30 @@ export function parseArgs(argv: string[]): Args | { error: string } {
   return args
 }
 
-export const USAGE = `deepbot-tui — 터미널에서 deepseek-bot과 대화
+export const USAGE = `dsh — 터미널에서 deepseek-bot과 대화
 
-  deepbot-tui [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
+  dsh [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
+  dsh <그 외 인자>   DeepSeek Harness CLI로 그대로 넘김 (DSH_BIN, 기본은 앱 안의 dsh)
 
   --name     연결할 gateway 이름 (deepbot 설정의 tuiName, 기본 default)
   --socket   gateway socket 경로를 직접 지정
   --tenant   tenant workspace로 대화 (tenantIsolation이 켜져 있어야 함)
   --resume   이전 대화 이어가기 (종료할 때 출력되는 id)
 `
+
+/** The terminal's own flags; `dsh` with anything else is the harness CLI's command line. */
+const OWN = new Set(['-h', '--help', '--name', '--socket', '--tenant', '--resume'])
+
+/** Whether `dsh <argv>` opens the terminal or is handed to the DeepSeek Harness CLI, whose name it shares. */
+export function route(argv: string[]): 'tui' | 'harness' {
+  return argv.length === 0 || OWN.has(argv[0]) ? 'tui' : 'harness'
+}
+
+/** The harness CLI inside the app — the same default the gateway's launcher uses. */
+export const HARNESS_CLI = '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
+
+/** What is printed on the way out, so the conversation can be picked up again. */
+export const resumeHint = (conversation: string): string => `이어서 대화하려면: dsh --resume ${conversation}\n`
 
 /** Frames from the gateway, onto the screen. */
 export function bind(app: App, frame: ServerFrame, commands?: Commands): void {

@@ -76,6 +76,21 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   check('start: the input box and the status line', text.includes('╭') && text.includes('╰') && text.includes('▸▸ ask'))
 }
 
+// 1b. The workspace under the home directory is shown as ~, so a screen, or a recording of one, does
+// not carry the account's path; the status keeps the real path, which file completion reads.
+{
+  const t = setup({ env: { COLORTERM: 'truecolor', HOME: '/Users/someone' } })
+  t.app.setStatus({ workspace: '/Users/someone/dsh-agent' })
+  t.clock.advance(20)
+  let text = t.term.screen.text()
+  check('workspace: under HOME, the header and the info line show ~', text.split('\n')[0].includes('~/dsh-agent') && /deepseek-v4\.1 · ~\/dsh-agent · /.test(text) && !text.includes('/Users/someone'), text.split('\n')[0])
+  check('workspace: the status keeps the real path', t.app.status.workspace === '/Users/someone/dsh-agent')
+  t.app.setStatus({ workspace: '/Users/someone2/agent' })
+  t.clock.advance(20)
+  text = t.term.screen.text()
+  check('workspace: a sibling of HOME that shares its prefix is shown in full', text.includes('/Users/someone2/agent'), text.split('\n')[0])
+}
+
 // 2. Typing appears on the keystroke; Enter sends; Alt+Enter does not.
 {
   const t = setup()
@@ -370,7 +385,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   const plain = setup({ env: { NO_COLOR: '1' } })
   check('colour: NO_COLOR writes no colour codes', !plain.term.out.join('').match(/\x1b\[[\d;]*(38|48);[25];/))
   const narrow = setup({ cols: 50 })
-  check('narrow: a 50-column terminal gets the wordmark, not broken block letters', narrow.term.screen.text().includes('◆ DeepSeek-Harness') && !narrow.term.screen.text().includes('██████╗'))
+  check('narrow: a 50-column terminal gets the wordmark, not broken block letters', narrow.term.screen.text().includes('◆ deepseek-bot') && !narrow.term.screen.text().includes('██████╗'))
 }
 
 // 8b. Running state: counted across queued turns, synced on (re)connect, reset for another conversation.

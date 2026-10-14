@@ -1,30 +1,47 @@
 #!/usr/bin/env node
 /**
- * deepbot-tui: the bot in a terminal.
+ * dsh: the bot in a terminal.
  *
- *   deepbot-tui [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
+ *   dsh [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
+ *   dsh <anything else>   handed to the DeepSeek Harness CLI, whose name this shares
  *
  * Connects to a running gateway whose deepbot row serves `platform: 'local'` (alone or in a list
  * with Slack). The conversation, its memory and its session live in that gateway; this process is
  * only the screen, so quitting loses nothing and `--resume` picks the conversation up again.
  */
+import { spawnSync } from 'node:child_process'
+import { existsSync, realpathSync } from 'node:fs'
+import { constants } from 'node:os'
 import { App } from './app.js'
 import { Connection, discover } from './client.js'
-import { bind, COMMAND_INFO, createCommands, parseArgs, USAGE, type Commands } from './cli.js'
+import { bind, COMMAND_INFO, createCommands, HARNESS_CLI, parseArgs, resumeHint, route, USAGE, type Commands } from './cli.js'
 import { fileFinder } from './files.js'
 import { appendHistory, historyFile, loadHistory } from './history.js'
 import { processIO, restoreOnExit } from './render/terminal.js'
 
+/** `dsh <harness arguments>`: run the harness CLI with them, and leave with its status. */
+function forward(argv: string[]): never {
+  const bin = process.env.DSH_BIN || HARNESS_CLI
+  if (!existsSync(bin)) { process.stderr.write(`dsh: DeepSeek Harness CLI가 없음: ${bin} (DSH_BIN으로 경로 지정)\n`); process.exit(127) }
+  // A DSH_BIN that is this command would call itself forever.
+  if (realpathSync(bin) === realpathSync(process.argv[1])) { process.stderr.write('dsh: DSH_BIN이 이 명령 자신을 가리킴 — harness CLI 경로로 지정\n'); process.exit(127) }
+  const run = spawnSync(bin, argv, { stdio: 'inherit' })
+  if (run.error) { process.stderr.write(`dsh: ${run.error.message}\n`); process.exit(127) }
+  process.exit(run.signal ? 128 + (constants.signals[run.signal] ?? 0) : (run.status ?? 1))
+}
+
 function main(): void {
-  const parsed = parseArgs(process.argv.slice(2))
+  const argv = process.argv.slice(2)
+  if (route(argv) === 'harness') forward(argv)
+  const parsed = parseArgs(argv)
   if ('error' in parsed) { process.stderr.write(`${parsed.error}\n\n${USAGE}`); process.exit(2) }
   if (parsed.help) { process.stdout.write(USAGE); return }
-  if (!process.stdin.isTTY || !process.stdout.isTTY) { process.stderr.write('deepbot-tui: 터미널(TTY)에서 실행해야 함\n'); process.exit(2) }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) { process.stderr.write('dsh: 터미널(TTY)에서 실행해야 함\n'); process.exit(2) }
 
   let socketPath = parsed.socket
   if (socketPath === undefined) {
     const found = discover(parsed.name)
-    if ('error' in found) { process.stderr.write(`deepbot-tui: ${found.error}\n`); process.exit(2) }
+    if ('error' in found) { process.stderr.write(`dsh: ${found.error}\n`); process.exit(2) }
     socketPath = found.socket
   }
 
@@ -53,7 +70,7 @@ function main(): void {
     onExit(code) {
       connection?.close()
       const resume = connection?.conversation
-      if (resume) process.stdout.write(`이어서 대화하려면: deepbot-tui --resume ${resume}\n`)
+      if (resume) process.stdout.write(resumeHint(resume))
       process.exit(code)
     },
   })

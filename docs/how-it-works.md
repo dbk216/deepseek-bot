@@ -44,7 +44,7 @@ Each line is traceable to code and to something that checks it.
 | Serves Slack over **Socket Mode**: receive, reply in thread, chunk long answers, drop duplicate events | `transports/slack.ts` | `test/slack.test.ts` 54/54; `tools/qa-slack.ts` against a live workspace |
 | Serves **Telegram** by long polling | `transports/telegram.ts` | `test/telegram.test.ts` 41/41 |
 | Serves **Discord** (gateway websocket + REST), with buttons for approvals | `transports/discord.ts` | `test/discord.test.ts` 38/38 |
-| Serves a **terminal** (`deepbot-tui`) over a local socket, beside Slack or alone: streamed answers, approval buttons, a turn's questions, its subagents and shells | `transports/local.ts`, `transports/composite.ts`, `tui/` | `test/local.test.ts` 132/132, `test/tui-*.test.ts`; `test/tui-live.ts` 11/11 against a model |
+| Serves a **terminal** (`dsh`) over a local socket, beside Slack or alone: streamed answers, approval buttons, a turn's questions, its subagents and shells | `transports/local.ts`, `transports/composite.ts`, `tui/` | `test/local.test.ts` 132/132, `test/tui-*.test.ts`; `test/tui-live.ts` 11/11 against a model |
 | Keeps a **durable session per thread**, resumed after a restart | `index.ts`, `<stateDir>/sessions.json` | `test/core.test.ts` 152/152; `test/scenarios/restart-1.json` + `restart-2.json` |
 | Injects **persona and notes** (`SOUL.md`/`USER.md`/`MEMORY.md` from the adapter, `AGENTS.md` from `dsh-agent-instructions`), without re-sending them every turn | `index.ts` | `test/core.test.ts`; `test/scenarios/persona.json` 4/4 |
 | **Recalls past conversations** — rank passages, then ask for what they imply | `recall/`, `recallContext.ts` | `test/recall.test.ts` 13/13; `test/recall-context.test.ts` 25/25 |
@@ -449,7 +449,7 @@ own, so the adapter — the party that asked for the stop — supplies it, and t
 happened: stopped on request, or stopped because it ran too long. `test/scenarios/interrupt.json`
 asserts the interrupted turn ends as `cancelled`.
 
-## The terminal (deepbot-tui)
+## The terminal (dsh)
 
 A fullscreen terminal client for the same agent. It is a platform like Slack: a conversation in the
 terminal gets the persona, the workspace's notes, recall, approvals and the turn queue, because it
@@ -472,7 +472,8 @@ short one beside the discovery files) and records it in `$DSH_HOME/run/deepbot-t
 A terminal may open, message or stop only the subagents and jobs its own panel offered, and press
 only its own conversation's buttons.
 
-**Use it.** `deepbot-tui` (the package's `bin`, or `node dist/tui/main.js`) finds the running gateway;
+**Use it.** `dsh` (the package's `bin`: put it on your `PATH` with
+`ln -s ~/.deepbot/dist/tui/main.js ~/.local/bin/dsh`, or run `node dist/tui/main.js`) finds the running gateway;
 `--name` picks one by `tuiName`, `--socket` names the path, `--tenant` talks in a tenant's workspace
 (needs `tenantIsolation`; without it a new conversation goes where the configuration sends any other,
 `tenantDefault` or the home), `--resume <id>` continues a conversation (the id is printed on exit).
@@ -729,7 +730,7 @@ index.ts                       the adapter: orchestration, policy gates, prompt 
 safeWrite.ts                   unconfined writes into the agent's home that never follow a link
 transports/                    the platform seam: slack.ts, telegram.ts, discord.ts, local.ts (the
                                terminal's socket), composite.ts (several at once), attachments.ts
-tui/                           deepbot-tui: render/ (cells, diff, input, Markdown), the app, the panel,
+tui/                           dsh: render/ (cells, diff, input, Markdown), the app, the panel,
                                questions, the interview, and bridge.ts (what the gateway reads for it)
 recall/                        the host-side indexer (deepbot-recall.ts) + its refresh job
 recallContext.ts               the block injected when a message points at the past

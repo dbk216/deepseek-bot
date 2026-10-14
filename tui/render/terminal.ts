@@ -158,7 +158,7 @@ export function restoreOnExit(terminal: Terminal, proc: NodeJS.Process = process
   const onSignal = (signal: NodeJS.Signals) => { terminal.restore(); proc.exit(signal === 'SIGINT' ? 130 : 143) }
   const onCrash = (error: unknown) => {
     terminal.restore()
-    proc.stderr.write(`deepbot-tui: ${String((error as Error)?.stack ?? error)}\n`)
+    proc.stderr.write(`dsh: ${String((error as Error)?.stack ?? error)}\n`)
     proc.exit(1)
   }
   const onExit = () => terminal.restore()

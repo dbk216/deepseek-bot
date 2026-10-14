@@ -259,7 +259,11 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
 
 // 9. Banner, colour, clipboard.
 {
-  check('banner: one line needs 128 columns, two lines 70', BANNER_WIDTHS.one === 128 && BANNER_WIDTHS.two === 70)
+  check('banner: one line needs 93 columns, two lines 68', BANNER_WIDTHS.one === 93 && BANNER_WIDTHS.two === 68, JSON.stringify(BANNER_WIDTHS))
+  const rowText = (l) => l.spans.map((sp) => sp.text).join('')
+  check('banner: it says DEEPSEEK BOT', rowText(banner(140, 'none')[0]) === '  ██████╗ ███████╗███████╗██████╗ ███████╗███████╗███████╗██╗  ██╗   ██████╗  ██████╗ ████████╗', rowText(banner(140, 'none')[0]))
+  check('banner: on two lines, BOT sits below the end of DEEPSEEK, as in the README', rowText(banner(80, 'none')[6]) === `${' '.repeat(2 + 42)}██████╗  ██████╗ ████████╗`, JSON.stringify(rowText(banner(80, 'none')[6])))
+  check('banner: the narrow wordmark says deepseek-bot', rowText(banner(60, 'none')[0]) === '  ◆ deepseek-bot', rowText(banner(60, 'none')[0]))
   check('banner: 80 columns get the two-line mark', banner(80, 'truecolor').length === 12)
   check('banner: 140 columns get the one-line mark', banner(140, 'truecolor').length === 6)
   check('banner: 60 columns get the wordmark', banner(60, 'truecolor').length === 1)
