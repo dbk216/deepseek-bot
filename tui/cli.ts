@@ -9,6 +9,7 @@ import type { CommandInfo } from './complete.js'
 import { stringWidth } from './render/width.js'
 import { languageOf } from '../i18n.js'
 import { setLanguage, t } from './strings.js'
+import { GATEWAY_COMMANDS } from '../service/gateway.js'
 
 export interface Args { name?: string; socket?: string; tenant?: string; resume?: string; help: boolean }
 
@@ -35,9 +36,14 @@ export function usage(): string {
 /** The terminal's own flags; `dsh` with anything else is the harness CLI's command line. */
 const OWN = new Set(['-h', '--help', '--name', '--socket', '--tenant', '--resume'])
 
-/** Whether `dsh <argv>` opens the terminal or is handed to the DeepSeek Harness CLI, whose name it shares. */
-export function route(argv: string[]): 'tui' | 'harness' {
-  return argv.length === 0 || OWN.has(argv[0]) ? 'tui' : 'harness'
+/**
+ * Whether `dsh <argv>` opens the terminal, runs `dsh gateway <command>`, or is handed to the DeepSeek
+ * Harness CLI, whose name it shares. For the harness `dsh gateway` boots a profile named gateway, so only
+ * `gateway` followed by one of its commands is taken here.
+ */
+export function route(argv: string[]): 'tui' | 'gateway' | 'harness' {
+  if (argv.length === 0 || OWN.has(argv[0])) return 'tui'
+  return argv[0] === 'gateway' && GATEWAY_COMMANDS.has(argv[1]) ? 'gateway' : 'harness'
 }
 
 /** The harness CLI inside the app — the same default the gateway's launcher uses. */

@@ -54,7 +54,7 @@ import { fileURLToPath } from 'node:url'
 import { createSlackTransport } from './transports/slack.js'
 import { createTelegramTransport } from './transports/telegram.js'
 import { createDiscordTransport } from './transports/discord.js'
-import { createLocalTransport } from './transports/local.js'
+import { createLocalTransport, LOCAL_CHANNEL } from './transports/local.js'
 import { createCompositeTransport } from './transports/composite.js'
 import { createProgressTracker } from './progress.js'
 import { languageOf } from './i18n.js'
@@ -110,6 +110,10 @@ const DEFAULTS = {
   // The language of what the bot itself says — approvals, stops, failures, the working message —
   // and of the terminal: 'en', 'ko' or 'zh'. The model's answers follow the persona, not this.
   language: 'en',
+  // Who may talk to it: user ids, from any of the platforms. Empty means anyone who can reach the bot
+  // in an allowed channel — on Telegram and Discord that is anyone who finds it, since a direct
+  // message always reaches it. The terminal's user is always allowed: it is whoever can open the socket.
+  allowedUsers: [],
   maxConcurrency: 2,
   runTimeoutMs: 15 * 60 * 1000,
   maxPromptChars: 12000,
@@ -288,6 +292,12 @@ export function apply(ctx, config) {
   if (cfg.language != null && String(cfg.language).trim() !== '' && languageOf(cfg.language) === 'en' && !/^(en|eng|english)(?:$|[-_.@])/i.test(String(cfg.language).trim())) {
     problems.push(`language: must be 'en', 'ko' or 'zh' (got: ${String(cfg.language)})`)
   }
+  if (!Array.isArray(cfg.allowedUsers) || cfg.allowedUsers.some((u) => typeof u !== 'string')) {
+    // Telegram and Discord ids are digits: unquoted, YAML reads a number, and a Discord id loses digits on the way.
+    problems.push(Array.isArray(cfg.allowedUsers) && cfg.allowedUsers.some((u) => typeof u === 'number')
+      ? "allowedUsers: quote each id ('123456789') — unquoted, YAML reads a number, and a long one loses digits"
+      : 'allowedUsers: a list of user ids (empty: anyone who can reach the bot)')
+  }
   if (problems.length > 0) throw new Error(`deepbot config error:\n  - ${problems.join('\n  - ')}`)
 
   const language = languageOf(cfg.language)
@@ -295,6 +305,9 @@ export function apply(ctx, config) {
   const targetChannels = cfg.targetChannels.map((c) => c.trim()).filter(Boolean)
   // '*' means "every channel the bot has been invited to".
   const allChannels = targetChannels.includes('*')
+  const allowedUsers = new Set<string>(cfg.allowedUsers.map((u) => u.trim()).filter(Boolean))
+  // The terminal's user may always: it is whoever can open the socket. Only in the terminal's own channel.
+  const mayTalk = (user: string, channel: string) => allowedUsers.size === 0 || (user === 'local' && channel === LOCAL_CHANNEL) || allowedUsers.has(user)
   // Channel ID prefixes: C=public, G=legacy private, D=DM, U=MPDM member.
 
   const stateDir = cfg.stateDir ?? join(process.cwd(), 'slack-state')
@@ -1135,6 +1148,7 @@ export function apply(ctx, config) {
    * 허용 answered whatever request was pending in that conversation now.
    */
   async function handleAction(action: { id: string; target: { channel: string; threadTs: string | null }; user: string }) {
+    if (!mayTalk(action.user, action.target.channel)) { log(`button ignored: ${action.user} is not in allowedUsers`); return }
     const match = /^approval:(allow|deny):([^#]+)(?:#([0-9a-f]{8}))?$/.exec(action.id)
     if (match === null) { log(`unhandled action id: ${action.id}`); return }
     const decision = match[1]
@@ -2167,7 +2181,13 @@ export function apply(ctx, config) {
     // A conversation's root session, from its first turn on (state.sessions is written when a turn ends).
     sessionFor: (key: string) => state.sessions[key] ?? [...liveOrigins].find(([, o]) => keyOf(o) === key)?.[0] ?? null,
     credential: (ref: string) => credential(ref),
-    onHealth: (patch: Record<string, unknown>) => { Object.assign(health, patch); writeHealth() },
+    // The platforms share lastError: a clear that names the error it clears (ifLastError) leaves another's alone.
+    onHealth: (patch: Record<string, unknown>) => {
+      const { ifLastError, ...rest } = patch
+      if (ifLastError !== undefined && health.lastError !== ifLastError) delete rest.lastError
+      Object.assign(health, rest)
+      writeHealth()
+    },
   }
   const createPlatform = (platform: unknown) => platform === 'telegram'
     ? createTelegramTransport(transportHost)
@@ -2287,6 +2307,8 @@ export function apply(ctx, config) {
     // Outside the allowlist, do nothing. '*' means every invited channel.
     if (!allChannels && !targetChannels.includes(channel)) return
     if (!message.addressed) return
+    // Nor for anyone outside allowedUsers — and no reply, which would be a way to make it post.
+    if (!mayTalk(message.user, channel)) { log(`ignored: ${message.user} is not in allowedUsers (channel=${channel})`); return }
     if (alreadySeen(message.eventId)) { log(`duplicate event ignored event_id=${message.eventId}`); return }
 
     // Platforms with threads get a session per thread; platforms without one (a
@@ -2995,6 +3017,10 @@ export function apply(ctx, config) {
       if (typeof transport.connectedFor === 'function') await recover()
       throw e
     }
+    // Started: the error a failed start left in the health file is over, unless something has replaced it.
+    // No platform clears it for a terminal-only gateway, so it stayed for the life of the process.
+    if (startupError !== null && health.lastError === startupError) { health.lastError = null; writeHealth() }
+    startupError = null
     await recover()
   }
 
@@ -3007,6 +3033,8 @@ export function apply(ctx, config) {
   let stopped = false
   let startFailures = 0
   let startBackoff = 1000
+  /** What the last failed start wrote to the health file, so a start that works can clear that and nothing else. */
+  let startupError: string | null = null
 
   async function startWithRetry() {
     try { await start() }
@@ -3014,6 +3042,10 @@ export function apply(ctx, config) {
       if (stopped) return
       startFailures++
       log(`startup failed (${startFailures} in a row): ${String(e?.message ?? e)} — retrying in ${startBackoff}ms`)
+      // Into the health file too: a platform that fails here while another is connected was otherwise only
+      // in the log, and `dsh gateway setup` read the other's "connected" as success.
+      startupError = health.lastError = String(e?.message ?? e)
+      writeHealth()
       setTimeout(() => {
         startBackoff = Math.min(startBackoff * 2, 60000)
         if (!stopped) startWithRetry()
