@@ -173,6 +173,101 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   check('services: install.sh stops at a failed service instead of saying done', /services_done \|\| return 1\n\nstep "done"/.test(readFileSync(INSTALL, 'utf8')))
 }
 
+// The model provider of a new profile: DeepSeek's own needs no rows (dsh-base's default); OpenGateway and a
+// custom OpenAI-compatible endpoint get a complete llm-pi-ai route and the default model row.
+{
+  const og = withHelpers('provider_rows opengateway')
+  check('provider: OpenGateway gets its route, with the key ref, the endpoint, the deepseek thinking format', og.code === 0
+    && /^- id: llm-pi-ai$/m.test(og.out) && /^ {6}og:$/m.test(og.out) && /^ {8}apiKeyEnv: OG_API_KEY$/m.test(og.out)
+    && /^ {8}api: openai-completions$/m.test(og.out) && /^ {8}baseURL: 'https:\/\/apis\.opengateway\.ai\/v1'$/m.test(og.out) && /^ {10}thinkingFormat: deepseek$/m.test(og.out), og.out)
+  check('provider: its model takes images and the four efforts, and is the default with effort medium',
+    /^ {10}- id: 'deepseek\/deepseek-v4\.1-flash-ultrafast'$/m.test(og.out) && /^ {12}input: \[text, image\]$/m.test(og.out)
+    && /^ {12}reasoningEfforts:\n {14}off:\n {14}low: low\n {14}medium: medium\n {14}high: high$/m.test(og.out)
+    && /^- id: agent-default-model\n {2}config:\n {4}provider: og\n {4}model: 'deepseek\/deepseek-v4\.1-flash-ultrafast'\n {4}reasoningEffort: medium$/m.test(og.out), og.out)
+  const custom = withHelpers(`provider_rows custom MY_KEY 'https://llm.example.com/v1' 'vendor/model-x' 200000 no`)
+  check('provider: a custom endpoint gets its own route, text only when it takes no images, and no efforts it did not declare', custom.code === 0
+    && /^ {6}custom:$/m.test(custom.out) && /^ {8}apiKeyEnv: MY_KEY$/m.test(custom.out) && /^ {8}baseURL: 'https:\/\/llm\.example\.com\/v1'$/m.test(custom.out)
+    && /^ {12}contextWindow: 200000$/m.test(custom.out) && /^ {12}input: \[text\]$/m.test(custom.out) && !/reasoningEfforts|thinkingFormat|reasoningEffort/.test(custom.out), custom.out)
+  check('provider: DeepSeek\'s own API is the answer when none is given, so an existing setup stays as it is',
+    /^ {2}ask provider "[^"]*" deepseek$/m.test(readFileSync(INSTALL, 'utf8')) && withHelpers('provider_key deepseek').out === 'DEEPSEEK_API_KEY')
+  const ds = withHelpers('provider_rows deepseek')
+  check('provider: DeepSeek\'s own route writes nothing', ds.code === 0 && ds.out === '', JSON.stringify(ds))
+  const bad = (args) => withHelpers(`valid_endpoint ${args}`).code !== 0
+  check('provider: what goes into the YAML is checked — a URL with a quote, a model with a space, a bad key name, a window that is not a number',
+    bad(`"https://x.example/v1'; rm" model KEY 1000`) && bad(`https://x.example/v1 'bad model' KEY 1000`) && bad(`https://x.example/v1 model 1KEY 1000`)
+    && bad(`https://x.example/v1 model KEY lots`) && bad(`ftp://x.example model KEY 1000`)
+    && withHelpers(`valid_endpoint https://llm.example.com/v1 vendor/model-x:free MY_KEY 128000`).code === 0)
+  check('provider: a custom key name is one of its own — not a name the deployment uses, not a YAML word, and ends in _KEY',
+    bad(`https://x.example/v1 model SLACK_BOT_TOKEN 1000`) && bad(`https://x.example/v1 model DEEPSEEK_API_KEY 1000`) && bad(`https://x.example/v1 model OG_API_KEY 1000`)
+    && bad(`https://x.example/v1 model null 1000`) && bad(`https://x.example/v1 model PATH 1000`) && withHelpers('valid_endpoint https://x.example/v1 model ACME_API_KEY 1000').code === 0)
+  check('provider: plain http only to this machine — a key would cross the network in clear text',
+    bad(`http://llm.example.com/v1 model ACME_API_KEY 1000`) && withHelpers('valid_endpoint http://localhost:8080/v1 model ACME_API_KEY 1000').code === 0 && withHelpers('valid_endpoint http://127.0.0.1:8080/v1 model ACME_API_KEY 1000').code === 0)
+  check('provider: the context window is written as a number, leading zeros dropped', /^ {12}contextWindow: 128000$/m.test(withHelpers(`provider_rows custom ACME_API_KEY 'https://x.example/v1' m 0128000 no`).out))
+  // A rerun reads the key of the route the default model names, whatever the comments, the indent, or other routes.
+  writeFileSync(join(dir, 'two-routes.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      speech:\n        apiKeyEnv: OPENAI_API_KEY\n      og:\n          apiKeyEnv: OG_API_KEY   # the gateway\n\n- id: agent-default-model\n  config:\n    provider: og\n    model: x\n`)
+  check('provider: a route key that is not a variable name is not asked for or written', withHelpers('usable_key_name "!!js process.env.X"').code !== 0 && withHelpers('usable_key_name OG_API_KEY').code === 0)
+  check('provider: a rerun reads the key of the default model\'s route, past comments, indents and other routes', withHelpers(`profile_key "${join(dir, 'two-routes.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'two-routes.yml')}"`).out)
+  writeFileSync(join(dir, 'with-og.yml'), `- id: deepbot\n  config:\n    platform: slack\n${og.out}\n`)
+  check('provider: a rerun reads back the key the profile names, and DeepSeek\'s when it names none',
+    withHelpers(`profile_key "${join(dir, 'with-og.yml')}"`).out === 'OG_API_KEY' && withHelpers(`profile_key "${join(dir, 'missing.yml')}"`).out === 'DEEPSEEK_API_KEY')
+  // Where the harness is installed, the rows must compose: the template plus them, through dsh itself.
+  const DSH = '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
+  if (existsSync(DSH)) {
+    const home = join(dir, 'dsh-home'), prof = join(home, 'profiles', 'composed')
+    mkdirSync(prof, { recursive: true })
+    for (const f of ['package.json', 'cordis.patch.yml']) copyFileSync(new URL(`../profile/${f}`, import.meta.url), join(prof, f))
+    writeFileSync(join(prof, 'cordis.patch.yml'), readFileSync(join(prof, 'cordis.patch.yml'), 'utf8') + og.out + '\n')
+    let dump = ''
+    try { dump = execFileSync(DSH, ['--profile', 'composed', '--dump-config'], { encoding: 'utf8', env: { ...process.env, DSH_HOME: home }, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }) } catch (e) { dump = `__ERROR__ ${String(e.stderr ?? e.message).slice(0, 300)}` }
+    // dsh composes without mounting, so this proves the YAML parses and the rows land, not that the values are valid:
+    // that is the live profile, which runs on the same route.
+    check('provider: the template with the OpenGateway rows parses and composes, and the default model is og', !dump.startsWith('__ERROR__') && !/ValidationError/.test(dump)
+      && /provider: og/.test(dump) && /apis\.opengateway\.ai/.test(dump), dump.slice(0, 200))
+  } else {
+    console.log('  TODO  provider: composing the rows with dsh needs DeepSeek Harness installed; not run here')
+  }
+}
+
+// Keys the harness already resolves are used, not asked for again: its order is the launch environment, the
+// app's own store (~/.dsh/.credentials.yaml, under `refs`), then ~/.dsh/.env. Names only — no value is read out.
+{
+  const dsh = join(dir, 'chain', '.dsh')
+  mkdirSync(dsh, { recursive: true })
+  writeFileSync(join(dsh, '.credentials.yaml'), 'version: 1\n\nrefs:\n  OG_API_KEY: og-stored-value\n\nrecords:\n  llm-pi-ai/x:\n    kind: grant\n    payload:\n      SLACK_BOT_TOKEN: not-a-ref\n')
+  writeFileSync(join(dsh, '.env'), 'DEEPSEEK_API_KEY=dk-dotenv-value\n')
+  // The suite's own shell may export these: each lookup starts with them unset, unless a check sets one.
+  const clean = { DEEPSEEK_API_KEY: '', OG_API_KEY: '', SLACK_BOT_TOKEN: '', SLACK_APP_TOKEN: '', TELEGRAM_BOT_TOKEN: '', CUSTOM_API_KEY: '' }
+  const src = (name, env = {}) => withHelpers(`DSH_HOME="${dsh}"; key_source ${name}`, { DSH_HOME: dsh, ...clean, ...env }).out
+  check('credentials: a key in the app\'s store is found there', src('OG_API_KEY') === 'store', src('OG_API_KEY'))
+  check('credentials: one only under a record, not a ref, is not taken for a key', src('SLACK_BOT_TOKEN') === '', src('SLACK_BOT_TOKEN'))
+  check('credentials: one in ~/.dsh/.env is found there', src('DEEPSEEK_API_KEY') === 'dotenv')
+  check('credentials: the launch environment comes first', src('OG_API_KEY', { OG_API_KEY: 'from-env' }) === 'env')
+  check('credentials: one set nowhere is not found', src('TELEGRAM_BOT_TOKEN') === '')
+  // The store is YAML: a comment does not end refs at any indent; a key may be quoted or spaced; refs may be a flow mapping.
+  const shapes = [
+    ['refs:\n  A_KEY: x\n# a note\n  B_KEY: y\n', 'B_KEY'],
+    ['refs:\n\n  "Q_KEY": x\n', 'Q_KEY'],
+    ["refs:\n  'S_KEY' : x\n", 'S_KEY'],
+    ['refs: { F_KEY: x, G_KEY: y }\n', 'G_KEY'],
+  ]
+  const wrong = shapes.filter(([yaml, name]) => {
+    writeFileSync(join(dsh, '.credentials.yaml'), `version: 1\n${yaml}records: {}\n`)
+    return src(name) !== 'store'
+  }).map(([, name]) => name)
+  writeFileSync(join(dsh, '.credentials.yaml'), 'version: 1\nrefs: { F_KEY: x }\nrecords:\n  r:\n    G_KEY: not-a-ref\n')
+  check('credentials: the store is read as YAML — past comments, quoted and spaced keys, a flow mapping; still not records', wrong.length === 0 && src('G_KEY') === '', wrong.join(', ') || src('G_KEY'))
+  writeFileSync(join(dsh, '.credentials.yaml'), 'version: 1\n\nrefs:\n  OG_API_KEY: og-stored-value\n\nrecords:\n  llm-pi-ai/x:\n    kind: grant\n    payload:\n      SLACK_BOT_TOKEN: not-a-ref\n')
+  const stored = withHelpers(`DSH_HOME="${dsh}"; put_key OG_API_KEY "OpenGateway API key:"`, { DSH_HOME: dsh, ...clean })
+  check('credentials: put_key does not ask for a key the store has, says where it is, and writes nothing', stored.code === 0 && /OG_API_KEY/.test(stored.out) && /credentials\.yaml/.test(stored.out)
+    && !readFileSync(join(dsh, '.env'), 'utf8').includes('OG_API_KEY') && !stored.out.includes('og-stored-value'), stored.out)
+  // A key only in this shell may have been exported for something else (an OpenAI key, another app's token):
+  // it is used only when the person says so, and with no terminal to ask, it is not.
+  const fromEnv = withHelpers(`DSH_HOME="${dsh}"; put_key CUSTOM_API_KEY "key:"`, { DSH_HOME: dsh, ...clean, CUSTOM_API_KEY: 'from-the-shell' })
+  check('credentials: one only in this shell is not copied without a yes, nor echoed',
+    fromEnv.code === 0 && !readFileSync(join(dsh, '.env'), 'utf8').includes('from-the-shell') && !fromEnv.out.includes('from-the-shell') && /CUSTOM_API_KEY/.test(fromEnv.out), fromEnv.out)
+  check('credentials: nothing is written to the app\'s store', readFileSync(join(dsh, '.credentials.yaml'), 'utf8') === 'version: 1\n\nrefs:\n  OG_API_KEY: og-stored-value\n\nrecords:\n  llm-pi-ai/x:\n    kind: grant\n    payload:\n      SLACK_BOT_TOKEN: not-a-ref\n')
+}
+
 rmSync(dir, { recursive: true, force: true })
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)

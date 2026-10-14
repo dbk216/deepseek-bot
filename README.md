@@ -34,12 +34,13 @@ dsh
 
 The first line installs it, and running it again updates; `dsh` opens it in the terminal. It needs
 macOS with Node.js 22+, the DeepSeek Harness app, a DeepSeek API key and a bot token for the platform
-you choose; it asks for the rest on the terminal. Creating the Slack, Telegram or Discord bot is in
-[docs/setup.md](docs/setup.md). To add another platform later, or replace a token:
-`dsh gateway setup <slack|telegram|discord>`. It also runs without a terminal, so an agent can do it
-for you; `dsh gateway status` says whether it is up.
+you choose; it asks for the rest on the terminal. DeepSeek's own API is the default and needs nothing
+else; OpenGateway or another OpenAI-compatible endpoint is an option the installer offers. Creating
+the Slack, Telegram or Discord bot is in [docs/setup.md](docs/setup.md). To add another platform later,
+or replace a token: `dsh gateway setup <slack|telegram|discord>`. It also runs without a terminal, so an
+agent can do it for you; `dsh gateway status` says whether it is up.
 
-<img src="docs/opengateway-logo.svg" height="16" alt="OpenGateway"> **Fast on [OpenGateway](https://opengateway.ai).** It serves `deepseek/deepseek-v4.1-flash-ultrafast`
+<img src="docs/opengateway-logo.svg" height="16" alt="OpenGateway"> **Optional: faster on [OpenGateway](https://opengateway.ai).** It serves `deepseek/deepseek-v4.1-flash-ultrafast`
 on an OpenAI-compatible endpoint (`https://apis.opengateway.ai/v1`), which it lists at 12× the speed and
 1/30 the price of a Fable-class model. This bot is developed against it; the model route in
 [profile/cordis.patch.yml](profile/cordis.patch.yml) shows where the endpoint and the model go.

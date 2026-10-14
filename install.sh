@@ -67,6 +67,128 @@ env_language() {
   echo en
 }
 
+# ── The model provider ──────────────────────────────────────────────────────
+# DeepSeek's own API is dsh-base's default route and needs no rows. OpenGateway and any other
+# OpenAI-compatible endpoint go through llm-pi-ai, whose route has to be written out in full: a
+# profile row's `config` replaces the bundle's, and the image input is read from `input` only.
+
+# A custom endpoint's answers go into the profile's YAML: nothing that could leave a quoted value, or
+# start a new key, gets through.
+valid_endpoint() {   # valid_endpoint <baseURL> <model> <keyRef> <contextWindow>
+  local url_re='^https://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$' model_re='^[A-Za-z0-9._:/@+-]+$' ref_re='^[A-Z][A-Z0-9_]*_KEY$'
+  # Plain http only to this machine: anywhere else the key would cross the network in clear text.
+  local here_re='^http://(localhost|127\.0\.0\.1)(:[0-9]+)?(/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]*)?$'
+  { [[ $1 =~ $url_re ]] || [[ $1 =~ $here_re ]]; } && [[ $2 =~ $model_re ]] && [[ $3 =~ $ref_re ]] && [[ $4 =~ ^[0-9]+$ ]] && [ "$((10#$4))" -gt 0 ] || return 1
+  # A key of its own: one the deployment reads for something else would be sent to this endpoint.
+  case "$3" in DEEPSEEK_API_KEY|OG_API_KEY|SLACK_*|TELEGRAM_*|DISCORD_*) return 1 ;; esac
+}
+
+route_rows() {   # route_rows <id> <displayName> <keyRef> <baseURL> <model> <window> <images yes|no> [deepseek]
+  local input='[text]'; [ "$7" = yes ] && input='[text, image]'
+  printf '\n# ── Model route (written by install.sh) ─────────────────────────────────────\n'
+  printf -- "- id: llm-pi-ai\n  config:\n    providers:\n      %s:\n        displayName: %s\n        apiKeyEnv: %s\n        api: openai-completions\n        baseURL: '%s'\n" "$1" "$2" "$3" "$4"
+  # A DeepSeek model behind the endpoint: its thinking comes in DeepSeek's format, with these efforts.
+  [ "${8:-}" = deepseek ] && printf '        compat:\n          thinkingFormat: deepseek\n'
+  printf "        models:\n          - id: '%s'\n            name: '%s'\n            contextWindow: %s\n            input: %s\n" "$5" "$5" "$((10#$6))" "$input"
+  [ "${8:-}" = deepseek ] && printf '            reasoningEfforts:\n              off:\n              low: low\n              medium: medium\n              high: high\n'
+  printf "\n- id: agent-default-model\n  config:\n    provider: %s\n    model: '%s'\n" "$1" "$5"
+  [ "${8:-}" = deepseek ] && printf '    reasoningEffort: medium\n'
+  return 0
+}
+
+provider_rows() {   # provider_rows deepseek | opengateway | custom <keyRef> <baseURL> <model> <window> <images>
+  case "$1" in
+    deepseek) return 0 ;;
+    opengateway) route_rows og OpenGateway OG_API_KEY https://apis.opengateway.ai/v1 deepseek/deepseek-v4.1-flash-ultrafast 1000000 yes deepseek ;;
+    custom) route_rows custom 'Custom endpoint' "$2" "$3" "$4" "$5" "$6" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Prompts read the terminal ($TTY, found by main), not stdin: under `curl … | bash` stdin is this script.
+# With no terminal, every question takes its default and every secret is left empty.
+ask() {         # ask <var> <question> [default]
+  local answer=''
+  if [ -n "${TTY:-}" ]; then printf '    %s%s%s ' "${bold:-}" "$2${3:+ [$3]}" "${off:-}" >"$TTY"; IFS= read -r answer <"$TTY" || true; fi
+  printf -v "$1" '%s' "${answer:-${3:-}}"
+}
+ask_secret() {  # ask_secret <var> <question> — never echoed
+  local answer=''
+  if [ -n "${TTY:-}" ]; then printf '    %s%s%s ' "${bold:-}" "$2" "${off:-}" >"$TTY"; IFS= read -rs answer <"$TTY" || true; printf '\n' >"$TTY"; fi
+  printf -v "$1" '%s' "$answer"
+}
+
+usable_key_name() { [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; }   # what can be a line of ~/.dsh/.env
+
+# ── Credentials ─────────────────────────────────────────────────────────────
+# The harness resolves a key from the launch environment, then its own store (~/.dsh/.credentials.yaml,
+# where the DeepSeek Harness app saves keys, under `refs`), then <cwd>/.env, then ~/.dsh/.env. A key a
+# harness user already has is theirs: it is used where it is, never asked for again, and the app's store
+# is never written. (<cwd> is the agent home for the gateway, whose launcher sets any .env there aside.)
+
+key_source() {   # key_source <NAME>: env, store or dotenv — where it is set — or nothing. Names only.
+  local name="$1" home="${DSH_HOME:-$HOME/.dsh}"
+  if [ -n "${!name:-}" ]; then echo env; return 0; fi
+  # YAML, read as YAML: a blank line or a comment neither ends refs nor holds a key, at any indent; a
+  # key may be quoted or have a space before its colon; refs may be a flow mapping on one line.
+  if [ -f "$home/.credentials.yaml" ] && awk -v k="$name" '
+      function iskey(s) { return s ~ ("^[\"\047]?" k "[\"\047]?[[:space:]]*:") }
+      /^refs:[[:space:]]*\{/ { s = $0; sub(/^refs:[[:space:]]*\{/, "", s); n = split(s, parts, ","); for (i = 1; i <= n; i++) { p = parts[i]; sub(/^[[:space:]]+/, "", p); if (iskey(p)) found = 1 }; next }
+      /^refs:[[:space:]]*(#.*)?$/ { inrefs = 1; next }
+      /^[[:space:]]*(#.*)?$/      { next }
+      /^[^[:space:]]/             { inrefs = 0 }
+      inrefs { s = $0; sub(/^[[:space:]]+/, "", s); if (iskey(s)) found = 1 }
+      END { exit !found }' "$home/.credentials.yaml" 2>/dev/null; then echo store; return 0; fi
+  if grep -q "^$name=" "$home/.env" 2>/dev/null; then echo dotenv; return 0; fi
+  return 0
+}
+
+has_key() { [ -n "$(key_source "$1")" ]; }
+
+put_key() {     # put_key <name> <question>: asked only when the harness cannot already resolve it
+  local value='' home="${DSH_HOME:-$HOME/.dsh}"
+  case "$(key_source "$1")" in
+    store) note "$1 is in DeepSeek Harness's own store (~/.dsh/.credentials.yaml) — used as it is"; return 0 ;;
+    dotenv) note "$1 already set"; return 0 ;;
+    env)
+      # The gateway runs under launchd, which does not see this shell, so the value would have to be saved.
+      # It may have been exported for something else (another app's token, an OpenAI key): only on a yes.
+      local use=''
+      ask use "$1 is set in this shell — save that value for the gateway (y/N)?" n
+      case "$use" in
+        y|Y|yes) printf '%s=%s\n' "$1" "${!1}" >>"$home/.env"; note "$1 taken from this shell's environment into $home/.env, for the gateway"; return 0 ;;
+      esac
+      note "$1 in this shell left alone" ;;
+  esac
+  ask_secret value "$2"
+  if [ -n "$value" ]; then printf '%s=%s\n' "$1" "$value" >>"$home/.env"; note "$1 saved"; else note "$1 skipped — add it to $home/.env later"; fi
+}
+
+provider_key() {   # provider_key <provider> [keyRef]: the credential the provider's route reads
+  case "$1" in opengateway) echo OG_API_KEY ;; custom) echo "$2" ;; *) echo DEEPSEEK_API_KEY ;; esac
+}
+
+# The credential an existing profile's default model reads, for a rerun: the provider agent-default-model
+# names, then that route's apiKeyEnv under llm-pi-ai — whatever the comments, the indent or the other
+# routes. DeepSeek's when the profile names no route of its own.
+profile_key() {
+  local found
+  found="$(awk '
+    function bare(s) { sub(/[[:space:]]*#.*$/, "", s); gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); gsub(/^["\047]|["\047]$/, "", s); return s }
+    function indent(s) { match(s, /^[[:space:]]*/); return RLENGTH }
+    FNR == NR {
+      if ($0 ~ /^- id: /) dm = ($0 ~ /^- id: agent-default-model[[:space:]]*(#.*)?$/)
+      else if (dm && $0 ~ /^[[:space:]]+provider:/) { v = $0; sub(/^[[:space:]]+provider:/, "", v); want = bare(v) }
+      next
+    }
+    /^- id: / { pi = ($0 ~ /^- id: llm-pi-ai[[:space:]]*(#.*)?$/); prov = -1; route = ""; next }
+    pi && /^[[:space:]]+providers:[[:space:]]*(#.*)?$/ { prov = indent($0); next }
+    pi && prov >= 0 && indent($0) == prov + 2 && $0 ~ /^[[:space:]]+[A-Za-z0-9_.-]+:[[:space:]]*(#.*)?$/ { route = bare($0); sub(/:$/, "", route); next }
+    pi && route != "" && route == want && $0 ~ /^[[:space:]]+apiKeyEnv:/ { v = $0; sub(/^[[:space:]]+apiKeyEnv:/, "", v); print bare(v); exit }
+  ' "$1" "$1" 2>/dev/null || true)"
+  printf '%s\n' "${found:-DEEPSEEK_API_KEY}"
+}
+
 set_profile_language() {   # set_profile_language <patch> <en|ko|zh>
   sed -i '' -e "s/^    language: en$/    language: $2/" "$1"
 }
@@ -165,16 +287,6 @@ BANNER
 # Prompts read the terminal, not stdin: under `curl … | bash` stdin is this script.
 TTY=''
 if [ -r /dev/tty ] && [ -w /dev/tty ] && (exec </dev/tty) 2>/dev/null; then TTY=/dev/tty; fi
-ask() {         # ask <var> <question> [default]
-  local answer=''
-  if [ -n "$TTY" ]; then printf '    %s%s%s ' "$bold" "$2${3:+ [$3]}" "$off" >"$TTY"; IFS= read -r answer <"$TTY" || true; fi
-  printf -v "$1" '%s' "${answer:-${3:-}}"
-}
-ask_secret() {  # ask_secret <var> <question> — never echoed
-  local answer=''
-  if [ -n "$TTY" ]; then printf '    %s%s%s ' "$bold" "$2" "$off" >"$TTY"; IFS= read -rs answer <"$TTY" || true; printf '\n' >"$TTY"; fi
-  printf -v "$1" '%s' "$answer"
-}
 
 step "checking what this needs"
 [ "$(uname -s)" = "Darwin" ] || die "macOS only: the services are launchd jobs and the sandbox runner is Seatbelt."
@@ -215,33 +327,55 @@ if [ "$new_profile" -eq 1 ]; then
   if [ "$platform" != telegram ]; then ask channels "channels to answer in (* = every channel it is invited to, or ids separated by spaces)?" '*'; fi
   ask language "language of the bot's own messages and of dsh (en / ko / zh)?" "$(env_language)"
   case "$language" in en|ko|zh) ;; *) die "unknown language: $language (en, ko or zh)" ;; esac
+  ask provider "model provider: deepseek (DeepSeek's own API, the default), or opengateway / custom?" deepseek
+  case "$provider" in
+    deepseek|opengateway) ;;
+    custom)
+      ask base_url "the endpoint's base URL (OpenAI-compatible, https://…/v1)?"
+      ask model_id "the model id it serves?"
+      ask key_ref "the name to keep its API key under?" CUSTOM_API_KEY
+      ask window "the model's context window, in tokens?" 128000
+      ask images "does the model read images (yes / no)?" no
+      valid_endpoint "$base_url" "$model_id" "$key_ref" "$window" \
+        || die "the endpoint, model id, key name or context window has a character a profile cannot hold"
+      case "$images" in yes|no) ;; *) die "images: yes or no (got: $images)" ;; esac ;;
+    *) die "unknown provider: $provider (deepseek, opengateway or custom)" ;;
+  esac
   list="$(channel_list "$channels")" || die "channel ids are letters, digits, - and _ (got: $channels)"
 fi
 DEEPBOT_INSTALLER=1 DSH_BIN="$DSH_BIN" "$DEEPBOT_DIR/init.sh" --home "$DEEPBOT_HOME" --profile "$DEEPBOT_PROFILE" | sed 's/^/    /'
 
 step "platform and credentials"
-note "tokens go to $DSH_HOME/.env (mode 600); the harness reads them, this code never stores them"
+note "a key the harness already has (its store, ~/.dsh/.env, or this shell) is used as it is; a new one goes to $DSH_HOME/.env (mode 600)"
 mkdir -p "$DSH_HOME"; touch "$DSH_HOME/.env"; chmod 600 "$DSH_HOME/.env"
-has_key() { grep -q "^$1=" "$DSH_HOME/.env" 2>/dev/null; }
-put_key() {     # put_key <name> <question> — only when it is not there yet
-  local value=''
-  if has_key "$1"; then note "$1 already set"; return; fi
-  ask_secret value "$2"
-  if [ -n "$value" ]; then printf '%s=%s\n' "$1" "$value" >>"$DSH_HOME/.env"; note "$1 saved"; else note "$1 skipped — add it to $DSH_HOME/.env later"; fi
-}
 case "$platform" in
   slack)    put_key SLACK_BOT_TOKEN "Slack bot token (xoxb-…):"; put_key SLACK_APP_TOKEN "Slack app-level token (xapp-…):" ;;
   telegram) put_key TELEGRAM_BOT_TOKEN "Telegram bot token:" ;;
   discord)  put_key DISCORD_BOT_TOKEN "Discord bot token:" ;;
 esac
-put_key DEEPSEEK_API_KEY "DeepSeek API key:"
+# The model's key: the provider chosen now, or the one an existing profile's route reads.
+if [ "$new_profile" -eq 1 ]; then model_key="$(provider_key "$provider" "${key_ref:-}")"; else model_key="$(profile_key "$profile_dir/cordis.patch.yml")"; fi
+# A route may name its key in a way no .env line can hold (a !!js expression): that one is the operator's.
+if ! usable_key_name "$model_key"; then
+  note "the model route reads its key as '$model_key', which this installer does not set — the route's own business"
+else case "$model_key" in
+  DEEPSEEK_API_KEY) put_key DEEPSEEK_API_KEY "DeepSeek API key:" ;;
+  OG_API_KEY) put_key OG_API_KEY "OpenGateway API key:" ;;
+  *) put_key "$model_key" "API key for the model endpoint ($model_key):" ;;
+esac; fi
+# web_search goes through DeepSeek's API whatever answers the chat (dsh-base's web-search-deepseek row).
+if [ "$model_key" != DEEPSEEK_API_KEY ] && ! has_key DEEPSEEK_API_KEY; then
+  if [ "$new_profile" -eq 1 ]; then put_key DEEPSEEK_API_KEY "DeepSeek API key, for web search (enter to skip):"
+  else note "web search uses DeepSeek's API: add DEEPSEEK_API_KEY to $DSH_HOME/.env to turn it on"; fi
+fi
 
 if [ "$new_profile" -eq 1 ]; then
   patch="$profile_dir/cordis.patch.yml"
   list="$(with_terminal "$list")"
   sed -i '' -e "s/^    platform: slack$/    platform: ['$platform', 'local']/" -e "s/^    targetChannels: \['\*'\]$/    targetChannels: $list/" "$patch"
   set_profile_language "$patch" "$language"
-  note "profile: platform $platform and the terminal, channels $list, language $language"
+  provider_rows "$provider" "${key_ref:-}" "${base_url:-}" "${model_id:-}" "${window:-}" "${images:-}" >>"$patch"
+  note "profile: platform $platform and the terminal, channels $list, language $language, model provider $provider"
 else
   note "profile $DEEPBOT_PROFILE already existed — its settings are kept"
   grep -q "^    platform: .*'local'" "$profile_dir/cordis.patch.yml" 2>/dev/null \

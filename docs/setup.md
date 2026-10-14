@@ -109,6 +109,31 @@ Create an application at <https://discord.com/developers/applications>, add a bo
 `dsh gateway setup discord`, the bot token. For `--users`: Developer Mode on, then right-click a name →
 Copy User ID.
 
+## The model provider
+
+DeepSeek's own API is the default: press enter at the installer's provider question, give your
+`DEEPSEEK_API_KEY`, and the profile uses dsh-base's `deepseek-official` route as it always has. An
+existing DeepSeek install keeps working unchanged. OpenGateway and a custom endpoint are options:
+
+| Answer | What the profile gets | Key it asks for |
+|---|---|---|
+| `deepseek` (default) | nothing: dsh-base's default route, `deepseek-official` | `DEEPSEEK_API_KEY` |
+| `opengateway` (optional) | an `llm-pi-ai` route `og` at `https://apis.opengateway.ai/v1` for `deepseek/deepseek-v4.1-flash-ultrafast` (images, DeepSeek's thinking format, efforts off/low/medium/high), and the default model row with effort `medium` | `OG_API_KEY` |
+| `custom` (optional) | an `llm-pi-ai` route `custom` for one OpenAI-compatible endpoint: it asks the base URL, the model id, the key's name, the context window and whether the model reads images | the name you gave |
+
+Web search goes through DeepSeek's API whatever answers the chat (dsh-base's `web-search-deepseek`
+row), so with another provider the installer also offers `DEEPSEEK_API_KEY`, which you may skip; the
+`web_search` tool then fails when called.
+
+A key the harness can already resolve is not asked for. The installer looks, by name only, where the
+harness looks: the launch environment, the DeepSeek Harness app's own store (`~/.dsh/.credentials.yaml`,
+where the app saves keys), then `~/.dsh/.env`. A key in the store is used as it is and the store is
+never written; one only in your shell is copied to `~/.dsh/.env`, because the gateway runs under
+launchd without your shell's environment; a new one goes to `~/.dsh/.env`. A rerun keeps the profile and
+asks only for a key its route names that none of those has. To change the route later, edit the
+`llm-pi-ai` and `agent-default-model` rows of the profile, and restart the gateway; `/model` in `dsh`
+switches one conversation between the models the routes list.
+
 ## Running it
 
 The installer leaves four launchd jobs; each script also takes `--status` and `--uninstall`.

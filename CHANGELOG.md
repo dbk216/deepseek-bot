@@ -20,6 +20,17 @@ the caveat about version numbers is at the bottom.
 
 ### Added
 
+- **The installer can set up another model provider.** DeepSeek's own API stays the default and needs
+  nothing new: the installer's provider question defaults to it, and an existing install keeps its
+  `DEEPSEEK_API_KEY` and route. As options it offers OpenGateway or a custom OpenAI-compatible
+  endpoint, and for those writes the whole `llm-pi-ai` route and the default model row into the new
+  profile (OpenGateway's as the running deployment has it: images,
+  DeepSeek's thinking format, four efforts, `medium` by default). It asks for the route's key, offers
+  `DEEPSEEK_API_KEY` for web search, and checks what a custom endpoint's answers put into the YAML. A
+  rerun asks only for the key the existing route names. A key the harness already resolves — in the
+  launch environment, in the DeepSeek Harness app's own store (`~/.dsh/.credentials.yaml`), or in
+  `~/.dsh/.env` — is not asked for again, the platform tokens included; it used to look in `.env` only,
+  so a harness user was asked for a key the app already had. The store is never written.
 - **The agent knows what it is and which settings are its own.** Every session's setup adds a
   system-prompt section: it is deepseek-bot on DeepSeek Harness; this conversation's platform (or the
   terminal) and the language of its notices; what it may change in its home (persona files, notes,
