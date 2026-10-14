@@ -39,11 +39,14 @@ export type ClientFrame =
   | { type: 'models' }
   /** This conversation's model from its next turn on; `provider: null` goes back to the deployment's. */
   | { type: 'model'; provider: string | null; model?: string; effort?: string | null }
+  /** shift+tab: this conversation's next effort (1) or previous one (-1), of those its model takes. */
+  | { type: 'effort'; step: 1 | -1 }
 
 export type ServerFrame =
   | { type: 'ready'; version: number; language?: string; conversation: string; workspace: string; tenant: string | null; model: string; effort?: string | null; busy: number }
   | { type: 'models'; current: ModelChoice; items: ModelItem[] }
-  | { type: 'model'; current: ModelChoice }
+  /** What a conversation runs on now, to every terminal on it; `cause: 'effort'` when only the effort was stepped. */
+  | { type: 'model'; current: ModelChoice; cause?: 'effort' }
   | { type: 'post'; ts: string; text: string; replace: string | null; buttons: ActionButton[]; answer: boolean }
   | ({ type: 'stream' } & StreamFrame)
   | { type: 'remove'; ts: string }
@@ -57,8 +60,8 @@ export type ServerFrame =
   | { type: 'view'; kind: 'job'; id: string; text: string; append: boolean; status: string }
   | { type: 'error'; code: string; message: string; hello?: boolean }
 
-/** A model a provider advertises, as /model lists it. */
-export interface ModelItem { provider: string; id: string; name: string; description?: string }
+/** A model a provider advertises, as /model lists it, with the efforts it takes when they could be read. */
+export interface ModelItem { provider: string; id: string; name: string; description?: string; efforts?: string[] }
 
 /** What a conversation runs on, and the reasoning efforts that model takes ([] when none). */
 export interface ModelChoice { provider: string; model: string; effort: string | null; efforts: string[] }
