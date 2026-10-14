@@ -43,13 +43,15 @@ Create an application at <https://discord.com/developers/applications>, add a bo
 
 ## The model provider
 
-The installer asks which provider answers, and writes a new profile for it:
+DeepSeek's own API is the default: press enter at the installer's provider question, give your
+`DEEPSEEK_API_KEY`, and the profile uses dsh-base's `deepseek-official` route as it always has. An
+existing DeepSeek install keeps working unchanged. OpenGateway and a custom endpoint are options:
 
 | Answer | What the profile gets | Key it asks for |
 |---|---|---|
-| `deepseek` | nothing: dsh-base's default route, `deepseek-official` | `DEEPSEEK_API_KEY` |
-| `opengateway` | an `llm-pi-ai` route `og` at `https://apis.opengateway.ai/v1` for `deepseek/deepseek-v4.1-flash-ultrafast` (images, DeepSeek's thinking format, efforts off/low/medium/high), and the default model row with effort `medium` | `OG_API_KEY` |
-| `custom` | an `llm-pi-ai` route `custom` for one OpenAI-compatible endpoint: it asks the base URL, the model id, the key's name, the context window and whether the model reads images | the name you gave |
+| `deepseek` (default) | nothing: dsh-base's default route, `deepseek-official` | `DEEPSEEK_API_KEY` |
+| `opengateway` (optional) | an `llm-pi-ai` route `og` at `https://apis.opengateway.ai/v1` for `deepseek/deepseek-v4.1-flash-ultrafast` (images, DeepSeek's thinking format, efforts off/low/medium/high), and the default model row with effort `medium` | `OG_API_KEY` |
+| `custom` (optional) | an `llm-pi-ai` route `custom` for one OpenAI-compatible endpoint: it asks the base URL, the model id, the key's name, the context window and whether the model reads images | the name you gave |
 
 Web search goes through DeepSeek's API whatever answers the chat (dsh-base's `web-search-deepseek`
 row), so with another provider the installer also offers `DEEPSEEK_API_KEY`, which you may skip; the

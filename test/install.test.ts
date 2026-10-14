@@ -185,6 +185,8 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   check('provider: a custom endpoint gets its own route, text only when it takes no images, and no efforts it did not declare', custom.code === 0
     && /^ {6}custom:$/m.test(custom.out) && /^ {8}apiKeyEnv: MY_KEY$/m.test(custom.out) && /^ {8}baseURL: 'https:\/\/llm\.example\.com\/v1'$/m.test(custom.out)
     && /^ {12}contextWindow: 200000$/m.test(custom.out) && /^ {12}input: \[text\]$/m.test(custom.out) && !/reasoningEfforts|thinkingFormat|reasoningEffort/.test(custom.out), custom.out)
+  check('provider: DeepSeek\'s own API is the answer when none is given, so an existing setup stays as it is',
+    /^ {2}ask provider "[^"]*" deepseek$/m.test(readFileSync(INSTALL, 'utf8')) && withHelpers('provider_key deepseek').out === 'DEEPSEEK_API_KEY')
   const ds = withHelpers('provider_rows deepseek')
   check('provider: DeepSeek\'s own route writes nothing', ds.code === 0 && ds.out === '', JSON.stringify(ds))
   const bad = (args) => withHelpers(`valid_endpoint ${args}`).code !== 0

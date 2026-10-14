@@ -258,7 +258,7 @@ if [ "$new_profile" -eq 1 ]; then
   if [ "$platform" != telegram ]; then ask channels "channels to answer in (* = every channel it is invited to, or ids separated by spaces)?" '*'; fi
   ask language "language of the bot's own messages and of dsh (en / ko / zh)?" "$(env_language)"
   case "$language" in en|ko|zh) ;; *) die "unknown language: $language (en, ko or zh)" ;; esac
-  ask provider "model provider (deepseek / opengateway / custom)?" deepseek
+  ask provider "model provider: deepseek (DeepSeek's own API, the default), or opengateway / custom?" deepseek
   case "$provider" in
     deepseek|opengateway) ;;
     custom)

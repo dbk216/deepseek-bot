@@ -7,9 +7,11 @@ the caveat about version numbers is at the bottom.
 
 ### Added
 
-- **The installer sets up the model provider.** It asks for DeepSeek's own API, OpenGateway or a
-  custom OpenAI-compatible endpoint, and for the last two writes the whole `llm-pi-ai` route and the
-  default model row into the new profile (OpenGateway's as the running deployment has it: images,
+- **The installer can set up another model provider.** DeepSeek's own API stays the default and needs
+  nothing new: the installer's provider question defaults to it, and an existing install keeps its
+  `DEEPSEEK_API_KEY` and route. As options it offers OpenGateway or a custom OpenAI-compatible
+  endpoint, and for those writes the whole `llm-pi-ai` route and the default model row into the new
+  profile (OpenGateway's as the running deployment has it: images,
   DeepSeek's thinking format, four efforts, `medium` by default). It asks for the route's key, offers
   `DEEPSEEK_API_KEY` for web search, and checks what a custom endpoint's answers put into the YAML. A
   rerun asks only for the key the existing route names.
