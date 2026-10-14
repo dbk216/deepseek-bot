@@ -7,6 +7,11 @@ the caveat about version numbers is at the bottom.
 
 ### Added
 
+- **`/model` in the terminal.** It lists the models the registered providers advertise, numbered,
+  with this conversation's marked and the reasoning efforts it takes; `/model <n>` or
+  `/model <provider>/<model> [effort]` moves this conversation to another from its next turn (the same
+  session), and `/model default` moves it back. Unlisted models and unsupported efforts are refused.
+  The choice is kept per conversation; nothing else changes. The status line shows the effort.
 - **`/exit` in the terminal**, the same as `/quit`.
 - **English, Korean and Chinese.** A `language` setting in the deepbot row (`en` by default, `ko`,
   `zh`) sets what the bot itself says on every platform (approvals and their buttons, stops,
@@ -19,6 +24,9 @@ the caveat about version numbers is at the bottom.
 
 ### Changed
 
+- **The deployment's reasoning effort reaches a turn.** `agent-default-model`'s `reasoningEffort` was
+  read and dropped: only the provider and model were passed to the session. It is passed now, for the
+  deployment's own model (a tenant's or a conversation's model carries its own).
 - **A service that fails to install fails the install.** On an account with no
   `~/Library/LaunchAgents`, all four installers failed to write their plist and `install.sh` still
   said "done" and exited 0. The installers make the directory; `install.sh` says which service failed,

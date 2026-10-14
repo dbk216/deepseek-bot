@@ -327,7 +327,7 @@ function hostFor(stateDir, cfg = {}) {
 }
 
 // ── 4. The core, serving Slack and a terminal side by side ────────────────────
-function boot({ state = {}, config = {} } = {}) {
+function boot({ state = {}, config = {}, services = {} }: { state?: Record<string, unknown>; config?: Record<string, unknown>; services?: Record<string, unknown> } = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), 'deepbot-core-local-'))
   writeFileSync(join(stateDir, 'sessions.json'), JSON.stringify({ sessions: {}, seen: {}, standing: {}, history: {}, ...state }))
   const slack = createFakeTransport()
@@ -350,6 +350,7 @@ function boot({ state = {}, config = {} } = {}) {
     agentDefaultModel: { currentSelection: () => ({ provider: 'fake', model: 'fake' }) },
     agentPresets: { resolve: async (id) => ({ id }), acquireScope: () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }), mount: async () => {} },
     permissionPresets: { resolve: () => ({ sandbox: 'workspace-write', approval: 'ask' }), set: () => {}, defaultPreset: 'standard' },
+    ...services,
   }
   const ctx = {
     get: (name) => stubs[name],
@@ -388,6 +389,60 @@ function boot({ state = {}, config = {} } = {}) {
   check('core: Slack still gets a working message (it has no typing)', t.slack.posted.some((p) => p.target.channel === 'C_ALLOWED' && /is working/.test(p.text)), JSON.stringify(t.slack.posted.map((p) => p.text.slice(0, 30))))
   check('core: nothing for Slack went to the terminal, nothing for the terminal went to Slack', !c.frames.some((f) => f.type === 'post' && /ping/.test(f.text)) && t.slack.posted.every((p) => p.target.channel !== LOCAL_CHANNEL))
   void ready
+  await c.close()
+  await t.done()
+}
+
+{
+  // /model: the providers' models, listed; one chosen for this conversation runs its next turn, with its effort.
+  const llm = {
+    listProviders: () => [{ id: 'deepseek-official' }, { id: 'opengateway' }],
+    listModels: async (provider) => provider === 'deepseek-official'
+      ? [{ provider, id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }]
+      : [{ provider, id: 'deepseek/deepseek-v4.1-flash-ultrafast', name: 'Ultrafast' }],
+    resolveModelInfo: async (provider, model) => (model === 'deepseek/deepseek-v4.1-flash-ultrafast' ? { reasoning: { efforts: [{ id: 'high', name: 'High' }, { id: 'low', name: 'Low' }] } } : {}),
+  }
+  const t = boot({ services: { llm, agentDefaultModel: { currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }) } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  const ready = await c.waitFor((f) => f.type === 'ready')
+  check('model: ready names the deployment\'s model, with no effort', ready?.model === 'deepseek-v4-flash' && ready?.effort === null, JSON.stringify(ready))
+  c.send({ type: 'models' })
+  const listed = await c.waitFor((f) => f.type === 'models')
+  check('model: every provider\'s models are listed, the current one named', listed?.items?.length === 2 && listed.current.provider === 'deepseek-official' && listed.current.model === 'deepseek-v4-flash', JSON.stringify(listed))
+  c.send({ type: 'model', provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', effort: 'high' })
+  const chosen = await c.waitFor((f) => f.type === 'model')
+  check('model: a listed model is taken for this conversation, with an effort it supports', chosen?.current?.provider === 'opengateway' && chosen.current.model === 'deepseek/deepseek-v4.1-flash-ultrafast' && chosen.current.effort === 'high' && chosen.current.efforts.join() === 'high,low', JSON.stringify(chosen))
+  c.send({ type: 'message', text: 'hi' })
+  for (let i = 0; i < 100 && t.created.length === 0; i++) await sleep(10)
+  check('model: the next turn runs on it, effort included', JSON.stringify(t.created[0]?.agentOptions) === JSON.stringify({ provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'high' }), JSON.stringify(t.created[0]?.agentOptions))
+  c.send({ type: 'model', provider: 'opengateway', model: 'not-a-model' })
+  const unknown = await c.waitFor((f) => f.type === 'error' && f.code === 'model')
+  check('model: one the providers do not list is refused, and said', unknown !== null && /not-a-model/.test(unknown.message), JSON.stringify(unknown))
+  c.send({ type: 'model', provider: 'opengateway', model: 'deepseek/deepseek-v4.1-flash-ultrafast', effort: 'max' })
+  const effort = await c.waitFor((f) => f.type === 'error' && f.code === 'model' && /max/.test(f.message))
+  check('model: an effort the model does not take is refused, with the ones it does', effort !== null && /high, low/.test(effort.message), JSON.stringify(effort))
+  c.send({ type: 'model', provider: null })
+  const back = await c.waitFor((f) => f.type === 'model' && f.current.provider === 'deepseek-official')
+  check('model: default goes back to the deployment\'s', back !== null && back.current.model === 'deepseek-v4-flash')
+  check('model: kept per conversation in the state file, and cleared again', JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`] === undefined)
+  await c.close()
+  await t.done()
+}
+
+{
+  // The deployment's reasoning effort reaches the turn: it used to be read and dropped.
+  const t = boot({ services: { agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'medium' }) } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'message', text: 'hi' })
+  for (let i = 0; i < 100 && t.created.length === 0; i++) await sleep(10)
+  check('effort: the deployment\'s reasoning effort is passed with its model', JSON.stringify(t.created[0]?.agentOptions) === JSON.stringify({ provider: 'og', model: 'deepseek/deepseek-v4.1-flash-ultrafast', reasoningEffort: 'medium' }), JSON.stringify(t.created[0]?.agentOptions))
   await c.close()
   await t.done()
 }

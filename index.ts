@@ -34,10 +34,10 @@
  *   SessionSeq(n)           -> a plain number
  *   summarize()             -> same fold the one-shot runner performs
  *
- * The one thing that cannot be inlined is `installModelSelection`, which the
- * shipped runners call inside `setup` to pin the model selection. This plugin
- * passes `agentOptions` instead and reports a loud error if bootstrapping
- * fails. See MODEL_SELECTION below.
+ * `installModelSelection`, which the shipped runners call inside `setup` to pin
+ * the model selection, is not copied: this plugin passes `agentOptions` (provider,
+ * model, reasoning effort) on every create and resume, and each turn starts a
+ * fresh agent instance that takes its route from them. See MODEL_SELECTION below.
  *
  * Sanity check for the message identity: a user message needs an `id`. Without
  * it, the persisted log is rejected on the next read with
@@ -68,7 +68,7 @@ import type { SlackHistoryResponse } from './types/slack.js'
 import type { InboundMessage, StreamFrame } from './types/transport.js'
 import type { Origin, TurnOutcome, TurnSummary } from './types/core.js'
 import type {
-  AgentDefaultModelService, AgentsService, AgentPresetsService, AttachmentsService,
+  AgentDefaultModelService, AgentsService, LlmService, AgentPresetsService, AttachmentsService,
   CredentialsService, FileSystemService, PermissionPresetsService, SessionProjectionsService,
   SessionQueryService, SessionsService, WorkspaceRegistryService,
 } from './types/dsh.js'
@@ -357,7 +357,7 @@ export function apply(ctx, config) {
   }
   let saveTimer = null
   function loadState() {
-    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, usage: emptyUsageStore() }
+    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, usage: emptyUsageStore() }
     try {
       const raw = JSON.parse(readFileSync(STATE, 'utf8'))
       return {
@@ -373,6 +373,8 @@ export function apply(ctx, config) {
         // --tenant): null for the home. Recorded once and authoritative, because a session resumes
         // in the directory it was created in, and it must not be handed another tenant's notes.
         tenantOf: raw.tenantOf ?? {},
+        // A conversation's own model, from /model.
+        models: raw.models ?? {},
         usage: raw.usage ?? emptyUsageStore(),
         // Conversations with a turn accepted and not yet answered, so a restart can say what it lost.
         // This process's own start empty: what the previous one left is set aside below.
@@ -382,7 +384,7 @@ export function apply(ctx, config) {
         // this process's running turns for lost ones; and a new turn never finds an old record in its way.
         restartLost: { ...(raw.restartLost ?? {}), ...(raw.inflight ?? {}) },
       }
-    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, usage: emptyUsageStore() } }
+    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, usage: emptyUsageStore() } }
   }
   /**
    * Drop what has gone quiet.
@@ -411,6 +413,7 @@ export function apply(ctx, config) {
       delete state.standing[key]
       delete state.history[key]
       if (state.tenantOf) delete state.tenantOf[key]
+      if (state.models) delete state.models[key]
       if (state.touched) delete state.touched[key]
       delete conversations[key]
       dropped++
@@ -1773,18 +1776,12 @@ export function apply(ctx, config) {
     const defaultModel = ctx.get('agentDefaultModel') as AgentDefaultModelService | undefined
     if (!agents || !sessions || !defaultModel) throw new Error('deepbot: agents/sessions/agentDefaultModel missing')
 
-    // The same selection is used for create and resume.
+    // The same selection is used for create and resume: the conversation's own (/model), else its
+    // tenant's, else the deployment's — with the reasoning effort that goes with it.
     const selection = defaultModel.currentSelection()
-    // The same selection is used for create and resume — unless this conversation's tenant
-    // names its own, which is what a per-tenant policy is for.
-    const tenantForModel = tenantOf(sessionKey)
-    const policyForModel = tenantPolicy(tenantForModel)
-    if (policyForModel.model?.provider !== undefined || policyForModel.model?.model !== undefined) {
-      log(`tenant ${tenantForModel}: model ${policyForModel.model?.provider ?? selection.provider}/${policyForModel.model?.model ?? selection.model} instead of the deployment default ${selection.provider}/${selection.model}`)
-    }
-    const agentOptions = {
-      provider: policyForModel.model?.provider ?? selection.provider,
-      model: policyForModel.model?.model ?? selection.model,
+    const agentOptions = modelFor(sessionKey)
+    if (agentOptions.provider !== selection.provider || agentOptions.model !== selection.model) {
+      log(`${state.models?.[sessionKey] !== undefined ? 'conversation' : `tenant ${tenantOf(sessionKey)}`}: model ${agentOptions.provider}/${agentOptions.model} instead of the deployment default ${selection.provider}/${selection.model}`)
     }
     // The conversation's own directory — the tenant's when isolation is on.
       const tenant = tenantOf(sessionKey)
@@ -2072,12 +2069,66 @@ export function apply(ctx, config) {
   // Socket Mode connection and its reconnect loop, event parsing, rendering,
   // history deltas, attachments. The core keeps mapping, the turn loop, policy,
   // watches and reminders.
+  // ── The model, per conversation ─────────────────────────────────────────
+  /** What a conversation runs on: its own choice (/model), else its tenant's, else the deployment's. */
+  function modelFor(key: string): { provider: string; model: string; reasoningEffort?: string } {
+    const selection = (ctx.get('agentDefaultModel') as AgentDefaultModelService | undefined)?.currentSelection() ?? {}
+    const policy = tenantPolicy(tenantOf(key)).model ?? {}
+    const own = state.models?.[key] as { provider: string; model: string; reasoningEffort?: string } | undefined
+    const provider = own?.provider ?? policy.provider ?? selection.provider
+    const model = own?.model ?? policy.model ?? selection.model
+    // An effort belongs to the model it was chosen with: the deployment's applies to its own model only.
+    const effort = own !== undefined ? own.reasoningEffort
+      : provider === selection.provider && model === selection.model ? selection.reasoningEffort : undefined
+    return { provider, model, ...(effort !== undefined ? { reasoningEffort: effort } : {}) }
+  }
+
+  const llm = () => ctx.get('llm') as LlmService | undefined
+  const providerId = (p: { id?: string; provider?: string }) => String(p.id ?? p.provider ?? '')
+
+  /** Every model the registered providers advertise, provider by provider. One that fails to list is left out, and logged. */
+  async function listModels(): Promise<Array<{ provider: string; id: string; name: string; description?: string }>> {
+    const service = llm()
+    if (service === undefined) return []
+    const out = []
+    for (const p of service.listProviders()) {
+      const id = providerId(p)
+      if (id === '') continue
+      try { out.push(...await service.listModels(id)) } catch (e) { log(`models: ${id} could not list: ${String((e as Error)?.message ?? e).slice(0, 160)}`) }
+    }
+    return out
+  }
+
+  /** The efforts a model takes, [] when it has none or they cannot be read. */
+  async function effortsOf(provider: string, model: string): Promise<string[]> {
+    try { return ((await llm()?.resolveModelInfo(provider, model))?.reasoning?.efforts ?? []).map((e) => e.id) } catch { return [] }
+  }
+
+  /**
+   * A conversation's own model, from the terminal's /model: only one the providers list, with an
+   * effort that model takes. The next turn runs on it; a running one keeps its own. null clears it.
+   */
+  async function setModel(key: string, choice: { provider: string; model: string; effort?: string | null } | null): Promise<null | { code: 'unknown-model' } | { code: 'effort'; efforts: string[] }> {
+    if (choice === null) { if (state.models) delete state.models[key]; saveStateNow(); return null }
+    const known = await listModels()
+    if (!known.some((m) => m.provider === choice.provider && m.id === choice.model)) return { code: 'unknown-model' }
+    const efforts = await effortsOf(choice.provider, choice.model)
+    if (choice.effort != null && !efforts.includes(choice.effort)) return { code: 'effort', efforts }
+    state.models = { ...(state.models ?? {}), [key]: { provider: choice.provider, model: choice.model, ...(choice.effort != null ? { reasoningEffort: choice.effort } : {}) } }
+    saveStateNow()
+    log(`models: ${key} now runs on ${choice.provider}/${choice.model}${choice.effort != null ? ` (${choice.effort})` : ''}`)
+    return null
+  }
+
   const transportHost = {
     cfg, log, sessionCwd, stateDir,
     workspaceFor: (key: string) => cwdFor(key),
     listConversations: (channel: string) => listConversations(channel),
     conversationHistory: (channel: string, conversation: string) => conversationHistory(channel, conversation),
-    model: () => { try { return String(ctx.get('agentDefaultModel')?.currentSelection?.()?.model ?? '') } catch { return '' } },
+    model: (key?: string) => { try { return key === undefined ? String(ctx.get('agentDefaultModel')?.currentSelection?.()?.model ?? '') : modelFor(key).model ?? '' } catch { return '' } },
+    modelChoice: async (key: string) => { const m = modelFor(key); return { provider: m.provider ?? '', model: m.model ?? '', effort: m.reasoningEffort ?? null, efforts: await effortsOf(m.provider, m.model) } },
+    listModels: () => listModels(),
+    setModel: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => setModel(key, choice),
     // The tenant a conversation is recorded in (null: the home), or undefined when none is recorded.
     boundTenant: (key: string) => (cfg.tenantIsolation === true ? state.tenantOf?.[key] : undefined),
     // The tenant a conversation is in right now, however it was decided.

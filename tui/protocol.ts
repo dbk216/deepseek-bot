@@ -36,9 +36,14 @@ export type ClientFrame =
   | { type: 'agent.interrupt'; id: string }
   | { type: 'job.kill'; id: string; owner: string }
   | { type: 'answer'; id: string; answers: QuestionAnswer[] | null }
+  | { type: 'models' }
+  /** This conversation's model from its next turn on; `provider: null` goes back to the deployment's. */
+  | { type: 'model'; provider: string | null; model?: string; effort?: string | null }
 
 export type ServerFrame =
-  | { type: 'ready'; version: number; language?: string; conversation: string; workspace: string; tenant: string | null; model: string; busy: number }
+  | { type: 'ready'; version: number; language?: string; conversation: string; workspace: string; tenant: string | null; model: string; effort?: string | null; busy: number }
+  | { type: 'models'; current: ModelChoice; items: ModelItem[] }
+  | { type: 'model'; current: ModelChoice }
   | { type: 'post'; ts: string; text: string; replace: string | null; buttons: ActionButton[]; answer: boolean }
   | ({ type: 'stream' } & StreamFrame)
   | { type: 'remove'; ts: string }
@@ -51,6 +56,12 @@ export type ServerFrame =
   | { type: 'view'; kind: 'agent'; id: string; lines: ViewLine[] }
   | { type: 'view'; kind: 'job'; id: string; text: string; append: boolean; status: string }
   | { type: 'error'; code: string; message: string; hello?: boolean }
+
+/** A model a provider advertises, as /model lists it. */
+export interface ModelItem { provider: string; id: string; name: string; description?: string }
+
+/** What a conversation runs on, and the reasoning efforts that model takes ([] when none). */
+export interface ModelChoice { provider: string; model: string; effort: string | null; efforts: string[] }
 
 /** A terminal conversation, as /sessions lists it. */
 export interface ConversationItem {

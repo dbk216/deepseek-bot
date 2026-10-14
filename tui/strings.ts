@@ -45,6 +45,7 @@ const en = {
     help: { hint: 'this help' },
     quit: { hint: 'quit (ctrl+c twice, or ctrl+d)' },
     exit: { hint: 'the same as /quit' },
+    model: { usage: '[n|provider/model] [effort]', hint: "the models; with one, this conversation's from its next turn" },
   },
   helpKeys: [
     '↵ send · alt+↵ newline · esc interrupt · wheel/PgUp/PgDn scroll · drag to copy',
@@ -57,6 +58,12 @@ const en = {
   turns: (n: number) => `${n} turn${n === 1 ? '' : 's'}`,
   resumeHow: '/resume <n> to continue one',
   newConversation: 'new conversation',
+  modelNow: (model: string, effort: string | null) => `this conversation runs on ${model}${effort !== null ? ` · effort ${effort}` : ''} from its next turn`,
+  modelEfforts: (effort: string | null, efforts: string[]) => `effort: ${effort ?? 'the model\'s default'} (it takes ${efforts.join(', ')})`,
+  modelHow: '/model <n> [effort] switches this conversation · /model default goes back to the deployment\'s',
+  modelListFirst: 'list the models first: /model',
+  modelUsage: '/model, /model <n|provider/model> [effort], or /model default',
+  effortLabel: (effort: string) => `effort ${effort}`,
   defaultWorkspace: 'default workspace',
   resumeUsage: '/resume <n|id> — n is a number from /sessions',
   interviewUsage: '/interview <topic> — what the interview is about',
@@ -131,6 +138,9 @@ const en = {
     needsText: 'a message needs text',
     notJob: 'not a job of this conversation',
     notButton: 'not a button of this conversation',
+    noModels: 'this deployment lists no models',
+    unknownModel: (m: string) => `not a model the providers list: ${m}`,
+    noSuchEffort: (m: string, effort: string, efforts: string[]) => `${m} takes no effort "${effort}"${efforts.length > 0 ? ` (it takes ${efforts.join(', ')})` : ' (it takes none)'}`,
   },
 }
 
@@ -176,6 +186,7 @@ const ko: Strings = {
     help: { hint: '이 도움말' },
     quit: { hint: '종료 (ctrl+c 두 번, ctrl+d도 같음)' },
     exit: { hint: '/quit과 같음' },
+    model: { usage: '[번호|provider/model] [effort]', hint: '모델 목록; 하나를 고르면 이 대화의 다음 turn부터 그 모델' },
   },
   helpKeys: [
     '↵ 전송 · alt+↵ 줄바꿈 · esc 중단 · 휠/PgUp/PgDn 스크롤 · 드래그 복사',
@@ -187,6 +198,12 @@ const ko: Strings = {
   turns: (n) => `${n}턴`,
   resumeHow: '/resume <번호>로 이어가기',
   newConversation: '새 대화',
+  modelNow: (model, effort) => `이 대화는 다음 turn부터 ${model}${effort !== null ? ` · effort ${effort}` : ''}`,
+  modelEfforts: (effort, efforts) => `effort: ${effort ?? '모델 기본값'} (가능: ${efforts.join(', ')})`,
+  modelHow: '/model <번호> [effort]로 이 대화의 모델 변경 · /model default로 배포 기본값으로',
+  modelListFirst: '먼저 모델 목록을 보기: /model',
+  modelUsage: '/model, /model <번호|provider/model> [effort], 또는 /model default',
+  effortLabel: (effort) => `effort ${effort}`,
   defaultWorkspace: '기본 workspace',
   resumeUsage: '/resume <번호|id> — 번호는 /sessions 목록의 것',
   interviewUsage: '/interview <주제> — 무엇에 대해 인터뷰할지',
@@ -259,6 +276,9 @@ const ko: Strings = {
     needsText: '메시지에 내용이 필요함',
     notJob: '이 대화의 job이 아님',
     notButton: '이 대화의 버튼이 아님',
+    noModels: '이 배포에서 볼 수 있는 모델이 없음',
+    unknownModel: (m) => `provider 목록에 없는 모델: ${m}`,
+    noSuchEffort: (m, effort, efforts) => `${m}에는 "${effort}" effort가 없음${efforts.length > 0 ? ` (가능: ${efforts.join(', ')})` : ' (effort 없음)'}`,
   },
 }
 
@@ -302,6 +322,7 @@ const zh: Strings = {
     help: { hint: '本帮助' },
     quit: { hint: '退出（按两次 ctrl+c，或 ctrl+d）' },
     exit: { hint: '与 /quit 相同' },
+    model: { usage: '[编号|provider/model] [effort]', hint: '模型列表；选一个则本对话从下一轮起使用它' },
   },
   helpKeys: [
     '↵ 发送 · alt+↵ 换行 · esc 中断 · 滚轮/PgUp/PgDn 滚动 · 拖动复制',
@@ -313,6 +334,12 @@ const zh: Strings = {
   turns: (n) => `${n} 轮`,
   resumeHow: '用 /resume <编号> 继续',
   newConversation: '新对话',
+  modelNow: (model, effort) => `本对话从下一轮起使用 ${model}${effort !== null ? ` · effort ${effort}` : ''}`,
+  modelEfforts: (effort, efforts) => `effort：${effort ?? '模型默认'}（可用：${efforts.join(', ')}）`,
+  modelHow: '/model <编号> [effort] 切换本对话的模型 · /model default 恢复部署默认',
+  modelListFirst: '请先列出模型：/model',
+  modelUsage: '/model、/model <编号|provider/model> [effort]，或 /model default',
+  effortLabel: (effort) => `effort ${effort}`,
   defaultWorkspace: '默认 workspace',
   resumeUsage: '/resume <编号|id> — 编号来自 /sessions 列表',
   interviewUsage: '/interview <主题> — 要访谈的内容',
@@ -385,6 +412,9 @@ const zh: Strings = {
     needsText: '消息需要内容',
     notJob: '不是此对话的 job',
     notButton: '不是此对话的按钮',
+    noModels: '此部署没有可用的模型列表',
+    unknownModel: (m) => `provider 列表中没有这个模型：${m}`,
+    noSuchEffort: (m, effort, efforts) => `${m} 不支持 "${effort}" effort${efforts.length > 0 ? `（可用：${efforts.join(', ')}）` : '（不支持 effort）'}`,
   },
 }
 

@@ -122,7 +122,12 @@ resolution path. Everything this plugin needs is therefore inlined:
 | `SessionSeq(n)` | a plain number |
 | the runner's summary fold | the same walk over `session.eventAt(seq)` |
 
-`installModelSelection` is the one helper that cannot be inlined; see §3.
+`installModelSelection` is three listeners on the agent's context (`system-prompt/assemble`,
+`agent/request`, `agent/pre-step`, in `dsh-agent/lib/index.js`) that pin the selection and tell the
+model when it changes mid-session. This plugin passes `agentOptions` (provider, model, reasoning
+effort) on every `create` and `resume` instead: each turn starts a fresh agent instance, which takes
+its route from those options, so a conversation's model can change between turns (`/model`) without
+a new session. The `[model changed]` note to the model is what that leaves out.
 
 If you are writing a plugin that *does* live inside a host installation, importing
 the helpers directly is cleaner and strictly better.

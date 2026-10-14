@@ -3,7 +3,7 @@
  * the tests can import them without starting a terminal.
  */
 import type { App } from './app.js'
-import { NAME, type ClientFrame, type ConversationItem, type ServerFrame } from './protocol.js'
+import { NAME, type ClientFrame, type ConversationItem, type ModelChoice, type ModelItem, type ServerFrame } from './protocol.js'
 import { interviewPrompt } from './interview.js'
 import type { CommandInfo } from './complete.js'
 import { stringWidth } from './render/width.js'
@@ -52,6 +52,14 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
     case 'sessions':
       commands?.listed(frame.items)
       return
+    case 'models':
+      app.setStatus({ model: frame.current.model, effort: frame.current.effort })
+      commands?.models(frame.items, frame.current)
+      return
+    case 'model':
+      app.setStatus({ model: frame.current.model, effort: frame.current.effort })
+      app.notice(t().modelNow(`${frame.current.provider}/${frame.current.model}`, frame.current.effort), 'ok')
+      return
     case 'history':
       app.history(frame.items)
       return
@@ -74,7 +82,7 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       if (frame.language !== undefined) setLanguage(languageOf(frame.language))
       commands?.ready()
       app.setBusy(frame.busy)
-      app.setStatus({ connected: true, workspace: frame.workspace, session: frame.conversation, model: frame.model, preset: app.status.preset || 'ask' })
+      app.setStatus({ connected: true, workspace: frame.workspace, session: frame.conversation, model: frame.model, effort: frame.effort ?? null, preset: app.status.preset || 'ask' })
       if (frame.tenant !== null) app.notice(t().tenantTalking(frame.tenant), 'info')
       return
     case 'typing':
@@ -102,7 +110,7 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
 }
 
 /** The /commands the terminal handles itself. Anything else — "/Users/me/x" included — is sent as text. */
-export const COMMANDS = ['new', 'sessions', 'resume', 'tenant', 'interview', 'usage', 'clear', 'help', 'quit', 'exit'] as const
+export const COMMANDS = ['new', 'sessions', 'resume', 'tenant', 'interview', 'usage', 'clear', 'help', 'quit', 'exit', 'model'] as const
 export type CommandName = (typeof COMMANDS)[number]
 
 export function parseCommand(text: string): { name: CommandName; args: string } | null {
@@ -112,7 +120,7 @@ export function parseCommand(text: string): { name: CommandName; args: string } 
 }
 
 /** Which commands take an argument. */
-const TAKES_ARGS: Record<CommandName, boolean> = { new: false, sessions: false, resume: true, tenant: true, interview: true, usage: false, clear: false, help: false, quit: false, exit: false }
+const TAKES_ARGS: Record<CommandName, boolean> = { new: false, sessions: false, resume: true, tenant: true, interview: true, usage: false, clear: false, help: false, quit: false, exit: false, model: true }
 
 /** What each command takes and does, in the terminal's language: the source of /help and of the completion list. */
 export function commandInfo(): Array<CommandInfo & { name: CommandName }> {
@@ -138,6 +146,17 @@ function ago(ms: number, now: number): string {
   return t().ago(Math.max(0, Math.round((now - ms) / 1000)))
 }
 
+/** The /model list, numbered for /model <n>, with what this conversation runs on marked. */
+export function formatModels(items: ModelItem[], current: ModelChoice): string {
+  const lines = items.map((item, i) => {
+    const mark = item.provider === current.provider && item.id === current.model ? '●' : ' '
+    const name = item.name !== item.id ? `  ${item.name}` : ''
+    return `${mark}${String(i + 1).padStart(2)}. ${item.provider}/${item.id}${name}`
+  })
+  const effort = current.efforts.length > 0 ? `\n${t().modelEfforts(current.effort, current.efforts)}` : ''
+  return `${lines.join('\n')}${effort}\n${t().modelHow}`
+}
+
 /** The /sessions list, numbered for /resume <n>. */
 export function formatSessions(items: Array<{ conversation: string; lastAt: number; turns: number; tenant: string | null; title: string }>, now: number, current: string | null): string {
   if (items.length === 0) return t().noSessions
@@ -161,6 +180,8 @@ export interface Commands {
   /** A typed line: true when it was a command (handled here, not sent). */
   intercept(text: string): boolean
   listed(items: ConversationItem[]): void
+  /** The models the gateway listed for /model, and what this conversation runs on. */
+  models(items: ModelItem[], current: ModelChoice): void
   ready(): void
   /** A switch was refused: the screen goes back to the conversation that is still current. */
   rolledBack(message: string): void
@@ -173,6 +194,7 @@ export interface Commands {
 export function createCommands(app: App, link: ConversationLink, options: { now?: () => number; resumeOnStart?: boolean } = {}): Commands {
   const now = options.now ?? (() => Date.now())
   let listed: ConversationItem[] = []
+  let models: ModelItem[] = []
   let wantHistory = options.resumeOnStart === true
   const offline = () => app.notice(t().notConnected, 'error')
 
@@ -209,6 +231,27 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
           wantHistory = true
           break
         }
+        case 'model': {
+          // /model lists; /model <n|provider/model> [effort] switches this conversation; /model default goes back.
+          if (args === '') { if (!link.send({ type: 'models' })) offline(); break }
+          const [which, effort] = args.split(/\s+/, 2)
+          if (which === 'default') { if (!link.send({ type: 'model', provider: null })) offline(); break }
+          const n = Number(which)
+          let choice: { provider: string; model: string } | null = null
+          if (Number.isInteger(n)) {
+            if (models.length === 0) { app.notice(t().modelListFirst, 'error'); break }
+            const item = n >= 1 && n <= models.length ? models[n - 1] : undefined
+            if (item === undefined) { app.notice(t().modelUsage, 'error'); break }
+            choice = { provider: item.provider, model: item.id }
+          } else {
+            // provider/model: a model id may hold a slash of its own (deepseek/deepseek-v4.1-…), a provider does not.
+            const slash = which.indexOf('/')
+            if (slash <= 0 || slash === which.length - 1) { app.notice(t().modelUsage, 'error'); break }
+            choice = { provider: which.slice(0, slash), model: which.slice(slash + 1) }
+          }
+          if (!link.send({ type: 'model', ...choice, effort: effort ?? null })) offline()
+          break
+        }
         case 'interview':
           if (args === '') { app.notice(t().interviewUsage, 'error'); break }
           app.startInterview(args)
@@ -233,6 +276,10 @@ export function createCommands(app: App, link: ConversationLink, options: { now?
     listed(items) {
       listed = items
       app.notice(formatSessions(items, now(), link.conversation), 'info')
+    },
+    models(items, current) {
+      models = items
+      app.notice(formatModels(items, current), 'info')
     },
     ready() {
       if (wantHistory && link.send({ type: 'history' })) wantHistory = false

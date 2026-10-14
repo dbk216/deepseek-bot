@@ -515,8 +515,8 @@ sweeps.
 | `ctrl+r` | search what was typed before (`ctrl+r` again: older; `↵` keeps it to edit; `esc` cancels) |
 | `ctrl+o` | unfold or fold the thinking and the tool results |
 
-Commands: `/new`, `/sessions`, `/resume <n|id>`, `/tenant [name]`, `/interview <topic>`, `/usage`,
-`/clear`, `/help`, `/quit`. Anything else that starts with `/` is sent as text. What is sent or run
+Commands: `/new`, `/sessions`, `/resume <n|id>`, `/tenant [name]`, `/interview <topic>`, `/model`,
+`/usage`, `/clear`, `/help`, `/quit` (or `/exit`). Anything else that starts with `/` is sent as text. What is sent or run
 is kept between runs in `$DSH_HOME/deepbot-tui/history.jsonl` (owner-only, the last 500).
 
 What appears besides the conversation:
@@ -532,6 +532,14 @@ What appears besides the conversation:
   review) open there too — arrows and Enter, Space on multi-select, or type your own answer.
 - **The agent panel** lists the turn's subagents (running ones first, with their time and tokens)
   and background shells; a subagent's view shows its task, tools and answers.
+- **`/model`** lists the models the registered providers advertise (the harness's `llm` service),
+  numbered, with this conversation's marked and the reasoning efforts it takes. `/model <n>` or
+  `/model <provider>/<model> [effort]` puts this conversation on another one from its next turn — the
+  same session, resumed on the new route — and `/model default` gives it the deployment's back. A
+  model no provider lists, or an effort the model does not take, is refused. The choice is kept per
+  conversation in the state file; Slack and the other conversations keep theirs. The deployment's own
+  reasoning effort (`agent-default-model`) now reaches a turn too; it was dropped before. The status
+  line shows the effort in sky blue.
 - **`/interview <topic>`** runs a deep interview: one question per round, and a strip with the
   model's own estimate of how clear each dimension is. Below 20% ambiguity it writes `specs/<slug>.md`.
   The estimate is the model's judgement, not a measurement.

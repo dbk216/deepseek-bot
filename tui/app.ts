@@ -61,6 +61,8 @@ export interface AppStatus {
   workspace: string
   session: string
   model: string
+  /** The model's reasoning effort for this conversation, when it has one. */
+  effort: string | null
   preset: string
   running: boolean
   startedAt: number
@@ -107,7 +109,7 @@ export class App {
   readonly editor = new Editor()
   readonly terminal: Terminal
   readonly status: AppStatus = {
-    connected: false, link: t().connecting, workspace: '', session: '', model: '', preset: '',
+    connected: false, link: t().connecting, workspace: '', session: '', model: '', effort: null, preset: '',
     running: false, startedAt: 0, tokens: 0, contextPct: null,
   }
   private readonly o: AppOptions
@@ -1151,7 +1153,12 @@ export class App {
     }
     if (this.status.tokens > 0) parts.push(`${formatTokens(this.status.tokens)} tok`)
     const right = parts.join(' · ')
-    if (right !== '') screen.put(Math.max(x + 2, screen.cols - 1 - stringWidth(right)), y, right, s(theme.status))
+    // The effort in thinking's sky blue: it is how hard the model thinks.
+    const effort = this.status.effort !== null && this.status.effort !== '' ? t().effortLabel(this.status.effort) : ''
+    const whole = [effort, right].filter(Boolean).join(' · ')
+    let rx = Math.max(x + 2, screen.cols - 1 - stringWidth(whole))
+    if (effort !== '') { rx = screen.put(rx, y, effort, s(theme.thinking)); if (right !== '') rx = screen.put(rx, y, ' · ', s(theme.status)) }
+    if (right !== '') screen.put(rx, y, right, s(theme.status))
   }
 
   private infoLine(): string {
