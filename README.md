@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/deepseek-bot.svg" width="300" alt="deepseek-bot: the DeepSeek whale with Bot stamped across its lower corner">
+  <img src="docs/deepseek-bot.svg" width="720" alt="deepseek-bot: the DeepSeek whale with Bot stamped across its lower corner, beside the deepseek wordmark">
 </p>
 
 <h1 align="center">deepseek-bot</h1>
@@ -121,4 +121,4 @@ and by scenarios run against a real model.
 ## License
 
 [MIT](LICENSE). deepseek-bot is an independent project, not affiliated with or endorsed by DeepSeek.
-The whale is the one in the DeepSeek logo; the DeepSeek name and logo belong to their owner.
+The whale and the wordmark are the DeepSeek logo's; the DeepSeek name and logo belong to their owner.
