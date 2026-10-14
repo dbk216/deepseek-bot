@@ -49,7 +49,7 @@ function setup({ cols = 80, rows = 30, env = { COLORTERM: 'truecolor' }, extra =
     ...extra,
   })
   app.start()
-  app.setStatus({ connected: true, preset: 'ask', session: 'tui-3f2a9c1e-aaaa', workspace: '~/dsh-agent', model: 'deepseek-v4.1' })
+  app.setStatus({ connected: true, effort: 'medium', session: 'tui-3f2a9c1e-aaaa', workspace: '~/dsh-agent', model: 'deepseek-v4.1' })
   clock.advance(20)
   return {
     app, term, clock, sent, actions, views, answers: answers_, copied,
@@ -73,7 +73,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   check('start: the block-letter banner is drawn', text.includes('██████╗'))
   check('start: the info line names model, workspace and session', /deepseek-bot\s+deepseek-v4\.1 · ~\/dsh-agent · session tui-3f2a9c1e-aaaa/.test(text), text.split('\n').find((l) => l.includes('deepseek-bot  ')) ?? '')
   check('start: the header names the project, deepseek-bot', text.split('\n')[0].trimStart().startsWith('deepseek-bot '), text.split('\n')[0])
-  check('start: the input box and the status line', text.includes('╭') && text.includes('╰') && text.includes('▸▸ ask'))
+  check('start: the input box and the status line', text.includes('╭') && text.includes('╰') && text.includes('▸▸ effort medium'))
 }
 
 // 1b. The workspace under the home directory is shown as ~, so a screen, or a recording of one, does
@@ -262,7 +262,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.clock.advance(20)
   const text = t.term.screen.text()
   check('panel: main, the running agent with its time and tokens, the idle one, the job', /● main/.test(text) && /○ research links +12s · ↓ 8\.1k tokens/.test(text) && /○ draft summary +idle/.test(text) && /◆ bash-1  npm test +running · 3s/.test(text), text.split('\n').filter((l) => /main|research|draft|bash-1/.test(l)).join(' | '))
-  check('status line: shells and agents counted', text.includes('▸▸ ask · 1 shell · ← 2 agents'))
+  check('status line: shells and agents counted', /▸▸ effort medium.* · 1 shell · ← 2 agents/.test(text), text.split('\n').find((l) => l.includes('▸▸')))
   t.clock.advance(1000)
   check('panel: the running agent\'s time moves without a new report', /research links +13s/.test(t.term.screen.text()))
 
@@ -768,7 +768,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const label = t.term.screen.find('✻ thinking…')
   const styles = label === null ? new Set() : new Set(Array.from({ length: 9 }, (_, i) => cell(label.row, label.col + 2 + i).style))
   check('thinking: in sky blue, with a light passing over its label', label !== null && styles.size > 1 && [...styles].some((s) => String(s).includes(SKY)), [...styles].join(' | ').slice(0, 120))
-  check('status: says it is thinking', /✻ thinking…/.test(t.term.screen.row(t.term.screen.find('▸▸ ask').row)))
+  check('status: says it is thinking', /✻ thinking…/.test(t.term.screen.row(t.term.screen.find('▸▸ effort').row)))
   t.app.delta('The answer.')
   t.app.final('The answer.')
   t.app.turnEnded()
@@ -844,6 +844,196 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('no colour: what was said has no band and no trailing spaces', at !== null && !t.term.screen.grid.some((c) => c.style.includes('48;')) && t.term.screen.row(at.row).trimEnd() === '› plain')
   check('no colour: the thinking label is one style', (() => { const l = t.term.screen.find('✻ thinking…'); return l !== null && new Set(Array.from({ length: 9 }, (_, i) => t.term.screen.grid[l.row * 60 + l.col + 2 + i].style)).size === 1 })())
   t.app.turnEnded()
+}
+
+// 70. The bottom of the screen, as in Claude Code. A short conversation has the input box right under it
+// (it used to wait at the last rows, with /model's list at the top of an empty screen); /model and
+// /sessions are pickers just above the box; shift+tab steps the effort, shown where a permission label
+// the gateway never sent ("▸▸ ask") used to be; and the mouse works on what the keys work on.
+{
+  const steps = []
+  const t = setup({ cols: 80, rows: 40, extra: { stepEffort: () => steps.push(1) } })
+  const box = () => t.term.screen.find('╭')?.row ?? -1
+  const info = t.term.screen.find('session tui-3f2a9c1e-aaaa')?.row ?? -1
+  check('layout: a short conversation has the input box right under it, not at the last rows', info >= 0 && box() > info && box() - info <= 4 && box() < 40 - 5, `info ${info}, box ${box()}`)
+  const status = t.term.screen.row(box() - 1)
+  check('status: the effort, with the key that steps it, and no permission label', /▸▸ effort medium \(shift\+tab\)/.test(status) && !/\bask\b/.test(status), status)
+  check('status: the model it runs on, at the right', /deepseek-v4\.1\s*$/.test(status), status)
+  t.key('\x1b[Z')
+  check('shift+tab: steps the effort', steps.length === 1)
+  const label = t.term.screen.find('▸▸ effort')
+  t.key(SGR(0, label.col + 3, label.row)); t.key(SGR(0, label.col + 3, label.row, true))
+  check('mouse: a click on the effort steps it too', steps.length === 2)
+  t.app.setStatus({ effort: null })
+  t.clock.advance(20)
+  check('status: a model with no effort shows none', !t.term.screen.text().includes('▸▸'))
+  t.app.setStatus({ effort: 'medium' })
+
+  const picked = []
+  const rows = [
+    { label: 'og/m1', detail: 'M one', current: true, efforts: ['low', 'medium', 'high'], effort: 'medium' },
+    { label: 'og/m2', detail: 'M two', efforts: [] },
+    { label: 'og/m3', detail: 'M three', efforts: ['low', 'high'] },
+    { label: 'back to the configured model' },
+  ]
+  const open = () => { t.app.openPicker({ title: 'Model', rows, onPick: (i, e) => picked.push([i, e]) }); t.clock.advance(20) }
+  open()
+  const first = t.term.screen.find('1. og/m1')
+  check('picker: numbered rows, the current one marked and highlighted, just above the input box', first !== null && box() > first.row && box() - first.row <= 8 && /❯ 1\. og\/m1 +M one +✓/.test(t.term.screen.row(first.row)), t.term.screen.row(first?.row ?? 0))
+  check('picker: the highlighted model\'s effort, and what it takes', /effort ◂ medium ▸ +low · medium · high/.test(t.term.screen.text()), t.term.screen.text().split('\n').find((l) => l.includes('effort ◂')))
+  check('picker: the hint line says the keys', /↑↓ .*←→ effort.*↵ .*esc /.test(t.term.screen.row(39)) || /↑↓ .*←→ effort.*↵ .*esc /.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => l.includes('↑↓')).join(' | '))
+  t.key('\x1b[C'); t.clock.advance(20)
+  check('picker: → takes the next effort', /effort ◂ high ▸/.test(t.term.screen.text()))
+  t.key('\x1b[B'); t.clock.advance(20)
+  check('picker: ↓ moves; a model that takes no effort says so', /❯ 2\. og\/m2/.test(t.term.screen.text()) && t.term.screen.text().includes('takes no effort'), t.term.screen.text().split('\n').filter((l) => /og\/m2|effort/.test(l)).join(' | '))
+  t.key('\x1b[B'); t.key('\x1b[D'); t.clock.advance(20)
+  check('picker: on a model that is not the current one, ← starts from its default', /❯ 3\. og\/m3/.test(t.term.screen.text()) && /effort ◂ high ▸/.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => /effort/.test(l)).join(' | '))
+  t.key('\x1b[A'); t.key('\x1b[A'); t.key('\r'); t.clock.advance(20)
+  check('picker: ↵ picks the row with the effort chosen, and closes', JSON.stringify(picked) === '[[0,"high"]]' && t.term.screen.find('1. og/m1') === null, JSON.stringify(picked))
+  check('picker: and nothing was sent as a message', t.sent.length === 0)
+  open()
+  t.key('4'); t.clock.advance(20)
+  check('picker: a digit moves to that row', /❯ 4\. back to the configured model/.test(t.term.screen.text()) && !/effort ◂/.test(t.term.screen.text()))
+  t.key('\x1b'); t.clock.advance(40)
+  check('picker: esc closes it, picking nothing', picked.length === 1 && t.term.screen.find('og/m1') === null)
+  open()
+  const second = t.term.screen.find('2. og/m2')
+  t.key(SGR(0, second.col, second.row)); t.key(SGR(0, second.col, second.row, true)); t.clock.advance(20)
+  check('mouse: a click on a row picks it', JSON.stringify(picked.at(-1)) === '[1,null]' && t.term.screen.find('og/m1') === null, JSON.stringify(picked))
+  open()
+  const top = t.term.screen.find('1. og/m1')
+  t.key(SGR(65, top.col, top.row)); t.clock.advance(20)
+  check('mouse: the wheel over the picker moves the highlight, not the transcript', /❯ 2\. og\/m2/.test(t.term.screen.text()))
+  t.key('h'); t.clock.advance(20)
+  check('picker: typing closes it and goes to the input box', t.app.editor.text === 'h' && t.term.screen.find('og/m1') === null, JSON.stringify(t.app.editor.text))
+  t.key('\x15')
+  open()
+  t.app.ask('q-70', [{ id: 'which', question: 'Which one?', options: [{ label: 'a' }, { label: 'b' }], multiSelect: false }])
+  t.clock.advance(20)
+  check('picker: a question from the turn takes its place', t.term.screen.find('og/m1') === null && t.term.screen.text().includes('Which one?'))
+  t.key('\x1b'); t.clock.advance(40)
+  check('picker: and it does not come back once the question is done', t.app.question === null && t.app.picker === null && t.term.screen.find('og/m1') === null)
+
+  t.key('hello world'); t.clock.advance(20)
+  const typed = t.term.screen.find('hello world')
+  t.key(SGR(0, typed.col + 3, typed.row)); t.key(SGR(0, typed.col + 3, typed.row, true))
+  t.key('X'); t.clock.advance(20)
+  check('mouse: a click in the input box puts the cursor there', t.app.editor.text === 'helXlo world', JSON.stringify(t.app.editor.text))
+  t.key('\x15')
+
+  for (let i = 0; i < 40; i++) t.app.notice(`line ${i}`)
+  t.clock.advance(20)
+  const last = t.term.screen.find('line 39')?.row ?? -1
+  check('layout: a long conversation pushes the box to the bottom, the newest line just above it', box() === 40 - 4 && last >= box() - 4 && last < box(), `box ${box()}, last ${last}`)
+}
+
+// 71. A completion row is picked with the mouse as with ↵.
+{
+  const intercepted = []
+  const t = setup({ extra: { commands: commandInfo(), intercept: (text) => { intercepted.push(text); return true } } })
+  t.key('/'); t.clock.advance(20)
+  const resume = t.term.screen.find('/resume')
+  t.key(SGR(0, resume.col, resume.row)); t.key(SGR(0, resume.col, resume.row, true)); t.clock.advance(20)
+  check('mouse: a click on a command that takes an argument puts it in', t.app.editor.text === '/resume ' && intercepted.length === 0, JSON.stringify(t.app.editor.text))
+  t.key('\x15'); t.key('/he'); t.clock.advance(20)
+  const help_ = t.term.screen.find('/help')
+  t.key(SGR(0, help_.col, help_.row)); t.key(SGR(0, help_.col, help_.row, true)); t.clock.advance(20)
+  check('mouse: a click on one that takes none runs it', JSON.stringify(intercepted) === '["/help"]', JSON.stringify(intercepted))
+}
+
+// 72. Review of the pickers. A small screen keeps the input box; text being typed when a picker opens
+// keeps ↵ and digits; the picker does not share the screen with the completion list or a history
+// search; shift+tab steps the effort with the completion list open; a click in a tall input box does
+// not scroll it; rows above the window are counted; numbers line up past nine.
+{
+  const many = Array.from({ length: 12 }, (_, i) => ({ label: `p/model-${i + 1}`, detail: `M${i + 1}` }))
+  for (const rows of [16, 13]) {
+    const small = setup({ cols: 80, rows })
+    small.app.openPicker({ title: 'Model', rows: many, onPick: () => {} })
+    small.clock.advance(20)
+    check(`picker: on a screen ${rows} rows tall the input box and the hint line stay`, small.term.screen.find('╰') !== null && small.term.screen.find('╭') !== null && small.term.screen.text().includes('↑↓ pick'), small.term.screen.text().split('\n').slice(-5).join(' | '))
+    check(`picker: and it still shows a row to pick (${rows} rows)`, /❯ +1\. p\/model-1 /.test(small.term.screen.text()))
+  }
+
+  const picked = []
+  const t = setup({ cols: 80, rows: 40, extra: { commands: commandInfo(), intercept: (text) => text.startsWith('/') } })
+  t.key('order ')
+  t.app.openPicker({ title: 'Model', rows: many, onPick: (i) => picked.push(i) })
+  t.clock.advance(20)
+  t.key('2'); t.clock.advance(20)
+  check('picker: opened over text being typed, a digit goes to the text', t.app.editor.text === 'order 2' && picked.length === 0, JSON.stringify(t.app.editor.text))
+  t.app.openPicker({ title: 'Model', rows: many, onPick: (i) => picked.push(i) })
+  t.key('\r'); t.clock.advance(20)
+  check('picker: and ↵ sends the text instead of picking', JSON.stringify(t.sent) === '["order 2"]' && picked.length === 0, JSON.stringify([t.sent, picked]))
+
+  const c = setup({ cols: 80, rows: 40, extra: { commands: commandInfo() } })
+  c.key('/s'); c.clock.advance(20)
+  c.app.openPicker({ title: 'Model', rows: many, onPick: () => {} })
+  c.key('\x1b[5~'); c.clock.advance(20)
+  check('picker: the completion list does not open under it', c.app.picker !== null && c.app.completion === null && !c.term.screen.text().includes('/sessions'), c.term.screen.text().split('\n').filter((l) => l.includes('/s')).join(' | '))
+  c.key('\x12'); c.clock.advance(20)
+  check('picker: nor does a history search', c.app.picker !== null && !/history search/.test(c.term.screen.text()))
+
+  const steps = []
+  const e = setup({ extra: { commands: commandInfo(), stepEffort: () => steps.push(1) } })
+  e.key('/'); e.clock.advance(20)
+  e.key('\x1b[Z'); e.clock.advance(20)
+  check('shift+tab: with the completion list open it steps the effort, and inserts nothing', steps.length === 1 && e.app.editor.text === '/', JSON.stringify(e.app.editor.text))
+
+  const tall = setup({ cols: 80, rows: 40 })
+  tall.key(`\x1b[200~${Array.from({ length: 10 }, (_, i) => `row${i}`).join('\n')}\x1b[201~`)
+  tall.clock.advance(20)
+  // The cursor on the last row: the box shows the last six, row4 to row9, and a click goes on row4.
+  const top = tall.term.screen.find('row4')
+  const shownBefore = tall.term.screen.row(top.row).trim()
+  tall.key(SGR(0, top.col + 2, top.row)); tall.key(SGR(0, top.col + 2, top.row, true)); tall.clock.advance(20)
+  check('mouse: a click in a tall input box does not scroll it', tall.term.screen.row(top.row).trim() === shownBefore, `${shownBefore} → ${tall.term.screen.row(top.row).trim()}`)
+
+  const w = setup({ cols: 80, rows: 40 })
+  w.app.openPicker({ title: 'Model', rows: many, onPick: () => {} })
+  for (let i = 0; i < 10; i++) w.key('\x1b[B')
+  w.clock.advance(20)
+  const text = w.term.screen.text()
+  check('picker: rows above the window are counted', /↑ \d/.test(text), text.split('\n').filter((l) => /[↑↓] \d/.test(l)).join(' | '))
+  const nine = w.term.screen.find('. p/model-9 '), eleven = w.term.screen.find('. p/model-11')
+  check('picker: numbers line up past nine', nine !== null && eleven !== null && nine.col === eleven.col, text.split('\n').filter((l) => /model-(9|11) /.test(l)).join(' | '))
+}
+
+// 73. Second review. A deployment whose models take no effort shows "takes no effort" on every row: its
+// line was drawn and not counted. A crowded screen (interview strip, panel, approval) left the picker one
+// or two rows, and it drew more. And with text in the box, every key but esc is the text's.
+{
+  const none = Array.from({ length: 12 }, (_, i) => ({ label: `p/model-${i + 1}`, detail: `M${i + 1}`, efforts: [] }))
+  for (const rows of [15, 14]) {
+    const t = setup({ cols: 80, rows })
+    t.app.openPicker({ title: 'Model', rows: none, onPick: () => {} })
+    t.clock.advance(20)
+    check(`picker: models that take no effort, ${rows} rows: the box and the hint line stay`, t.term.screen.find('╰') !== null && t.term.screen.text().includes('↑↓ pick'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+    check(`picker: and the highlighted model says it takes none (${rows} rows)`, t.term.screen.text().includes('this model takes no effort'))
+  }
+  // 18 rows leave the picker three, 17 two, 16 one: the title and the effort line give way to the rows.
+  for (const rows of [18, 17, 16]) {
+    const crowd = setup({ cols: 80, rows })
+    const now = crowd.clock.now()
+    crowd.app.startInterview('topic')
+    crowd.app.setPanel([{ id: 'c1', label: 'helper', mode: 'one-shot', status: 'running', since: now, settledMs: 0, tokens: 0 }], [{ id: 'bash-1', owner: 'root', kind: 'bash', label: 'sleep', status: 'running', startedAt: now, progress: '' }])
+    crowd.app.offer('ts-1', [{ id: 'yes', label: 'yes' }, { id: 'no', label: 'no' }])
+    crowd.app.openPicker({ title: 'Model', rows: none, onPick: () => {} })
+    crowd.clock.advance(20)
+    check(`picker: on a crowded screen (${rows} rows) the box and the hint line stay`, crowd.term.screen.find('╰') !== null && crowd.term.screen.text().includes('↑↓ pick'), crowd.term.screen.text().split('\n').slice(-5).join(' | '))
+    check(`picker: and a row to pick is still shown (${rows} rows)`, /❯ +1\. p\/model-1 /.test(crowd.term.screen.text()))
+  }
+
+  const picked = []
+  const t = setup({ cols: 80, rows: 40 })
+  t.key('ab')
+  t.app.openPicker({ title: 'Model', rows: [{ label: 'og/m1', current: true, efforts: ['low', 'high'], effort: 'low' }, { label: 'og/m2' }], onPick: (i, e) => picked.push([i, e]) })
+  t.key('\x1b[D'); t.key('X'); t.clock.advance(20)
+  check('picker: with text in the box, ← moves the cursor in the text, not the effort', t.app.editor.text === 'aXb' && /effort ◂ low ▸/.test(t.term.screen.text()), JSON.stringify(t.app.editor.text))
+  t.key('\x1b[B'); t.clock.advance(20)
+  check('picker: and ↓ is not the picker\'s', /❯ 1\. og\/m1/.test(t.term.screen.text()))
+  t.key('\x1b'); t.clock.advance(40)
+  check('picker: esc still closes it, and leaves the text', t.app.picker === null && t.app.editor.text === 'aXb' && picked.length === 0)
 }
 
 const failed = results.filter((r) => !r.ok)

@@ -62,4 +62,4 @@ const app = new App({
 })
 restoreOnExit(app.terminal)
 app.start()
-app.setStatus({ connected: true, preset: 'ask', model: 'deepseek-v4.1-flash', workspace: '~/dsh-agent', session: 'tui-demo-0001' })
+app.setStatus({ connected: true, effort: 'medium', model: 'deepseek-v4.1-flash', workspace: '~/dsh-agent', session: 'tui-demo-0001' })

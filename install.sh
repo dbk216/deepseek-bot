@@ -3,9 +3,10 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/rlaope/deepseek-bot/master/install.sh | bash
 #
-# Fetches deepbot into ~/.deepbot, builds it, creates the agent's home and the gateway profile, stores
-# the platform tokens in the harness's credential file, and installs the services that keep it running.
-# Run it again to update: every file you have edited is kept, and no token is asked for twice.
+# Fetches deepbot into ~/.deepbot, builds it, creates the agent's home and the gateway profile, asks for
+# the model's key when the harness has none, and installs the services that keep it running. The bot
+# starts with the terminal, dsh; a messenger is connected afterwards with `dsh gateway setup`, which is
+# not part of this. Run it again to update: every file you have edited is kept, and no key is asked twice.
 #
 # Optional environment:
 #   DEEPBOT_DIR      where the source lives               (default ~/.deepbot)
@@ -18,37 +19,6 @@
 set -euo pipefail
 
 # Helpers at the top level, so a test can source this file (DEEPBOT_INSTALL_SOURCED=1) and call them.
-
-# The channels as a YAML list, from what a person typed: ids separated by spaces or commas, or * alone.
-# It goes into the profile through sed, so nothing but an id's characters gets through; and it is split
-# with globbing off, since an unquoted * expanded to the files in the directory.
-channel_list() {
-  local input="$1" ids=() id out=''
-  if [ "$input" = '*' ]; then printf "['*']\n"; return 0; fi
-  local IFS=$' \t,'
-  set -f; read -r -a ids <<< "$input"; set +f
-  [ "${#ids[@]}" -gt 0 ] || return 1
-  for id in "${ids[@]}"; do
-    [[ "$id" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
-    out="${out:+$out, }'$id'"
-  done
-  printf '[%s]\n' "$out"
-}
-
-# The platform an existing profile names, so a rerun asks for that platform's tokens; slack if none.
-# A profile written by this installer lists the terminal beside it — platform: ['slack', 'local'] — and
-# `dsh gateway setup` adds others after it, so it is the first messenger on the line.
-profile_platform() {
-  local line found
-  line="$(grep -m1 -E '^    platform: ' "$1" 2>/dev/null || true)"
-  found="$(printf '%s\n' "$line" | grep -o -E 'slack|telegram|discord' | head -1 || true)"
-  printf '%s\n' "${found:-slack}"
-}
-
-# The channels with the terminal's added: its conversations are in a channel named tui.
-with_terminal() {
-  if [ "$1" = "['*']" ]; then printf '%s\n' "$1"; else printf '%s\n' "${1%]}, 'tui']"; fi
-}
 
 # The language a new profile starts in: the environment's, read in the POSIX order (LC_ALL, LC_MESSAGES,
 # LANG), the first one set deciding. English when it names none of the three. The plugin reads the same way.
@@ -319,12 +289,8 @@ step "agent home and gateway profile"
 profile_dir="$DSH_HOME/profiles/$DEEPBOT_PROFILE"
 new_profile=0; [ -e "$profile_dir" ] || new_profile=1
 # Asked, and checked, before init.sh writes the profile: a refused answer used to leave a profile behind
-# that a rerun then kept as it was.
-platform="$(profile_platform "$profile_dir/cordis.patch.yml")"; channels='*'
+# that a rerun then kept as it was. No messenger is asked about: those are `dsh gateway setup`'s.
 if [ "$new_profile" -eq 1 ]; then
-  ask platform "platform (slack / telegram / discord)?" slack
-  case "$platform" in slack|telegram|discord) ;; *) die "unknown platform: $platform" ;; esac
-  if [ "$platform" != telegram ]; then ask channels "channels to answer in (* = every channel it is invited to, or ids separated by spaces)?" '*'; fi
   ask language "language of the bot's own messages and of dsh (en / ko / zh)?" "$(env_language)"
   case "$language" in en|ko|zh) ;; *) die "unknown language: $language (en, ko or zh)" ;; esac
   ask provider "model provider: deepseek (DeepSeek's own API, the default), or opengateway / custom?" deepseek
@@ -341,18 +307,12 @@ if [ "$new_profile" -eq 1 ]; then
       case "$images" in yes|no) ;; *) die "images: yes or no (got: $images)" ;; esac ;;
     *) die "unknown provider: $provider (deepseek, opengateway or custom)" ;;
   esac
-  list="$(channel_list "$channels")" || die "channel ids are letters, digits, - and _ (got: $channels)"
 fi
 DEEPBOT_INSTALLER=1 DSH_BIN="$DSH_BIN" "$DEEPBOT_DIR/init.sh" --home "$DEEPBOT_HOME" --profile "$DEEPBOT_PROFILE" | sed 's/^/    /'
 
-step "platform and credentials"
+step "the model's key"
 note "a key the harness already has (its store, ~/.dsh/.env, or this shell) is used as it is; a new one goes to $DSH_HOME/.env (mode 600)"
 mkdir -p "$DSH_HOME"; touch "$DSH_HOME/.env"; chmod 600 "$DSH_HOME/.env"
-case "$platform" in
-  slack)    put_key SLACK_BOT_TOKEN "Slack bot token (xoxb-…):"; put_key SLACK_APP_TOKEN "Slack app-level token (xapp-…):" ;;
-  telegram) put_key TELEGRAM_BOT_TOKEN "Telegram bot token:" ;;
-  discord)  put_key DISCORD_BOT_TOKEN "Discord bot token:" ;;
-esac
 # The model's key: the provider chosen now, or the one an existing profile's route reads.
 if [ "$new_profile" -eq 1 ]; then model_key="$(provider_key "$provider" "${key_ref:-}")"; else model_key="$(profile_key "$profile_dir/cordis.patch.yml")"; fi
 # A route may name its key in a way no .env line can hold (a !!js expression): that one is the operator's.
@@ -371,11 +331,11 @@ fi
 
 if [ "$new_profile" -eq 1 ]; then
   patch="$profile_dir/cordis.patch.yml"
-  list="$(with_terminal "$list")"
-  sed -i '' -e "s/^    platform: slack$/    platform: ['$platform', 'local']/" -e "s/^    targetChannels: \['\*'\]$/    targetChannels: $list/" "$patch"
+  # The terminal only, answering everywhere: `dsh gateway setup` adds a messenger, and '*' already lets it in.
+  sed -i '' -e "s/^    platform: slack$/    platform: ['local']/" "$patch"
   set_profile_language "$patch" "$language"
   provider_rows "$provider" "${key_ref:-}" "${base_url:-}" "${model_id:-}" "${window:-}" "${images:-}" >>"$patch"
-  note "profile: platform $platform and the terminal, channels $list, language $language, model provider $provider"
+  note "profile: the terminal, language $language, model provider $provider"
 else
   note "profile $DEEPBOT_PROFILE already existed — its settings are kept"
   grep -q "^    platform: .*'local'" "$profile_dir/cordis.patch.yml" 2>/dev/null \
@@ -410,13 +370,11 @@ step "done"
 node "$DSH_HOME/service/health-check.mjs" --status 2>/dev/null | sed 's/^/    /' || true
 cat <<NEXT
 
-    Next: invite the bot to a channel and mention it, or talk to it here: ${bold}dsh${off}
+    Talk to it here: ${bold}dsh${off}
+    Connect Slack, Telegram or Discord: ${bold}dsh gateway setup${off}
     Your agent's persona is ${bold}$DEEPBOT_HOME/SOUL.md${off} — edit it, it is yours.
-    Another messenger, or a new token, later: ${bold}dsh gateway setup <slack|telegram|discord>${off}
     Update later by running the same curl line again.
 NEXT
-# A direct message always reaches a Telegram or Discord bot, so with no allowedUsers anyone who finds it may use it.
-case "$platform" in telegram|discord) note "anyone who finds the bot on $platform can message it; to limit who: dsh gateway setup $platform --users <your id>" ;; esac
 }
 
 # The last line, so a download cut short defines functions and runs nothing.

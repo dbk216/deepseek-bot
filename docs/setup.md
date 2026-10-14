@@ -5,25 +5,50 @@ The install itself is one line, in the [README](../README.md).
 
 ## Connecting a messenger: `dsh gateway`
 
-The installer sets up one platform. `dsh gateway setup` adds another, or replaces a token, at any time:
+The installer does not ask about messengers: the bot starts with the terminal, `dsh`. Connecting
+Slack, Telegram or Discord — now or later — is one command. One messenger at a time, beside the
+terminal; choosing another switches to it:
 
 ```bash
-dsh gateway setup discord                  # asks for the token, then who may talk to it
-dsh gateway manifest slack                 # a Slack app manifest, to create the app from
-dsh gateway status                         # the service, the platforms, the tokens, the connection
+dsh gateway setup
 ```
 
-`setup` saves the tokens to `~/.dsh/.env` (mode 600), asks the platform whether they work and whose
-bot they belong to (for Slack, that both tokens are from one app), adds the platform to the profile's
-deepbot row — nothing else in the file changes — and restarts the gateway, waiting until it is
-connected. With several platforms the health file keeps one flag for all of them, so "connected"
-means one did: `setup` then watches a few seconds more for another reporting an error, and says it
-cannot tell which. Message the one you set up to see it answer.
+```
+ 🐋 deepseek-bot · messenger setup
+    ↑↓ move · Enter choose · Esc back · Ctrl+C quit
 
-Every question has an answer that needs no terminal, so an agent such as Claude Code can run it too:
-a token comes from the environment variable of its own name (`SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`,
-`TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`), the channels from `--channels`, the people from `--users`.
-Without a terminal a missing answer is exit 2 and nothing is written. A token is never an argument:
+ ◆ Which messenger?
+    ❯ 💬 Slack            ⬜ not set up
+      ✈️  Telegram        ⬜ not set up
+      🎮 Discord          ⬜ not set up
+      🖥️  Terminal (dsh)  ✅ on
+      ✔  Done
+```
+
+Pick one with ↑↓ (or j/k) and Enter; Esc goes back, Ctrl+C quits and keeps what was saved. Each
+messenger is a few steps, and the browser opens where a token is made:
+
+- **Slack** — the app is created from a filled-in manifest (pick the workspace, Next, Create); then
+  the bot token from Install App and the app-level token from Basic Information.
+- **Telegram** — @BotFather makes the bot and its token; then who may talk to it, by user id.
+- **Discord** — the Developer Portal makes the bot; the setup checks the Message Content intent,
+  opens an invite link made from the token, and offers "only me" as the application's owner.
+
+Each token is checked with the platform as it is pasted (it shows as `*`), and asked again when it is
+wrong. A messenger already set up offers to keep it, set it up again or remove it; another one asks
+before switching, and the old one's tokens stay where they are. A token already saved is offered
+again instead of asked for. At Done it offers one restart (now, or later) and waits for it.
+`dsh gateway setup slack` goes straight to one messenger.
+
+`setup` saves the tokens to `~/.dsh/.env` (mode 600) and puts the platform in the profile's deepbot
+row — nothing else in the file changes. A switch also replaces the old messenger's channel ids
+(with every channel) and its people (with the ones given).
+
+**Without a terminal** — an agent such as Claude Code, a script — nothing is asked, and the same holds
+at a terminal when a flag or the platform's token in the environment is given: name the platform,
+and a token comes from the environment variable of its own name (`SLACK_BOT_TOKEN` and
+`SLACK_APP_TOKEN`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`), the channels from `--channels`, the
+people from `--users`. A missing answer is exit 2 and nothing is written. A token is never an argument:
 arguments show in `ps` and in shell history.
 
 A harness set up before deepseek-bot keeps what it has. A key entered in the DeepSeek Harness app
@@ -41,7 +66,7 @@ TELEGRAM_BOT_TOKEN=… dsh gateway setup telegram --users 123456789
 
 | Command | What it does |
 |---|---|
-| `setup <platform>` | tokens, the platform in the profile, `--channels`, `--users`; `--no-verify`, `--no-restart`. The channel list is shared too: `--channels '*'` opens every platform the profile serves, so with another one served it needs `--yes` |
+| `setup <platform>` | tokens, the platform in the profile, `--channels`, `--users`; `--no-verify`, `--no-restart`. A different messenger replaces the one there |
 | `remove <platform>` | takes it out of the profile; its tokens stay where they are |
 | `start` / `stop` / `restart` | the gateway's launchd job. `stop` stops the health probe too, which would otherwise alert that the gateway is down; both come back at login or with `start` |
 | `status [--json]` | exit 0 when the gateway runs, is connected and has its tokens. Token values are never shown |
@@ -53,10 +78,10 @@ written; 130 cancelled. The bot itself cannot set up or remove a platform: its c
 sandbox that cannot write `~/.dsh`. That sandbox confines writes only, so `start`, `stop` and
 `restart` — calls to launchd, as `launchctl` itself is — are not kept from it.
 
-**Who may talk to it.** `allowedUsers` in the deepbot row lists user ids; `--users` adds to it.
+**Who may talk to it.** `allowedUsers` in the deepbot row lists user ids; `--users` adds to it (on a
+switch to another messenger it replaces it).
 Empty — the default — means anyone who can reach the bot in an allowed channel. On Telegram and
 Discord a direct message always reaches it, so there that is anyone who finds it: list yourself. The
-list is shared by the platforms, so once it holds ids, the people on every platform must be in it. The
 terminal's user is always allowed. Someone not listed starts no turn and gets no reply, and their
 approval button presses are ignored too. What they wrote can still reach the model as part of a
 thread or channel's history, when a listed person asks in that thread or channel. Write ids quoted
@@ -64,11 +89,13 @@ thread or channel's history, when a listed person asks in that thread or channel
 
 ## Platform setup
 
+`dsh gateway setup` walks through these; they are here for doing it by hand, or for an agent.
+
 ### Slack
 
-The quickest way is a manifest: `dsh gateway manifest slack`, then <https://api.slack.com/apps> →
-Create New App → From a manifest, and paste it. It sets steps 2 to 4 except the app-level token;
-generate that under Basic Information → App-Level Tokens. By hand:
+The quickest way is the manifest `dsh gateway setup` opens, or prints with `dsh gateway manifest slack`:
+<https://api.slack.com/apps> → Create New App → From a manifest. It sets steps 2 to 4 except the
+app-level token; generate that under Basic Information → App-Level Tokens. By hand:
 
 1. Create an app at <https://api.slack.com/apps>.
 2. **Socket Mode** → on → generate an app-level token with `connections:write` (`xapp-…`). No public
@@ -79,8 +106,8 @@ generate that under Basic Information → App-Level Tokens. By hand:
 4. **Event Subscriptions** → subscribe to `app_mention` (and `message.im` for DMs).
    **Interactivity & Shortcuts** → on (no request URL is needed in Socket Mode), for the approval
    buttons; without it a press does nothing and the person types allow / deny (or 허용 / 거부, 允许 / 拒绝) instead.
-5. Install it to the workspace and copy the bot token (`xoxb-…`). Give both tokens to the installer,
-   or to `dsh gateway setup slack`. A member id for `--users` is under a profile → ⋮ → Copy member ID.
+5. Install it to the workspace and copy the bot token (`xoxb-…`). Give both tokens to
+   `dsh gateway setup`. A member id for `--users` is under a profile → ⋮ → Copy member ID.
 6. `/invite` the bot into every channel it should serve. **A bot cannot see a channel it has not
    been invited to** — the most common silent failure.
 
@@ -95,8 +122,8 @@ observed in a live workspace: no turn has run on this code there.
 
 ### Telegram
 
-Create a bot with [@BotFather](https://t.me/BotFather) and give the installer, or
-`dsh gateway setup telegram`, its token. In groups, mention the bot or reply to it; for it to see group
+Create a bot with [@BotFather](https://t.me/BotFather) and give `dsh gateway setup` its token. In
+groups, mention the bot or reply to it; for it to see group
 messages at all, turn off privacy mode in BotFather (`/setprivacy`). Anyone on Telegram who finds the
 bot can message it: list who may with `--users` — your numeric id is what
 [@userinfobot](https://t.me/userinfobot) replies.
@@ -105,9 +132,9 @@ bot can message it: list who may with `--users` — your numeric id is what
 
 Create an application at <https://discord.com/developers/applications>, add a bot, turn on the
 **Message Content** privileged intent, and invite it with the `bot` scope and the *Send Messages*,
-*Read Message History* and *Attach Files* permissions. Give the installer, or
-`dsh gateway setup discord`, the bot token. For `--users`: Developer Mode on, then right-click a name →
-Copy User ID.
+*Read Message History* and *Attach Files* permissions. Give `dsh gateway setup` the bot token; at a
+terminal it checks the intent and makes the invite link for you. For `--users`: Developer Mode on, then
+right-click a name → Copy User ID.
 
 ## The model provider
 

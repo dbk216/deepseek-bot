@@ -68,7 +68,7 @@ Each line is traceable to code and to something that checks it.
 | Sends an attached **image** to the model as an image | `transports/attachments.ts`, `index.ts` | `test/attachments.test.ts` 13/13; `vision.json` needs a model |
 | Produces **documents** (docx, pptx, xlsx) | `profile/cordis.patch.yml` office rows | `test/scenarios/document.json` asserts the artifacts |
 | Asks the user to **approve** a destructive command, in the conversation — with buttons on every platform | `index.ts`, `transports/*.ts` | approval checks in `test/core.test.ts`; `approval-gate.json` records one open gap |
-| Confines **reads**, for commands and for the file tools — other agents' homes, credentials, the session store, the gateway's logs, the user's agent sockets | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.ts` 35/35; `test/edges.test.ts` 19/19 |
+| Confines **reads**, for commands and for the file tools — other agents' homes, the harness home (credentials, sessions and their index, the adapter's state, attachments, reminders; all but its runtimes), the gateway's logs, the user's agent sockets | `service/confined-runner.sh`, `readScope` | `test/confined-runner.test.ts` 100/100; `test/edges.test.ts` 19/19 |
 | Flags **instruction-like text** in fetched material | `injection.ts` | `test/injection.test.ts` 31/31 |
 | **Uploads the documents a turn made** (pdf, docx, xlsx, pptx, csv changed during the turn, whose path the answer names, with one link and inside the home; on Slack it needs `files:write`) | `index.ts`, `transports/*.ts` | `test/core.test.ts` 152/152; `test/slack.test.ts` |
 | Runs **one turn at a time per conversation**; a later message waits, and a stop withdraws what is waiting | `index.ts` | `test/failures.test.ts` 32/32 |
@@ -125,8 +125,9 @@ buttons })`, `fetchHistory`, `fetchAttachments`, `identity()`, optional `permali
 `uploadFile`, `startTyping` and `remove`, and a `supportsButtons` flag the core reads rather than
 assumes.
 
-`platform: 'slack' | 'telegram' | 'discord'` selects one. `test/fake-transport.ts` supplies a
-fourth, which is how the core is tested with no platform account at all.
+`platform: 'slack' | 'telegram' | 'discord' | 'local'` selects one, or a list of one messenger and
+`'local'` (the terminal); anything else is a config error at load. `test/fake-transport.ts` supplies
+another, which is how the core is tested with no platform account at all.
 
 ### Sessions
 
@@ -490,7 +491,7 @@ terminal gets the persona, the workspace's notes, recall, approvals and the turn
 goes through the same core. The conversation lives in the gateway; the terminal is only the screen,
 so quitting loses nothing.
 
-**Serve it.** `dsh gateway setup local` does this and restarts the gateway. By hand: put `local` in
+**Serve it.** A new install serves it already; `dsh gateway setup` turns it on or off. By hand: put `local` in
 the deepbot row's `platform` — alone, or in a list — and allow its channel. `config` replaces the
 whole row, so restate what you keep:
 
@@ -508,7 +509,7 @@ A terminal may open, message or stop only the subagents and jobs its own panel o
 only its own conversation's buttons.
 
 **Use it.** `dsh` (`install.sh` writes it to `~/.local/bin`, and a new profile it writes serves the terminal
-beside the platform; from a clone, run `node dist/tui/main.js`) finds the running gateway;
+alone until `dsh gateway setup` adds a messenger; from a clone, run `node dist/tui/main.js`) finds the running gateway;
 `--name` picks one by `tuiName`, `--socket` names the path, `--tenant` talks in a tenant's workspace
 (needs `tenantIsolation`; without it a new conversation goes where the configuration sends any other,
 `tenantDefault` or the home), `--resume <id>` continues a conversation (the id is printed on exit).
@@ -525,12 +526,14 @@ sweeps.
 | Keys | |
 |---|---|
 | `↵` / `alt+↵` | send / new line |
+| `shift+tab`, or a click on it | step this conversation's reasoning effort (shown at the left of the status line) |
 | `esc` | stop the running turn (what was waiting behind it comes back to the input); in a view, back to the conversation |
 | `ctrl+c` twice, `ctrl+d` | quit (the terminal is always restored) |
 | wheel, `PgUp`/`PgDn` | scroll; drag selects and copies (pbcopy locally, OSC 52 over SSH) |
 | `tab`, `↑↓`, `↵`, or a click | the agent panel: open a subagent or a shell |
 | `ctrl+x` | in a subagent view, stop it; in a shell view, stop the job |
-| `/` or `@`, then `↑↓` and `tab` | complete a command, or a file of the workspace (`↵` runs a command that takes nothing) |
+| `/` or `@`, then `↑↓` and `tab` | complete a command, or a file of the workspace (`↵` or a click runs a command that takes nothing) |
+| a click in the input box | puts the cursor there |
 | `ctrl+r` | search what was typed before (`ctrl+r` again: older; `↵` keeps it to edit; `esc` cancels) |
 | `ctrl+o` | unfold or fold the thinking and the tool results |
 
@@ -547,21 +550,29 @@ What appears besides the conversation:
   tool registry), an edit's changed lines, and the result under it — a few lines, all on `ctrl+o`.
 - **Thinking** is shown apart from the answer and folded once the answer starts, when the model
   streams its reasoning (`reasoning-delta`); the route this deployment uses sends none.
+- **The input box follows the conversation.** On a short one it sits right under the last line, and
+  it stays at the bottom once the screen is full, so what a command shows is where the eye already is.
 - **Approvals** are buttons above the input box; **a turn's questions** (`ask_user_question`, a plan
   review) open there too — arrows and Enter, Space on multi-select, or type your own answer.
+- **`/model` and `/sessions` open a picker** above the input box: `↑↓` or the wheel to move, a digit to
+  jump, `↵` or a click to pick, `esc` to close; typing closes it and goes to the input box. `/resume <n>`
+  still works typed.
 - **The agent panel** lists the turn's subagents (running ones first, with their time and tokens)
   and background shells; a subagent's view shows its task, tools and answers.
 - **`/model`** lists the models the registered providers advertise (the harness's `llm` service),
-  numbered, with this conversation's marked and the reasoning efforts it takes. `/model <n>` or
-  `/model <provider>/<model> [effort]` puts this conversation on another one from its next turn — the
-  same session, resumed on the new route — and `/model default` gives it the deployment's back. A
+  with this conversation's marked; `←→` picks the highlighted model's reasoning effort among those it
+  takes, and the last row goes back to the configured model. Picking one, `/model <n>` or
+  `/model <provider>/<model> [effort]` puts this conversation on it from its next turn — the
+  same session, resumed on the new route — and `/model default` gives it the deployment's back. Every
+  terminal on the conversation is told. `shift+tab` steps the effort of the model it is on, round, and
+  keeps it as the conversation's own choice, as `/model` does. A
   model no provider lists, or an effort the model does not take, is refused. The choice is kept per
   conversation in the state file; Slack and the other conversations keep theirs. The list is every
   model a registered route advertises, including a route whose key is in neither `~/.dsh/.env` nor the app's store (`~/.dsh/.credentials.yaml`) — a conversation
   moved to one fails its turns until `/model default`. Reminders the harness delivers on its own
   schedule are not known to follow a conversation's choice (unverified). The deployment's own
   reasoning effort (`agent-default-model`) now reaches a turn too; it was dropped before. The status
-  line shows the effort in sky blue.
+  line shows the effort at its left, in sky blue, and the model at its right.
 - **`/interview <topic>`** runs a deep interview: one question per round, and a strip with the
   model's own estimate of how clear each dimension is. Below 20% ambiguity it writes `specs/<slug>.md`.
   The estimate is the model's judgement, not a measurement.

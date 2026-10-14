@@ -28,8 +28,8 @@ Never say just "home".
 - **agent home** — the directory the agent works in and may write (`DEEPBOT_HOME`, by default
   `~/dsh-agent`). It holds the persona files and the notes. Also the sandbox's **workspace**.
 - **harness home** — the harness's own directory (`~/.dsh`): profiles, credentials, the session
-  store, the recall index, the deployed service copies. The agent's commands cannot read the
-  private parts of it.
+  store, the recall index, the deployed service copies. The agent's commands cannot read it, except
+  the runtimes the harness ships there (`dsh-runtimes`).
 - **app store** — `~/.dsh/.credentials.yaml`, where the DeepSeek Harness app keeps the keys entered
   in it: the names under `refs:`. The harness reads it before `~/.dsh/.env`. deepseek-bot reads its
   names and never writes it. Not `~/.dsh/.env`, which is where deepseek-bot's own setup writes.

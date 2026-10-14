@@ -48,13 +48,16 @@ is built before the thing it stands on. The detailed history of each milestone i
   dsh-jobs disposes an agent's jobs with it, so "I'll tell you when it finishes" cannot be kept — on
   any platform. A continuable subagent can be messaged only while its parent's turn runs, for the
   same reason. Keeping an agent while it owns work is a lifecycle change, not made.
+- **Several messengers at once.** The composite transport answers whatever the terminal does not claim
+  through its first messenger, so `dsh gateway setup` keeps one at a time. Serving two needs each
+  conversation routed to the platform it came from, including the messages the bot sends first
+  (watches, reminders, restart notices).
 - **`dsh gateway`, what other bots' gateways have and this does not yet:** a restart that waits for running
   turns instead of cutting them (they are reported as lost); health per platform — `connected` in the
   health file is one flag for every platform, so `status` cannot say which one is down, and
   `lastError` one field: a clear names the error it clears, so two platforms failing with the same
   text (`fetch failed`) can clear each other's until the next attempt writes it again; pairing a new
-  person by a code in a direct message instead of listing ids; a home channel for notices; and the
-  installer asking through `dsh gateway setup` instead of its own prompts, which it still duplicates.
+  person by a code in a direct message instead of listing ids; and a home channel for notices.
 
 Decided against:
 
@@ -65,6 +68,11 @@ Decided against:
 
 ## Unverified
 
+- The guided `dsh gateway setup` in a real terminal: its menus and the token prompt were driven in a
+  pty (macOS Terminal-style escape sequences) and by the suite's fakes; not yet in other emulators,
+  nor end to end against Slack, Telegram and Discord. The browser is opened with macOS's `open`;
+  elsewhere the link is printed. Discord's `GET /applications/@me` fields used (`bot.username`,
+  `flags`, `owner`) are from Discord's API reference, not observed.
 - How a DeepSeek Harness subscription signs in, as against a key entered in the app: `dsh gateway status`
   reports the model's key from the app store or `~/.dsh/.env` and does not count it toward healthy,
   so a subscription that needs no key reads "not in the DeepSeek Harness app or ~/.dsh/.env" there.

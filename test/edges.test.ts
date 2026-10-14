@@ -10,7 +10,7 @@
 import './dist-fresh.ts'
 import './scratch-dsh-home.ts'   // the recall index must not land in the real ~/.dsh
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../dist/index.js'
@@ -169,11 +169,22 @@ function boot({ state = {}, config = {} }: { state?: Record<string, unknown>; co
 {
   const dir = mkdtempSync(join(tmpdir(), 'deepbot-scenario-'))
   const broken = join(dir, 'broken.json')
-  writeFileSync(broken, '{ this is not json')
-  const run = spawnSync(process.execPath, ['test/run-scenario.ts', broken, '--timeout', '30'], { encoding: 'utf8', cwd: process.cwd() })
+  // Pinned, so this check never writes the user's home: a broken file made the runner create
+  // ~/dsh-agent-test-<time> and exit before removing it, one more on every test run.
+  const pinned = join(dir, 'home')
+  // DSH_BIN is any file that exists, so the runner gets past its own checks to the file's (CI has no dsh, and
+  // the check passed there on "dsh not found" alone). A file that parses to null is no scenario either.
+  const runOn = (body) => {
+    writeFileSync(broken, body)
+    const run = spawnSync(process.execPath, ['test/run-scenario.ts', broken, '--timeout', '30'], { encoding: 'utf8', cwd: process.cwd(), env: { ...process.env, DEEPBOT_TEST_HOME: pinned, DSH_BIN: process.execPath } })
+    return { status: run.status, said: `${run.stdout}${run.stderr}`, leftHome: existsSync(pinned) }
+  }
+  const notJson = runOn('{ this is not json')
+  const nothing = runOn('null')
   rmSync(dir, { recursive: true, force: true })
-  check('a broken scenario file exits non-zero', run.status !== 0, `status ${run.status}`)
-  check('and says what is wrong rather than hanging', /json|JSON|parse|not found|scenario/i.test(`${run.stdout}${run.stderr}`), `${run.stdout}${run.stderr}`.trim().split('\n').slice(-1)[0]?.slice(0, 100))
+  check('a broken scenario file exits non-zero', notJson.status !== 0 && nothing.status !== 0, `status ${notJson.status}, ${nothing.status}`)
+  check('and makes no agent home before it has read the file', !notJson.leftHome && !nothing.leftHome)
+  check('and says it could not read the scenario', /could not read the scenario: /.test(notJson.said) && /could not read the scenario: /.test(nothing.said), notJson.said.trim().split('\n').slice(-1)[0]?.slice(0, 100))
 }
 
 // 10. A link inside the workspace that points outside it is not inside it.
@@ -295,6 +306,24 @@ async function failingOnce(otherError: string | null) {
   const r = await failingOnce('slack socket closed')
   check('a start that works leaves an error another platform wrote since', r.recovered?.lastError === 'slack socket closed', JSON.stringify(r.recovered))
   r.done()
+}
+
+// 13. A gateway that serves only the terminal is connected once its socket is up. No messenger is there to
+// say so, and the health probe read "not connected" as down and restarted it every five minutes.
+for (const [platform, expected] of [['local', true], ['slack', false]] as const) {
+  const dir = mkdtempSync(join(tmpdir(), 'deepbot-health-'))
+  const healthFile = join(dir, 'health.json')
+  const t = boot({ config: { platform, healthFile } })
+  let h = null
+  for (const deadline = Date.now() + 5000; h?.connected !== true && Date.now() < deadline;) {
+    await sleep(25)
+    try { h = JSON.parse(readFileSync(healthFile, 'utf8')) } catch { /* not yet */ }
+  }
+  check(platform === 'local'
+    ? 'health: a terminal-only gateway is connected once it has started'
+    : 'health: with a messenger, connected waits for that platform to say so (control)', (h?.connected === true) === expected, JSON.stringify(h))
+  t.done()
+  rmSync(dir, { recursive: true, force: true })
 }
 
 const failed = results.filter((r) => !r.ok)

@@ -303,6 +303,19 @@ export function apply(ctx, config) {
       ? "allowedUsers: quote each id ('123456789') — unquoted, YAML reads a number, and a long one loses digits"
       : 'allowedUsers: a list of user ids (empty: anyone who can reach the bot)')
   }
+  // A misspelt platform ('slak') used to fall through to Slack.
+  const knownPlatforms = ['slack', 'telegram', 'discord', 'local']
+  const listedPlatforms = Array.isArray(cfg.platform) ? cfg.platform : [cfg.platform]
+  if (listedPlatforms.length === 0 || listedPlatforms.some((p) => !knownPlatforms.includes(p))) {
+    problems.push(`platform: 'slack', 'telegram', 'discord' or 'local', or a list of them (got: ${JSON.stringify(cfg.platform)})`)
+  }
+  // One messenger, with the terminal beside it: with two, every conversation the terminal did not claim
+  // went to the first one listed.
+  if (new Set(listedPlatforms).size !== listedPlatforms.length) problems.push(`platform: a platform listed twice would connect twice — list each once (got: ${JSON.stringify(cfg.platform)})`)
+  const messengers = [...new Set(listedPlatforms.filter((p) => p !== 'local'))]
+  if (messengers.length > 1) {
+    problems.push(`platform: one messenger at a time, with 'local' beside it (got: ${messengers.join(', ')}) — keep one in the profile, or run dsh gateway setup <slack|telegram|discord>, which replaces the messenger`)
+  }
   if (problems.length > 0) throw new Error(`deepbot config error:\n  - ${problems.join('\n  - ')}`)
 
   const language = languageOf(cfg.language)
@@ -771,13 +784,19 @@ export function apply(ctx, config) {
     }
     if (origin !== null) {
       const watchConfig = `${cwd}/watches/${origin.channel}-${origin.threadTs}.json`
-      standing.push([
+      // The watch runner reads the home's watches/ alone, which a tenant's commands cannot write: a tenant
+      // conversation is told so, rather than handed a path that fails.
+      standing.push((home === cwd ? [
         '[this conversation]',
         `channel=${origin.channel} thread=${origin.threadTs}`,
         `To set up a watch that reports back here, write ${watchConfig} with`,
         '{"id":"<short-id>","name":"…","command":"<shell command>","intervalSeconds":300,"channel":"' + origin.channel + '","rateLimitMinutes":30}',
         'then tell the user what you will watch and how often.',
-      ].join('\n'))
+      ] : [
+        '[this conversation]',
+        `channel=${origin.channel} thread=${origin.threadTs}`,
+        'Watches are not available in this workspace: say so if asked to watch something on a schedule.',
+      ]).join('\n'))
 
       // The conversation's own link, so a reference to it can be clickable. Slack links its own
       // <#C…> mention, but a description of a thread stays text without this.
@@ -790,17 +809,18 @@ export function apply(ctx, config) {
     }
     // Which directory is writable, stated plainly. Measured: asked to create a
     // file in "홈 디렉터리", the agent read that as the OS home, correctly decided
-    // it was out of scope, and refused — right instinct, wrong map.
+    // it was out of scope, and refused — right instinct, wrong map. The conversation's own: a tenant
+    // was told the shared home, which its commands cannot write, and given the home's notes.
     standing.push([
       '[your files]',
-      `Your home is ${cwd}. Create and edit files there freely.`,
+      `Your home is ${home}. Create and edit files there freely.`,
       'Anything outside it needs the user to ask for it explicitly.',
     ].join('\n'))
-    const notes = memoryIndex(cwd)
+    const notes = memoryIndex(home)
     if (notes !== '') standing.push(defuse(notes))
     // Note hygiene. The advice is stable until the file changes and the standing block is
     // digest-gated, so a request to tidy up is sent once and then cached.
-    const notesAdvice = analyzeNotes(readTextIfPresent(join(cwd, cfg.factsFile), 200000), {
+    const notesAdvice = analyzeNotes(readTextIfPresent(join(home, cfg.factsFile), 200000), {
       budgetChars: cfg.notesBudgetChars,
     }).advice
     if (notesAdvice !== null) {
@@ -2125,7 +2145,7 @@ export function apply(ctx, config) {
     return [
       'This agent is deepseek-bot: a bot people talk to on Slack, Telegram, Discord or in a terminal (dsh), running on DeepSeek Harness. Its name and voice are the persona in SOUL.md.',
       `This conversation is ${platformOf(key)}. The bot's own notices (approvals, stops, failures) are in ${({ en: 'English', ko: 'Korean', zh: 'Chinese' })[language]}; answers follow the persona and the person.`,
-      'It may change, in its home: SOUL.md, USER.md and MEMORY.md (who it is, who it works for, what it knows), its notes under memory/, its watches, and its skills under .dsh/skills/<name>/SKILL.md.',
+      `It may change, in its home: SOUL.md, USER.md and MEMORY.md (who it is, who it works for, what it knows), its notes under memory/,${tenantOf(key) === null ? ' its watches,' : ''} and its skills under .dsh/skills/<name>/SKILL.md.`,
       'Only the operator can change, outside its home, where it can neither read nor write: the model and provider, the platforms and channels it answers in, the language setting, API keys and tokens, the approval rules and the sandbox. Asked to change one, it says which setting it is and that the operator changes it in the gateway profile (~/.dsh/profiles/<profile>/cordis.patch.yml), ~/.dsh/.env or the DeepSeek Harness app store (~/.dsh/.credentials.yaml), and does not try to; in the terminal, /model moves one conversation to another model the providers list.',
     ].join('\n')
   }
@@ -2221,6 +2241,23 @@ export function apply(ctx, config) {
     return null
   }
 
+  /**
+   * shift+tab in the terminal: the conversation's next (or previous) effort, round, of those its model
+   * takes. Kept as the conversation's own choice, as /model keeps one, so what runs is what is shown.
+   */
+  async function stepEffort(key: string, step: 1 | -1): Promise<null | { code: 'no-efforts'; model: string }> {
+    const route = modelFor(key)
+    const { efforts } = await modelInfo(route.provider, route.model)
+    if (efforts.length === 0) return { code: 'no-efforts', model: `${route.provider}/${route.model}` }
+    const now = shownEffort(key)
+    const at = now === null ? -1 : efforts.indexOf(now)
+    const next = efforts[at === -1 ? (step > 0 ? 0 : efforts.length - 1) : (at + step + efforts.length) % efforts.length]
+    state.models = { ...(state.models ?? {}), [key]: { provider: route.provider, model: route.model, reasoningEffort: next, at: Date.now() } }
+    saveStateNow()
+    log(`models: ${key} effort ${now ?? 'default'} -> ${next}`)
+    return null
+  }
+
   const transportHost = {
     cfg, log, sessionCwd, stateDir,
     workspaceFor: (key: string) => cwdFor(key),
@@ -2231,6 +2268,9 @@ export function apply(ctx, config) {
     modelChoice: async (key: string) => { const m = modelFor(key); const efforts = await effortsOf(m.provider, m.model); return { provider: m.provider ?? '', model: m.model ?? '', effort: shownEffort(key), efforts } },
     listModels: () => listModels(),
     setModel: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => setModel(key, choice),
+    // As last read: the /model list asks about every listed model, and a model's efforts do not move.
+    effortsFor: async (provider: string, model: string) => knownEfforts.get(`${provider}/${model}`) ?? effortsOf(provider, model),
+    stepEffort: (key: string, step: 1 | -1) => stepEffort(key, step),
     // The tenant a conversation is recorded in (null: the home), or undefined when none is recorded.
     boundTenant: (key: string) => (cfg.tenantIsolation === true ? state.tenantOf?.[key] : undefined),
     // The tenant a conversation is in right now, however it was decided.
@@ -3085,6 +3125,12 @@ export function apply(ctx, config) {
     // No platform clears it for a terminal-only gateway, so it stayed for the life of the process.
     if (startupError !== null && health.lastError === startupError) { health.lastError = null; writeHealth() }
     startupError = null
+    // A gateway serving only the terminal is up once its socket is: no messenger is there to say connected,
+    // and the probe read the flag left false as down and restarted it every five minutes.
+    if (platforms.every((name) => name === 'local')) {
+      Object.assign(health, { connected: true, connectedAt: Date.now(), disconnectedAt: null })
+      writeHealth()
+    }
     await recover()
   }
 

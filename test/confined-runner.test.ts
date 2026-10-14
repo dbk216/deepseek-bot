@@ -19,9 +19,9 @@ if (process.platform !== 'darwin') {
   process.exit(0)
 }
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const RUNNER = fileURLToPath(new URL('../service/confined-runner.sh', import.meta.url))
 const HOME = process.env.HOME ?? ''
@@ -77,7 +77,7 @@ for (const resolved of [false, true]) {
   writeFileSync(join(fakeHome, '.dsh', '.env'), 'SLACK_BOT_TOKEN=canary-env-5d1\n')
   writeFileSync(join(fakeHome, '.dsh', '.credentials.yaml'), 'refs: { x: canary-cred-9b7 }\n')
   writeFileSync(join(fakeHome, '.dsh', '.credentials.yaml.bak-20261008'), 'canary-bak-3c4\n')
-  writeFileSync(join(fakeHome, '.dsh', 'other.txt'), 'readable-2e8\n')
+  writeFileSync(join(fakeHome, 'outside.txt'), 'readable-2e8\n')
   // The gateway's own log: its first lines carry the web UI's auth token, which opens the harness's
   // HTTP API — outside this sandbox — to whoever reads it.
   mkdirSync(join(fakeHome, '.dsh', 'service', 'logs'), { recursive: true })
@@ -91,6 +91,24 @@ for (const resolved of [false, true]) {
   // The gateway profiles: the operator's settings, which the agent is told it can neither read nor change.
   mkdirSync(join(fakeHome, '.dsh', 'profiles', 'agent'), { recursive: true })
   writeFileSync(join(fakeHome, '.dsh', 'profiles', 'agent', 'cordis.patch.yml'), 'canary-profile-8e1\n')
+  // And everything else the harness keeps there, and whatever it adds next: its session index (every
+  // conversation's text, with the WAL that holds the newest), the adapter's state and log, the harness's
+  // storages (reminders, a session cache), attachments, the terminal's input history, the watch list.
+  // These were readable: the runner denied a list of names, and the list was a step behind the harness.
+  const privateFiles = {
+    'agent-session-index.db': 'canary-index-1a2', 'agent-session-index.db-wal': 'canary-wal-2b3', 'agent-session-index.db-shm': 'canary-shm-3c4',
+    'slack-state/sessions.json': 'canary-state-4d5', 'slack-state/deepbot.log': 'canary-log-5e6',
+    'storages/workspace.json': 'canary-ws-6f7', 'storages/schedule.json': 'canary-sched-7a8', 'storages/session_projcache/p': 'canary-proj-8b9',
+    'attachments/v1/a.png': 'canary-attach-9c0', 'deepbot-tui/history.jsonl': 'canary-hist-0d1', 'watches.json': 'canary-watch-1e2',
+    'added-later.db': 'canary-later-2f3',
+  }
+  for (const [file, canary] of Object.entries(privateFiles)) {
+    mkdirSync(dirname(join(fakeHome, '.dsh', file)), { recursive: true })
+    writeFileSync(join(fakeHome, '.dsh', file), `${canary}\n`)
+  }
+  // The harness's runtimes stay readable: the office skill runs its node from there.
+  mkdirSync(join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'bin'), { recursive: true })
+  writeFileSync(join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'bin', 'tool'), 'runtime-3a4\n')
   const env = { ...process.env, HOME: fakeHome }
   const text = execFileSync(RUNNER, ['--print-profile', ...READ_ONLY, '--', 'true'], { encoding: 'utf8', env })
   const as = resolved ? ' (resolved home)' : ' (home under a symlink)'
@@ -107,6 +125,8 @@ for (const resolved of [false, true]) {
   check('nor the recall index' + as, !read(join('recall', 'home', 'recall-index.jsonl')).includes('canary-recall-77b'))
   check('nor the session store' + as, !read(join('sessions', 'bucket', 's1', 'session.v4.jsonl.zstd')).includes('canary-session-a41'))
   check('nor a gateway profile' + as, !read(join('profiles', 'agent', 'cordis.patch.yml')).includes('canary-profile-8e1'))
+  for (const [file, canary] of Object.entries(privateFiles)) check(`nor ${file}` + as, !read(file).includes(canary), read(file).slice(0, 40))
+  check('the harness runtimes stay readable' + as, read(join('dsh-runtimes', 'rt', 'bin', 'tool')).includes('runtime-3a4'), read(join('dsh-runtimes', 'rt', 'bin', 'tool')).slice(0, 40))
   // A hard link is another path to the same file, which a path rule would not cover. It cannot be made
   // from the workspace — not because the credentials are denied, but because Seatbelt refuses a link
   // whose source is outside the writable paths at all: a readable file outside is refused the same way
@@ -119,7 +139,7 @@ for (const resolved of [false, true]) {
     return existsSync(to)
   }
   check('a hard link to the credentials cannot be made' + as, !link(join(fakeHome, '.dsh', '.env'), join(ws, 'copy')))
-  check('nor to any file outside the writable paths — the reason it holds' + as, !link(join(fakeHome, '.dsh', 'other.txt'), join(ws, 'other')))
+  check('nor to any file outside the writable paths — the reason it holds' + as, !link(join(fakeHome, 'outside.txt'), join(ws, 'other')))
   writeFileSync(join(ws, 'mine.txt'), 'x')
   check('while one inside them can be, so ln itself works' + as, link(join(ws, 'mine.txt'), join(ws, 'mine-link')))
   // The workspace is written by its resolved name: under a symlinked directory every write used to be
@@ -137,14 +157,112 @@ for (const resolved of [false, true]) {
   mkdirSync(join(alt, 'sessions', 'b'), { recursive: true })
   writeFileSync(join(alt, 'recall', 'home', 'recall-index.jsonl'), 'canary-alt-recall-5e0\n')
   writeFileSync(join(alt, 'sessions', 'b', 's.zstd'), 'canary-alt-session-6f1\n')
+  writeFileSync(join(alt, 'agent-session-index.db'), 'canary-alt-index-7a2\n')
   const readAlt = (file) => {
     try { return execFileSync(RUNNER, [...READ_ONLY, '--', '/bin/cat', join(alt, file)], { encoding: 'utf8', env: { ...env, DSH_HOME: alt }, stdio: 'pipe' }) }
     catch (e) { return `exit ${e.status}` }
   }
   check('nor a DSH_HOME\'s recall index' + as, !readAlt(join('recall', 'home', 'recall-index.jsonl')).includes('canary-alt-recall-5e0'))
   check('nor its session store' + as, !readAlt(join('sessions', 'b', 's.zstd')).includes('canary-alt-session-6f1'))
-  check('the rest of ~/.dsh stays readable' + as, read('other.txt').includes('readable-2e8'), read('other.txt').slice(0, 40))
+  check('nor anything else in it' + as, !readAlt('agent-session-index.db').includes('canary-alt-index-7a2'))
+  // The control: the runner itself works, and what is outside the harness home is readable.
+  const outside = (() => { try { return execFileSync(RUNNER, [...READ_ONLY, '--', '/bin/cat', join(fakeHome, 'outside.txt')], { encoding: 'utf8', env, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}` } })()
+  check('a file outside the harness home stays readable' + as, outside.includes('readable-2e8'), outside.slice(0, 40))
+  // An agent home someone put inside the harness home is its own, and stays usable.
+  const inner = join(fakeHome, '.dsh', 'inner-home')
+  mkdirSync(inner, { recursive: true })
+  writeFileSync(join(inner, 'note.md'), 'inner-4b5\n')
+  const innerRead = (() => { try { return execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--bind', inner, inner, '--', '/bin/cat', join(inner, 'note.md')], { encoding: 'utf8', env, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}` } })()
+  check('a workspace inside the harness home stays readable' + as, innerRead.includes('inner-4b5'), innerRead.slice(0, 40))
+  // Review of the deny. node resolves a script's path by lstat-ing every directory on the way, the harness
+  // home among them: a script in the runtimes failed with EPERM while cat of the same file passed.
+  writeFileSync(join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'run.js'), "console.log('ran-5c6')\n")
+  const ran = (() => { try { return execFileSync(RUNNER, [...READ_ONLY, '--', process.execPath, join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'run.js')], { encoding: 'utf8', env, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}: ${String(e.stderr ?? '').slice(0, 80)}` } })()
+  check('node runs a script from the runtimes' + as, ran.includes('ran-5c6'), ran.slice(0, 100))
+  // An agent home set to the harness home itself is not an allow for all of it.
+  const whole = (() => { try { return execFileSync(RUNNER, [...READ_ONLY, '--', '/bin/cat', join(fakeHome, '.dsh', 'agent-session-index.db')], { encoding: 'utf8', env: { ...env, DEEPBOT_HOME: join(fakeHome, '.dsh') }, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}` } })()
+  check('an agent home set to the harness home itself opens none of it' + as, !whole.includes('canary-index-1a2'), whole.slice(0, 40))
+  // DEEPBOT_DENY_READ holds inside what the harness-home block allows.
+  writeFileSync(join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'secret'), 'canary-deny-6d7\n')
+  const extra = (() => { try { return execFileSync(RUNNER, [...READ_ONLY, '--', '/bin/cat', join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'secret')], { encoding: 'utf8', env: { ...env, DEEPBOT_DENY_READ: join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'secret') }, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}` } })()
+  check('DEEPBOT_DENY_READ still holds inside the runtimes' + as, !extra.includes('canary-deny-6d7'), extra.slice(0, 40))
+  // With DSH_HOME set the runner still runs commands: a refusal of everything would pass the denies above.
+  mkdirSync(join(alt, 'dsh-runtimes', 'rt'), { recursive: true })
+  writeFileSync(join(alt, 'dsh-runtimes', 'rt', 'tool'), 'alt-runtime-8e9\n')
+  check('with DSH_HOME set, its runtimes stay readable' + as, readAlt(join('dsh-runtimes', 'rt', 'tool')).includes('alt-runtime-8e9'), readAlt(join('dsh-runtimes', 'rt', 'tool')).slice(0, 40))
   rmSync(made, { recursive: true, force: true })
+}
+
+// Second review. An entry the runner cannot resolve (no search permission: a retired home made chmod 000)
+// wrote an empty subpath, which sandbox-exec refuses, and every command failed. A workspace given by a
+// link's name was denied as "another home" by its real name. A DEEPBOT_DENY_READ entry that is a link to a
+// file left the file readable.
+{
+  const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'runner-names-')))
+  const env = { ...process.env, HOME: fakeHome }
+  const ws = join(fakeHome, 'dsh-agent-ws')
+  mkdirSync(ws, { recursive: true })
+  writeFileSync(join(ws, 'note.md'), 'ws-note-1b2\n')
+  const closed = join(fakeHome, 'dsh-agent-retired')
+  mkdirSync(closed)
+  chmodSync(closed, 0o000)
+  const inWs = (cmd, extraEnv = {}, root = ws) => { try { return execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--bind', root, root, '--', ...cmd], { encoding: 'utf8', env: { ...env, ...extraEnv }, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}: ${String(e.stderr ?? '').slice(0, 80)}` } }
+  check('an agent home it cannot search does not stop every command', inWs(['/bin/echo', 'ran-2c3']).includes('ran-2c3'), inWs(['/bin/echo', 'ran-2c3']).slice(0, 100))
+  check('nor does such a DEEPBOT_DENY_READ entry', inWs(['/bin/echo', 'ran-3d4'], { DEEPBOT_DENY_READ: closed }).includes('ran-3d4'))
+  chmodSync(closed, 0o755)
+  const link = join(fakeHome, 'ws-link')
+  symlinkSync(ws, link)
+  check('a workspace given by a link\'s name is not denied by its real name', inWs(['/bin/cat', join(link, 'note.md')], {}, link).includes('ws-note-1b2'), inWs(['/bin/cat', join(link, 'note.md')], {}, link).slice(0, 100))
+  writeFileSync(join(fakeHome, 'secret.txt'), 'canary-linked-file-4e5\n')
+  symlinkSync(join(fakeHome, 'secret.txt'), join(fakeHome, 'secret-link'))
+  check('a DEEPBOT_DENY_READ link to a file denies the file', !inWs(['/bin/cat', join(fakeHome, 'secret.txt')], { DEEPBOT_DENY_READ: join(fakeHome, 'secret-link') }).includes('canary-linked-file-4e5'))
+  rmSync(fakeHome, { recursive: true, force: true })
+}
+
+// Third review. A tenant's workspace sits inside the home (<home>/tenants/<t>), which the dsh-agent* glob
+// denies: its own commands could write their files and not read them. A DEEPBOT_DENY_READ entry inside the
+// workspace still holds. The workspace is matched in the case it has on disk, and a name with a quote in
+// it no longer breaks the .env rule's regex.
+{
+  const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'runner-tenant-')))
+  const env = { ...process.env, HOME: fakeHome }
+  const home = join(fakeHome, 'dsh-agent')
+  const tenant = join(home, 'tenants', 'acme')
+  mkdirSync(join(tenant, 'private'), { recursive: true })
+  writeFileSync(join(home, 'SOUL.md'), 'canary-home-5f6\n')
+  writeFileSync(join(tenant, 'note.md'), 'tenant-note-6a7\n')
+  writeFileSync(join(tenant, 'private', 'x'), 'canary-inner-7b8\n')
+  const inWs = (root, cmd, extraEnv = {}) => { try { return execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--bind', root, root, '--', ...cmd], { encoding: 'utf8', env: { ...env, ...extraEnv }, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}: ${String(e.stderr ?? '').slice(0, 80)}` } }
+  check('a tenant workspace inside the home reads its own files', inWs(tenant, ['/bin/cat', join(tenant, 'note.md')]).includes('tenant-note-6a7'), inWs(tenant, ['/bin/cat', join(tenant, 'note.md')]).slice(0, 100))
+  check('and still not the home around it', !inWs(tenant, ['/bin/cat', join(home, 'SOUL.md')]).includes('canary-home-5f6'))
+  // An entry written with a trailing slash is the same directory: it did not count as holding the workspace.
+  check('a DEEPBOT_DENY_READ entry with a trailing / around the workspace leaves it readable', inWs(tenant, ['/bin/cat', join(tenant, 'note.md')], { DEEPBOT_DENY_READ: `${home}/` }).includes('tenant-note-6a7'))
+  check('a DEEPBOT_DENY_READ entry inside the workspace still holds', !inWs(tenant, ['/bin/cat', join(tenant, 'private', 'x')], { DEEPBOT_DENY_READ: join(tenant, 'private') }).includes('canary-inner-7b8'))
+  const upper = join(fakeHome, 'DSH-AGENT')
+  check('a workspace given in another case is still its own (the volume ignores case)', inWs(upper, ['/bin/cat', join(upper, 'SOUL.md')]).includes('canary-home-5f6'), inWs(upper, ['/bin/cat', join(upper, 'SOUL.md')]).slice(0, 100))
+  // A workspace that contains the harness home does not open it.
+  mkdirSync(join(fakeHome, '.dsh'), { recursive: true })
+  writeFileSync(join(fakeHome, '.dsh', 'agent-session-index.db'), 'canary-wide-9d0\n')
+  check('a workspace that contains the harness home does not open it', !inWs(fakeHome, ['/bin/cat', join(fakeHome, '.dsh', 'agent-session-index.db')]).includes('canary-wide-9d0'))
+  const quoted = join(fakeHome, 'ws "q"')
+  mkdirSync(quoted)
+  check('a workspace whose name has a quote in it still runs commands', inWs(quoted, ['/bin/echo', 'ran-8c9']).includes('ran-8c9'), inWs(quoted, ['/bin/echo', 'ran-8c9']).slice(0, 100))
+  rmSync(fakeHome, { recursive: true, force: true })
+}
+
+// A harness home that is itself a link (~/.dsh -> elsewhere). The deny on the link's name blocked reading
+// the link, so every path through it failed — the office skill's node, named through ~/.dsh, could not start.
+{
+  const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'runner-linked-')))
+  mkdirSync(join(fakeHome, 'dsh-real', 'dsh-runtimes', 'rt'), { recursive: true })
+  symlinkSync(join(fakeHome, 'dsh-real'), join(fakeHome, '.dsh'))
+  writeFileSync(join(fakeHome, 'dsh-real', 'agent-session-index.db'), 'canary-linked-index-9f0\n')
+  writeFileSync(join(fakeHome, 'dsh-real', 'dsh-runtimes', 'rt', 'run.js'), "console.log('linked-ran-0a1')\n")
+  const env = { ...process.env, HOME: fakeHome }
+  const run = (cmd) => { try { return execFileSync(RUNNER, [...READ_ONLY, '--', ...cmd], { encoding: 'utf8', env, stdio: 'pipe' }) } catch (e) { return `exit ${e.status}: ${String(e.stderr ?? '').slice(0, 80)}` } }
+  check('a linked harness home: node runs a script from its runtimes by the link\'s name', run([process.execPath, join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'run.js')]).includes('linked-ran-0a1'), run([process.execPath, join(fakeHome, '.dsh', 'dsh-runtimes', 'rt', 'run.js')]).slice(0, 100))
+  check('a linked harness home: its index is denied by either name', !run(['/bin/cat', join(fakeHome, '.dsh', 'agent-session-index.db')]).includes('canary-linked') && !run(['/bin/cat', join(fakeHome, 'dsh-real', 'agent-session-index.db')]).includes('canary-linked'))
+  rmSync(fakeHome, { recursive: true, force: true })
 }
 
 // The profile reaches sandbox-exec inline. It used to be written to a file in TMPDIR — a directory

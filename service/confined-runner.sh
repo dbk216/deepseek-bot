@@ -61,7 +61,8 @@ fi
 workspace_names=()
 if [ -n "$workspace_root" ]; then
   workspace_names=("$workspace_root")
-  workspace_real="$(cd "$workspace_root" 2>/dev/null && pwd -P || true)"
+  # The name in the case it has on disk: entries below are resolved the same way, and compared with it.
+  workspace_real="$(/bin/realpath "$workspace_root" 2>/dev/null || true)"
   if [ -n "$workspace_real" ] && [ "$workspace_real" != "$workspace_root" ]; then workspace_names+=("$workspace_real"); fi
 fi
 
@@ -80,7 +81,9 @@ profile() {
     # Except the workspace's .env: the harness's credential chain reads <cwd>/.env before the
     # deployment's own, and the gateway runs in this workspace — a .env here would replace the tokens.
     for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
-      escaped="$(printf '%s' "$name" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
+      # #"…" is a raw literal: a " would end it and no backslash escapes one, so a quote in the name
+      # matches as any one character there (the rule can only deny a little more).
+      escaped="$(printf '%s' "$name" | sed 's/[][\.*^$+?(){}|]/\\&/g; s/"/./g')"
       printf '(deny file-write* (regex #"^%s/\\.env(\\..*)?$"))\n' "$escaped"
     done
   else
@@ -92,10 +95,67 @@ profile() {
   echo ";; read confinement: other agent homes, and DEEPBOT_DENY_READ"
   extra=()
   IFS=':' read -r -a extra <<< "${DEEPBOT_DENY_READ:-}"
+  ws_resolved="${workspace_real:-$workspace_root}"
+  deny_entries=()
   for candidate in "$HOME"/dsh-agent* ${extra[@]+"${extra[@]}"}; do
+    # "dir/" is dir: with the slash it never counted as holding the workspace inside it.
+    while [ "${#candidate}" -gt 1 ] && [ "${candidate%/}" != "$candidate" ]; do candidate="${candidate%/}"; done
     [ -n "$candidate" ] && [ -e "$candidate" ] || continue
-    [ "$candidate" = "$workspace_root" ] && continue
+    # Its resolved name, the one Seatbelt matches: an entry under a link (/var → /private/var), or a link
+    # to a file, denied nothing by the name given. None when it cannot be resolved; an empty subpath
+    # made sandbox-exec refuse every command.
+    resolved="$(/bin/realpath "$candidate" 2>/dev/null || true)"
+    # The workspace is not another home, by either of its names.
+    if [ "$candidate" = "$workspace_root" ] || { [ -n "$resolved" ] && [ "$resolved" = "$ws_resolved" ]; }; then continue; fi
     printf '(deny file-read* (subpath %s))\n' "$(sbpl "$candidate")"
+    deny_entries+=("$candidate")
+    if [ -n "$resolved" ] && [ "$resolved" != "$candidate" ]; then
+      printf '(deny file-read* (subpath %s))\n' "$(sbpl "$resolved")"
+      deny_entries+=("$resolved")
+    fi
+  done
+  # The workspace is the command's own, even inside a denied entry: a tenant's directory is under the
+  # home the dsh-agent* glob denies, and its commands could write their files and not read them.
+  for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
+    printf '(allow file-read* (subpath %s))\n' "$(sbpl "$name")"
+  done
+  # Reads: the harness home as a whole. What it keeps there is every conversation's — its session index
+  # (with the WAL that holds the newest), the adapter's state and log, reminders, a session cache,
+  # attachments, the terminal's input history — and it adds more as it grows: a list of names to deny
+  # was a step behind it, and these were readable. Its runtimes stay readable (the office skill runs its
+  # node from there), and so does an agent home or a workspace someone put inside it (not the harness
+  # home itself). After the workspace's allow, so a workspace that contains the harness home does not
+  # open it; the denies after this block hold inside whatever is allowed here.
+  echo ";; read confinement: the harness home"
+  for dir in "$HOME/.dsh" ${DSH_HOME:+"$DSH_HOME"}; do
+    [ -d "$dir" ] || continue
+    names=("$dir")
+    real="$(cd "$dir" && pwd -P)"
+    if [ "$real" != "$dir" ]; then names+=("$real"); fi
+    for name in "${names[@]}"; do
+      printf '(deny file-read* (subpath %s))\n' "$(sbpl "$name")"
+      printf '(allow file-read* (subpath %s))\n' "$(sbpl "$name/dsh-runtimes")"
+      # Its own entry stays visible (not its contents): node lstat-s every directory of a script's path,
+      # and a harness home that is a link must still be followed to reach the runtimes.
+      printf '(allow file-read-metadata (literal %s))\n' "$(sbpl "$name")"
+    done
+    for own in "$HOME_DIR" ${workspace_names[@]+"${workspace_names[@]}"}; do
+      for name in "${names[@]}"; do
+        # The home's own name, and its resolved one, inside either name of the harness home.
+        own_real="$(cd "$own" 2>/dev/null && pwd -P || printf '%s' "$own")"
+        case "$own/" in "$name"/?*) printf '(allow file-read* (subpath %s))\n' "$(sbpl "$own")" ;; esac
+        case "$own_real/" in "$name"/?*) printf '(allow file-read* (subpath %s))\n' "$(sbpl "$own_real")" ;; esac
+      done
+    done
+  done
+  # The entries above again, after the allows, except one the workspace is inside: an entry within the
+  # workspace, or within the harness home's runtimes, stays denied.
+  for entry in ${deny_entries[@]+"${deny_entries[@]}"}; do
+    holds_workspace=0
+    for name in ${workspace_names[@]+"${workspace_names[@]}"}; do
+      case "$name/" in "$entry"/*) holds_workspace=1 ;; esac
+    done
+    if [ "$holds_workspace" -eq 0 ]; then printf '(deny file-read* (subpath %s))\n' "$(sbpl "$entry")"; fi
   done
   # Reads: the deployment's credentials. No command needs them, and a command's output reaches
   # Slack — as a reply or a watch alert — where nothing redacts a token. Measured before this: a

@@ -152,6 +152,12 @@ export class Editor {
     return true
   }
 
+  /** A click: the position on visual row `row` (the last one when below it) closest to column `x`. */
+  place(width: number, row: number, x: number): void {
+    const { cells, rows } = this.measure(width)
+    this.pos = this.nearest(cells, Math.max(0, Math.min(row, rows.length - 1)), x)
+  }
+
   layout(width: number): EditorLayout {
     const { rows, cursor } = this.measure(width)
     return { rows, cursor }
