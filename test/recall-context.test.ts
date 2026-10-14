@@ -143,18 +143,23 @@ check('an untriggered block is empty', ctx.block('이거 요약해줘') === '')
 
 // One Chinese word is one word. Its overlapping pairs all matched a passage that has it, so a single rare
 // word counted as several and was recalled unprompted, where one rare English or Korean word is not. Pairs
-// matched apart (two words of the passage) still count apart.
+// matched apart (two words of the passage) still count apart; a word said twice is still one; a common pair
+// inside a word does not split it; and a long phrase matched as it stands is more than one word.
 {
   const zhPath = join(dir, 'recall-zh-one.jsonl')
-  const filler = Array.from({ length: 60 }, (_, i) => ({ ts: 1_600_000_000 + i, role: 'user', sessionId: `f${i}`, text: `今天的天气很好，第${i}次` }))
+  const filler = Array.from({ length: 60 }, (_, i) => ({ ts: 1_600_000_000 + i, role: 'user', sessionId: `f${i}`, text: i < 6 ? `这个工具可用，第${i}次` : `今天的天气很好，第${i}次` }))
   writeFileSync(zhPath, [
     { ts: 1_700_000_000, role: 'user', sessionId: 'z1', text: '回滚窗口定为十五分钟，审批人是张伟' },
+    { ts: 1_700_000_100, role: 'user', sessionId: 'z2', text: '高可用性要做到三个九' },
     ...filler,
   ].map((r) => JSON.stringify(r)).join('\n'))
   const zh = createRecallContext({ indexPath: zhPath })
-  check('zh: one rare word, no trigger, is not recalled unprompted', zh.triggered('回滚窗口') === false && zh.block('回滚窗口') === '', zh.block('回滚窗口').slice(0, 60))
-  const two = zh.block('张伟和回滚')
-  check('zh: two rare words matched apart are', two.includes('审批人是张伟'), two.slice(0, 60) || '(empty)')
+  const unprompted = (prompt) => zh.triggered(prompt) === false && zh.block(prompt) !== ''
+  for (const prompt of ['回滚窗口', '回滚？回滚', '回滚窗口，窗口', '高可用性']) {
+    check(`zh: "${prompt}" is one word: not recalled unprompted`, zh.triggered(prompt) === false && zh.block(prompt) === '', zh.block(prompt).slice(0, 60))
+  }
+  check('zh: two rare words matched apart are recalled unprompted', unprompted('张伟和回滚') && zh.block('张伟和回滚').includes('审批人是张伟'))
+  check('zh: a long phrase matched as it stands is, too', unprompted('审批人是张伟') && zh.block('审批人是张伟').includes('审批人是张伟'))
 }
 
 rmSync(dir, { recursive: true, force: true })

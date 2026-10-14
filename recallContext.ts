@@ -164,15 +164,24 @@ export function createRecallContext(options: RecallOptions) {
         const ranked = rows
           .map((row, i) => {
             const matched = query.filter((w) => texts[i].includes(w))
-            const rareHere = (w: string) => texts[i].includes(w) && (df.get(w) ?? 0) <= rare
-            // A Chinese word is one word: its pairs that match side by side count once (one rare word counted
-            // as several, and was recalled unprompted); pairs matched apart are words apart.
+            const here = new Set(matched)
+            const isRare = (w: string) => (df.get(w) ?? 0) <= rare
+            // A Chinese word is one word. Its pairs all match a passage that has it, and one rare word counted as
+            // several and was recalled unprompted. So a span of pairs the passage has side by side counts once,
+            // if it holds a rare pair not counted already (a word said twice is one); a common pair inside does
+            // not split it; and a span of four pairs or more (five characters) is taken for two words.
             let spans = 0
+            const counted = new Set<string>()
             for (const run of runs) {
-              let open = false
-              for (const pair of run) { if (rareHere(pair)) { if (!open) spans++; open = true } else open = false }
+              let span: string[] = []
+              const close = () => {
+                if (span.some((p) => isRare(p) && !counted.has(p))) { spans += span.length >= 4 ? 2 : 1; for (const p of span) counted.add(p) }
+                span = []
+              }
+              for (const pair of run) { if (here.has(pair)) span.push(pair); else close() }
+              close()
             }
-            const others = matched.filter((w) => !isHanPair(w) && (df.get(w) ?? 0) <= rare).length
+            const others = matched.filter((w) => !isHanPair(w) && isRare(w)).length
             return { row, score: matched.reduce((n, w) => n + idf(w), 0), distinctive: others + spans }
           })
           .filter((hit) => hit.score > 0)
