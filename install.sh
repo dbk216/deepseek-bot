@@ -105,6 +105,21 @@ provider_rows() {   # provider_rows deepseek | opengateway | custom <keyRef> <ba
   esac
 }
 
+# Prompts read the terminal ($TTY, found by main), not stdin: under `curl … | bash` stdin is this script.
+# With no terminal, every question takes its default and every secret is left empty.
+ask() {         # ask <var> <question> [default]
+  local answer=''
+  if [ -n "${TTY:-}" ]; then printf '    %s%s%s ' "${bold:-}" "$2${3:+ [$3]}" "${off:-}" >"$TTY"; IFS= read -r answer <"$TTY" || true; fi
+  printf -v "$1" '%s' "${answer:-${3:-}}"
+}
+ask_secret() {  # ask_secret <var> <question> — never echoed
+  local answer=''
+  if [ -n "${TTY:-}" ]; then printf '    %s%s%s ' "${bold:-}" "$2" "${off:-}" >"$TTY"; IFS= read -rs answer <"$TTY" || true; printf '\n' >"$TTY"; fi
+  printf -v "$1" '%s' "$answer"
+}
+
+usable_key_name() { [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; }   # what can be a line of ~/.dsh/.env
+
 # ── Credentials ─────────────────────────────────────────────────────────────
 # The harness resolves a key from the launch environment, then its own store (~/.dsh/.credentials.yaml,
 # where the DeepSeek Harness app saves keys, under `refs`), then <cwd>/.env, then ~/.dsh/.env. A key a
@@ -136,9 +151,14 @@ put_key() {     # put_key <name> <question>: asked only when the harness cannot 
     store) note "$1 is in DeepSeek Harness's own store (~/.dsh/.credentials.yaml) — used as it is"; return 0 ;;
     dotenv) note "$1 already set"; return 0 ;;
     env)
-      # The gateway runs under launchd, which does not see this shell: the value goes where it will.
-      printf '%s=%s\n' "$1" "${!1}" >>"$home/.env"
-      note "$1 taken from this shell's environment into $home/.env, for the gateway"; return 0 ;;
+      # The gateway runs under launchd, which does not see this shell, so the value would have to be saved.
+      # It may have been exported for something else (another app's token, an OpenAI key): only on a yes.
+      local use=''
+      ask use "$1 is set in this shell — save that value for the gateway (y/N)?" n
+      case "$use" in
+        y|Y|yes) printf '%s=%s\n' "$1" "${!1}" >>"$home/.env"; note "$1 taken from this shell's environment into $home/.env, for the gateway"; return 0 ;;
+      esac
+      note "$1 in this shell left alone" ;;
   esac
   ask_secret value "$2"
   if [ -n "$value" ]; then printf '%s=%s\n' "$1" "$value" >>"$home/.env"; note "$1 saved"; else note "$1 skipped — add it to $home/.env later"; fi
@@ -267,16 +287,6 @@ BANNER
 # Prompts read the terminal, not stdin: under `curl … | bash` stdin is this script.
 TTY=''
 if [ -r /dev/tty ] && [ -w /dev/tty ] && (exec </dev/tty) 2>/dev/null; then TTY=/dev/tty; fi
-ask() {         # ask <var> <question> [default]
-  local answer=''
-  if [ -n "$TTY" ]; then printf '    %s%s%s ' "$bold" "$2${3:+ [$3]}" "$off" >"$TTY"; IFS= read -r answer <"$TTY" || true; fi
-  printf -v "$1" '%s' "${answer:-${3:-}}"
-}
-ask_secret() {  # ask_secret <var> <question> — never echoed
-  local answer=''
-  if [ -n "$TTY" ]; then printf '    %s%s%s ' "$bold" "$2" "$off" >"$TTY"; IFS= read -rs answer <"$TTY" || true; printf '\n' >"$TTY"; fi
-  printf -v "$1" '%s' "$answer"
-}
 
 step "checking what this needs"
 [ "$(uname -s)" = "Darwin" ] || die "macOS only: the services are launchd jobs and the sandbox runner is Seatbelt."
@@ -345,11 +355,14 @@ case "$platform" in
 esac
 # The model's key: the provider chosen now, or the one an existing profile's route reads.
 if [ "$new_profile" -eq 1 ]; then model_key="$(provider_key "$provider" "${key_ref:-}")"; else model_key="$(profile_key "$profile_dir/cordis.patch.yml")"; fi
-case "$model_key" in
+# A route may name its key in a way no .env line can hold (a !!js expression): that one is the operator's.
+if ! usable_key_name "$model_key"; then
+  note "the model route reads its key as '$model_key', which this installer does not set — the route's own business"
+else case "$model_key" in
   DEEPSEEK_API_KEY) put_key DEEPSEEK_API_KEY "DeepSeek API key:" ;;
   OG_API_KEY) put_key OG_API_KEY "OpenGateway API key:" ;;
   *) put_key "$model_key" "API key for the model endpoint ($model_key):" ;;
-esac
+esac; fi
 # web_search goes through DeepSeek's API whatever answers the chat (dsh-base's web-search-deepseek row).
 if [ "$model_key" != DEEPSEEK_API_KEY ] && ! has_key DEEPSEEK_API_KEY; then
   if [ "$new_profile" -eq 1 ]; then put_key DEEPSEEK_API_KEY "DeepSeek API key, for web search (enter to skip):"

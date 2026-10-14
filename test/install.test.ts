@@ -205,6 +205,7 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   check('provider: the context window is written as a number, leading zeros dropped', /^ {12}contextWindow: 128000$/m.test(withHelpers(`provider_rows custom ACME_API_KEY 'https://x.example/v1' m 0128000 no`).out))
   // A rerun reads the key of the route the default model names, whatever the comments, the indent, or other routes.
   writeFileSync(join(dir, 'two-routes.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      speech:\n        apiKeyEnv: OPENAI_API_KEY\n      og:\n          apiKeyEnv: OG_API_KEY   # the gateway\n\n- id: agent-default-model\n  config:\n    provider: og\n    model: x\n`)
+  check('provider: a route key that is not a variable name is not asked for or written', withHelpers('usable_key_name "!!js process.env.X"').code !== 0 && withHelpers('usable_key_name OG_API_KEY').code === 0)
   check('provider: a rerun reads the key of the default model\'s route, past comments, indents and other routes', withHelpers(`profile_key "${join(dir, 'two-routes.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'two-routes.yml')}"`).out)
   writeFileSync(join(dir, 'with-og.yml'), `- id: deepbot\n  config:\n    platform: slack\n${og.out}\n`)
   check('provider: a rerun reads back the key the profile names, and DeepSeek\'s when it names none',
@@ -234,7 +235,9 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   mkdirSync(dsh, { recursive: true })
   writeFileSync(join(dsh, '.credentials.yaml'), 'version: 1\n\nrefs:\n  OG_API_KEY: og-stored-value\n\nrecords:\n  llm-pi-ai/x:\n    kind: grant\n    payload:\n      SLACK_BOT_TOKEN: not-a-ref\n')
   writeFileSync(join(dsh, '.env'), 'DEEPSEEK_API_KEY=dk-dotenv-value\n')
-  const src = (name, env = {}) => withHelpers(`DSH_HOME="${dsh}"; key_source ${name}`, { DSH_HOME: dsh, ...env }).out
+  // The suite's own shell may export these: each lookup starts with them unset, unless a check sets one.
+  const clean = { DEEPSEEK_API_KEY: '', OG_API_KEY: '', SLACK_BOT_TOKEN: '', SLACK_APP_TOKEN: '', TELEGRAM_BOT_TOKEN: '', CUSTOM_API_KEY: '' }
+  const src = (name, env = {}) => withHelpers(`DSH_HOME="${dsh}"; key_source ${name}`, { DSH_HOME: dsh, ...clean, ...env }).out
   check('credentials: a key in the app\'s store is found there', src('OG_API_KEY') === 'store', src('OG_API_KEY'))
   check('credentials: one only under a record, not a ref, is not taken for a key', src('SLACK_BOT_TOKEN') === '', src('SLACK_BOT_TOKEN'))
   check('credentials: one in ~/.dsh/.env is found there', src('DEEPSEEK_API_KEY') === 'dotenv')
@@ -254,12 +257,14 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   writeFileSync(join(dsh, '.credentials.yaml'), 'version: 1\nrefs: { F_KEY: x }\nrecords:\n  r:\n    G_KEY: not-a-ref\n')
   check('credentials: the store is read as YAML — past comments, quoted and spaced keys, a flow mapping; still not records', wrong.length === 0 && src('G_KEY') === '', wrong.join(', ') || src('G_KEY'))
   writeFileSync(join(dsh, '.credentials.yaml'), 'version: 1\n\nrefs:\n  OG_API_KEY: og-stored-value\n\nrecords:\n  llm-pi-ai/x:\n    kind: grant\n    payload:\n      SLACK_BOT_TOKEN: not-a-ref\n')
-  const stored = withHelpers(`DSH_HOME="${dsh}"; put_key OG_API_KEY "OpenGateway API key:"`, { DSH_HOME: dsh })
+  const stored = withHelpers(`DSH_HOME="${dsh}"; put_key OG_API_KEY "OpenGateway API key:"`, { DSH_HOME: dsh, ...clean })
   check('credentials: put_key does not ask for a key the store has, says where it is, and writes nothing', stored.code === 0 && /OG_API_KEY/.test(stored.out) && /credentials\.yaml/.test(stored.out)
     && !readFileSync(join(dsh, '.env'), 'utf8').includes('OG_API_KEY') && !stored.out.includes('og-stored-value'), stored.out)
-  const fromEnv = withHelpers(`DSH_HOME="${dsh}"; put_key CUSTOM_API_KEY "key:"`, { DSH_HOME: dsh, CUSTOM_API_KEY: 'from-the-shell' })
-  check('credentials: one only in this shell is kept for the gateway (launchd does not see the shell) without being asked or echoed',
-    fromEnv.code === 0 && readFileSync(join(dsh, '.env'), 'utf8').includes('CUSTOM_API_KEY=from-the-shell') && !fromEnv.out.includes('from-the-shell'), fromEnv.out)
+  // A key only in this shell may have been exported for something else (an OpenAI key, another app's token):
+  // it is used only when the person says so, and with no terminal to ask, it is not.
+  const fromEnv = withHelpers(`DSH_HOME="${dsh}"; put_key CUSTOM_API_KEY "key:"`, { DSH_HOME: dsh, ...clean, CUSTOM_API_KEY: 'from-the-shell' })
+  check('credentials: one only in this shell is not copied without a yes, nor echoed',
+    fromEnv.code === 0 && !readFileSync(join(dsh, '.env'), 'utf8').includes('from-the-shell') && !fromEnv.out.includes('from-the-shell') && /CUSTOM_API_KEY/.test(fromEnv.out), fromEnv.out)
   check('credentials: nothing is written to the app\'s store', readFileSync(join(dsh, '.credentials.yaml'), 'utf8') === 'version: 1\n\nrefs:\n  OG_API_KEY: og-stored-value\n\nrecords:\n  llm-pi-ai/x:\n    kind: grant\n    payload:\n      SLACK_BOT_TOKEN: not-a-ref\n')
 }
 
