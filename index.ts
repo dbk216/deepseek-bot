@@ -1419,7 +1419,9 @@ export function apply(ctx, config) {
       const nonce = randomUUID().replace(/-/g, '').slice(0, 8)
       const asked = await transport.post(target, [
         say.approvalNeeded(reason),
-        withButtons ? say.approvalHowButtons : say.approvalHowWords,
+        // The terminal: its buttons only. A word typed there waits behind the running turn, since the terminal
+        // cannot know an approval is pending.
+        target.channel === LOCAL_CHANNEL ? say.approvalHowTerminal : withButtons ? say.approvalHowButtons : say.approvalHowWords,
         say.approvalTimeout(Math.round(cfg.approvalTimeoutMs / 60000)),
       ].join('\n'), withButtons
         ? { buttons: [
