@@ -643,7 +643,10 @@ export class App {
     this.thought = null
     this.attemptThought = null
     this.calls.clear()
-    // Another conversation: whatever was running belongs to the old one.
+    // Another conversation: whatever was running belongs to the old one, and so does what it gave back.
+    this.takenBack = []
+    this.asking = null
+    this.started.clear()
     this.busy = 0
     this.status.running = false
     this.stopSpinner()

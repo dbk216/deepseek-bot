@@ -1813,6 +1813,14 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.key('H-msg\r'); t.clock.advance(20)
   check('history: a message that was not sent is not kept', remembered.length === kept && t.app.editor.text === 'H-msg', JSON.stringify(remembered.slice(kept)))
   t.sendOk = true
+  // Held for the box when the conversation changes: it was the old conversation's.
+  t.app.editor.set('')
+  t.app.turnStarted(); t.key('I-msg\r'); t.app.turnStarted(); t.clock.advance(20)
+  const idI = t.sentIds.at(-1)
+  t.key('\x1b[A')
+  t.app.ask('q-i', [{ id: 'q', question: 'which?', options: [{ label: 'a' }], multiSelect: false }]); t.clock.advance(20)
+  t.app.withdrawn([idI], [idI]); t.app.clear(); t.clock.advance(20)
+  check('queue: what was held for the box stays with its conversation', t.app.editor.text === '' && !t.term.screen.text().includes('I-msg'), JSON.stringify(t.app.editor.text))
 }
 
 const failed = results.filter((r) => !r.ok)

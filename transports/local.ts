@@ -414,7 +414,8 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
       case 'withdraw': {
         if (client.conversation === null) return refuse(client, 'no-hello', 'say hello first')
         const ids = frame.ids
-        if (!Array.isArray(ids) || ids.length > 200 || !ids.every((id) => typeof id === 'string')) return refuse(client, 'bad-frame', say.idsNeeded)
+        // Each as a message id is: they are sent back to every terminal on the conversation.
+        if (!Array.isArray(ids) || ids.length > 200 || !ids.every((id) => typeof id === 'string' && /^[\w-]{1,64}$/.test(id))) return refuse(client, 'bad-frame', say.idsNeeded)
         const conversation = client.conversation
         // Every terminal on the conversation is told, so each counts those ends apart and takes back its own.
         // With what was asked, so the asking terminal knows the answer is its own.

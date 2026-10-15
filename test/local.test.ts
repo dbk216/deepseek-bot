@@ -538,6 +538,10 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   a.send({ type: 'withdraw', ids: ['gone-1'] })
   const answer = await a.waitFor((f) => f.type === 'withdrawn' && Array.isArray(f.asked) && f.asked.includes('gone-1'))
   check('withdraw: the answer names what was asked', JSON.stringify(answer?.ids) === '[]' && JSON.stringify(answer?.asked) === '["gone-1"]', JSON.stringify(answer))
+  const errorsBefore = a.frames.filter((f) => f.type === 'error').length
+  a.send({ type: 'withdraw', ids: ['x'.repeat(65)] })
+  await a.waitFor((f) => f.type === 'error' && a.frames.filter((g) => g.type === 'error').length > errorsBefore)
+  check('withdraw: an id longer than a message id may be is refused, not echoed', a.frames.filter((f) => f.type === 'error').length === errorsBefore + 1 && !a.frames.some((f) => f.type === 'withdrawn' && (f.asked ?? []).some((id) => id.length > 64)))
   await a.close()
   await b.close()
   await t.done()
