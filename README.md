@@ -43,6 +43,12 @@ token is made, checks each token as you paste it, and offers to restart the bot.
 tokens from the environment instead, so an agent can do it for you ([docs/setup.md](docs/setup.md));
 `dsh gateway status` says whether it is up.
 
+### Update
+
+```bash
+dsh update
+```
+
 <img src="docs/opengateway-logo.svg" height="16" alt="OpenGateway"> **Optional: faster on [OpenGateway](https://opengateway.ai).** It serves `deepseek/deepseek-v4.1-flash-ultrafast`
 on an OpenAI-compatible endpoint (`https://apis.opengateway.ai/v1`), which it lists at 12× the speed and
 1/30 the price of a Fable-class model. This bot is developed against it; the model route in

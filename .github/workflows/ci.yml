@@ -46,6 +46,7 @@ jobs:
       - run: node test/watch.test.ts
       - run: node test/safe-write.test.ts
       - run: node test/health.test.ts
+      - run: node test/update.test.ts
       - run: node test/secrets.test.ts .
       # The scenario harness (test/run-scenario.ts) boots a real profile and is
       # deliberately NOT run here: it needs a harness installation and a model
@@ -71,6 +72,7 @@ jobs:
       #   gateway, install, launcher, profile, tui-app: launchd, bash, file modes and the macOS
       #     harness app, which a Windows port has to replace rather than pass.
       #   confined-runner: the Seatbelt sandbox, which has no Windows counterpart yet.
+      #   update: dsh update runs install.sh with bash, and the installer is macOS-only.
       - run: node test/reconnect.test.ts
       - run: node test/recall.test.ts
       - run: node test/notes.test.ts

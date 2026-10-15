@@ -38,12 +38,14 @@ export function usage(): string {
 const OWN = new Set(['-h', '--help', '--name', '--socket', '--tenant', '--resume'])
 
 /**
- * Whether `dsh <argv>` opens the terminal, runs `dsh gateway <command>`, or is handed to the DeepSeek
- * Harness CLI, whose name it shares. For the harness `dsh gateway` boots a profile named gateway, so only
- * `gateway` followed by one of its commands is taken here.
+ * Whether `dsh <argv>` opens the terminal, runs `dsh gateway <command>` or `dsh update`, or is handed to
+ * the DeepSeek Harness CLI, whose name it shares. For the harness `dsh gateway` boots a profile named
+ * gateway, so only `gateway` followed by one of its commands is taken here; likewise `update` only alone
+ * or with its help flag (a profile named update is still `dsh --profile update`).
  */
-export function route(argv: string[]): 'tui' | 'gateway' | 'harness' {
+export function route(argv: string[]): 'tui' | 'gateway' | 'update' | 'harness' {
   if (argv.length === 0 || OWN.has(argv[0])) return 'tui'
+  if (argv[0] === 'update' && (argv.length === 1 || (argv.length === 2 && (argv[1] === '-h' || argv[1] === '--help')))) return 'update'
   return argv[0] === 'gateway' && GATEWAY_COMMANDS.has(argv[1]) ? 'gateway' : 'harness'
 }
 

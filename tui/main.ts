@@ -22,6 +22,7 @@ import { fileFinder } from './files.js'
 import { appendHistory, historyFile, loadHistory } from './history.js'
 import { processIO, restoreOnExit } from './render/terminal.js'
 import { gateway, processIO as gatewayIO } from '../service/gateway.js'
+import { update, processIO as updateIO } from '../service/update.js'
 
 /** `dsh <harness arguments>`: run the harness CLI with them, and leave with its status. */
 function forward(argv: string[]): never {
@@ -40,6 +41,7 @@ function main(): void {
   const argv = process.argv.slice(2)
   const where = route(argv)
   if (where === 'harness') forward(argv)
+  if (where === 'update') process.exit(update(argv.slice(1), updateIO()))
   if (where === 'gateway') {
     gateway(argv.slice(1), gatewayIO()).then(
       (code) => process.exit(code),

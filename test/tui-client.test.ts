@@ -59,6 +59,10 @@ async function until(predicate, ms = 3000) {
   // `dsh` opens the terminal; anything that is not one of its own flags is the harness CLI's.
   check('route: no arguments, or only the terminal\'s flags, open the terminal', route([]) === 'tui' && route(['--resume', 'c-1']) === 'tui' && route(['--name', 'work']) === 'tui' && route(['-h']) === 'tui' && route(['--help']) === 'tui')
   check('route: anything else goes to the harness CLI', route(['--profile', 'agent']) === 'harness' && route(['gateway']) === 'harness' && route(['--version']) === 'harness')
+  // `dsh update` is ours alone or with its help; with anything else it is a profile named update and its app's arguments.
+  check('route: dsh update, alone or with --help, is the update', route(['update']) === 'update' && route(['update', '--help']) === 'update' && route(['update', '-h']) === 'update')
+  check('route: update with anything else, or --profile update, is the harness CLI\'s', route(['update', 'run the tests']) === 'harness' && route(['update', '--help', 'x']) === 'harness' && route(['--profile', 'update']) === 'harness')
+  check('usage: names dsh update', /\n  dsh update +\S/.test(USAGE))
   check('usage: the command is dsh', USAGE.includes('\n  dsh [--name <gateway>]') && !USAGE.includes('deepbot-tui'), USAGE.split('\n')[2])
   check('exit: the resume hint names dsh', resumeHint('c-1') === 'to continue this conversation: dsh --resume c-1\n', JSON.stringify(resumeHint('c-1')))
 

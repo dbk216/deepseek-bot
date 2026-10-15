@@ -6,12 +6,13 @@
 # Fetches deepbot into ~/.deepbot, builds it, creates the agent's home and the gateway profile, asks for
 # the model's key when the harness has none, and installs the services that keep it running. The bot
 # starts with the terminal, dsh; a messenger is connected afterwards with `dsh gateway setup`, which is
-# not part of this. Run it again to update: every file you have edited is kept, and no key is asked twice.
+# not part of this. Run it again to update (`dsh update` does): every file you have edited is kept, and no
+# key is asked twice.
 #
 # Optional environment:
 #   DEEPBOT_DIR      where the source lives               (default ~/.deepbot)
-#   DEEPBOT_HOME     the agent's home                     (default ~/dsh-agent)
-#   DEEPBOT_PROFILE  the gateway profile                  (default agent)
+#   DEEPBOT_HOME     the agent's home                     (default: the installed service's, else ~/dsh-agent)
+#   DEEPBOT_PROFILE  the gateway profile                  (default: the installed service's, else agent)
 #   DEEPBOT_REPO     the git repository to install from   (default this project on GitHub)
 #   DEEPBOT_REF      branch or tag                        (default master)
 #   DSH_BIN          the dsh CLI                          (default: inside DeepSeek Harness.app)
@@ -243,6 +244,42 @@ check_dsh_home() {
   }
 }
 
+# A setting from the environment, else the one the installed gateway service runs with, else the default.
+# An update that put the service back on the defaults would scaffold a second agent home and profile.
+setting() {   # setting <DEEPBOT_HOME|DEEPBOT_PROFILE> <default>
+  local given="${!1:-}" plist="$HOME/Library/LaunchAgents/ai.deepbot.gateway.plist"
+  if [ -z "$given" ] && [ -f "$plist" ]; then
+    given="$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:$1" "$plist" 2>/dev/null || true)"
+  fi
+  printf '%s\n' "${given:-$2}"
+}
+
+# Bring a checkout to the ref's tip. One this installer cloned is shallow and is reset to it, as it always
+# was. A full clone is someone's working copy: it stays full and only moves forward, and local changes,
+# another branch, or commits not on the ref stop the update instead of being reset away.
+fetch_checkout() {   # fetch_checkout <dir> <ref>
+  [ -z "$(git -C "$1" status --porcelain --untracked-files=no)" ] \
+    || die "$1 has local changes: commit or stash them, then update again."
+  if [ "$(git -C "$1" rev-parse --is-shallow-repository)" = true ]; then
+    git -C "$1" fetch --quiet --depth 1 origin "$2"
+    git -C "$1" checkout --quiet -B "$2" FETCH_HEAD
+    return 0
+  fi
+  local branch
+  branch="$(git -C "$1" symbolic-ref --quiet --short HEAD || true)"
+  [ "$branch" = "$2" ] || die "$1 is on ${branch:-no branch}, not $2: check out $2 (or set DEEPBOT_REF), then update again."
+  git -C "$1" fetch --quiet origin "$2"
+  git -C "$1" merge --quiet --ff-only FETCH_HEAD 2>/dev/null \
+    || die "$1 has commits that are not on origin's $2: update it by hand."
+}
+
+# The commit an install last finished at, so `dsh update` can tell an install that is current from one
+# whose last update stopped part way.
+record_install() {   # record_install <dir>
+  mkdir -p "$DSH_HOME/service"
+  git -C "$1" rev-parse HEAD >"$DSH_HOME/service/deepbot.commit"
+}
+
 step() { printf '%s==>%s %s\n' "${blue:-}" "${off:-}" "$*"; }
 note() { printf '    %s%s%s\n' "${dim:-}" "$*" "${off:-}"; }
 die()  { printf '%serror:%s %s\n' "${red:-}" "${off:-}" "$*" >&2; exit 1; }
@@ -273,8 +310,8 @@ services_done() {     # the end of the services step: a failed one fails the ins
 main() {
 
 DEEPBOT_DIR="${DEEPBOT_DIR:-$HOME/.deepbot}"
-DEEPBOT_HOME="${DEEPBOT_HOME:-$HOME/dsh-agent}"
-DEEPBOT_PROFILE="${DEEPBOT_PROFILE:-agent}"
+DEEPBOT_HOME="$(setting DEEPBOT_HOME "$HOME/dsh-agent")"
+DEEPBOT_PROFILE="$(setting DEEPBOT_PROFILE agent)"
 DEEPBOT_REPO="${DEEPBOT_REPO:-https://github.com/rlaope/deepseek-bot.git}"
 DEEPBOT_REF="${DEEPBOT_REF:-master}"
 check_dsh_home || exit 1
@@ -312,8 +349,7 @@ note "node $(node -v) · git · dsh at $DSH_BIN"
 
 step "fetching deepbot into $DEEPBOT_DIR"
 if [ -d "$DEEPBOT_DIR/.git" ]; then
-  git -C "$DEEPBOT_DIR" fetch --quiet --depth 1 origin "$DEEPBOT_REF"
-  git -C "$DEEPBOT_DIR" checkout --quiet -B "$DEEPBOT_REF" FETCH_HEAD
+  fetch_checkout "$DEEPBOT_DIR" "$DEEPBOT_REF"
   note "updated to $(git -C "$DEEPBOT_DIR" rev-parse --short HEAD)"
 elif [ -e "$DEEPBOT_DIR" ]; then
   die "$DEEPBOT_DIR exists and is not a git checkout; move it aside or set DEEPBOT_DIR."
@@ -398,6 +434,7 @@ fi
 if [ "${DEEPBOT_SKIP_SERVICES:-0}" = "1" ]; then
   step "services skipped (DEEPBOT_SKIP_SERVICES=1)"
   note "start it by hand: \"$DSH_BIN\" --profile $DEEPBOT_PROFILE --no-open"
+  record_install "$DEEPBOT_DIR"
   return 0
 fi
 
@@ -408,6 +445,7 @@ service_install "health probe" "$DEEPBOT_DIR/service/install-health.sh"
 service_install "watch runner" "$DEEPBOT_DIR/watch/install-watch.sh"
 service_install "recall index job" "$DEEPBOT_DIR/recall/install-refresh.sh"
 services_done || return 1
+record_install "$DEEPBOT_DIR"
 
 step "done"
 node "$DSH_HOME/service/health-check.mjs" --status 2>/dev/null | sed 's/^/    /' || true
@@ -416,7 +454,7 @@ cat <<NEXT
     Talk to it here: ${bold}dsh${off}
     Connect Slack, Telegram or Discord: ${bold}dsh gateway setup${off}
     Your agent's persona is ${bold}$DEEPBOT_HOME/SOUL.md${off} — edit it, it is yours.
-    Update later by running the same curl line again.
+    Update later: ${bold}dsh update${off}
 NEXT
 }
 

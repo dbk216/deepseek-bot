@@ -8,7 +8,7 @@
  *
  * Run: node test/install.test.ts
  */
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -205,7 +205,7 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   const summary = withHelpers('SERVICES_FAILED=2; services_done')
   check('services: with any of them failed, the install ends in failure and says how many', summary.code !== 0 && summary.out.includes('2 service'), summary.out)
   check('services: with none failed, it ends well', withHelpers('SERVICES_FAILED=0; services_done').code === 0)
-  check('services: install.sh stops at a failed service instead of saying done', /services_done \|\| return 1\n\nstep "done"/.test(readFileSync(INSTALL, 'utf8')))
+  check('services: install.sh stops at a failed service instead of saying done', /services_done \|\| return 1\nrecord_install "\$DEEPBOT_DIR"\n\nstep "done"/.test(readFileSync(INSTALL, 'utf8')))
 }
 
 // The model provider of a new profile: DeepSeek's own needs no rows (dsh-base's default); OpenGateway and a
@@ -339,6 +339,80 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   check('credentials: one only in this shell is not copied without a yes, nor echoed',
     fromEnv.code === 0 && !readFileSync(join(dsh, '.env'), 'utf8').includes('from-the-shell') && !fromEnv.out.includes('from-the-shell') && /CUSTOM_API_KEY/.test(fromEnv.out), fromEnv.out)
   check('credentials: nothing is written to the app\'s store', readFileSync(join(dsh, '.credentials.yaml'), 'utf8') === 'version: 1\n\nrefs:\n  OG_API_KEY: og-stored-value\n\nrecords:\n  llm-pi-ai/x:\n    kind: grant\n    payload:\n      SLACK_BOT_TOKEN: not-a-ref\n')
+}
+
+// An update (a rerun, or `dsh update`): the checkout moves to the ref's tip without losing anyone's work, the
+// service keeps the agent home and profile it was installed with, and a finished install is recorded.
+{
+  const root = mkdtempSync(join(tmpdir(), 'deepbot-fetch-'))
+  writeFileSync(join(root, 'gitconfig'), '')
+  const gitEnv = {
+    GIT_CONFIG_GLOBAL: join(root, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid',
+  }
+  const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe', env: { ...process.env, ...gitEnv } }).trim()
+  const commit = (cwd, file, text) => { writeFileSync(join(cwd, file), text); git(cwd, 'add', file); git(cwd, 'commit', '-q', '-m', file) }
+  /** fetch_checkout on a checkout; stderr is where die speaks. */
+  const fetchIn = (checkout, ref = 'master') => {
+    const r = spawnSync('/bin/bash', ['-c', 'DEEPBOT_INSTALL_SOURCED=1 source "$1"; fetch_checkout "$2" "$3"', 'bash', INSTALL, checkout, ref], { encoding: 'utf8', env: { ...process.env, ...gitEnv } })
+    return { code: r.status, err: r.stderr }
+  }
+  const origin = join(root, 'origin.git'), work = join(root, 'work')
+  git(root, 'init', '-q', '--bare', '-b', 'master', origin)
+  git(root, 'init', '-q', '-b', 'master', work)
+  commit(work, 'a', '1\n')
+  git(work, 'push', '-q', origin, 'master')
+  const full = join(root, 'full'), shallow = join(root, 'shallow')
+  git(root, 'clone', '-q', origin, full)
+  git(root, 'clone', '-q', '--depth', '1', `file://${origin}`, shallow)
+  commit(work, 'b', '2\n')
+  git(work, 'push', '-q', origin, 'master')
+  const tip = git(work, 'rev-parse', 'HEAD')
+
+  const moved = fetchIn(full)
+  check('fetch: a full clone moves forward to the tip', moved.code === 0 && git(full, 'rev-parse', 'HEAD') === tip, moved.err)
+  check('fetch: and stays a full clone (no --depth 1 on someone\'s working copy)', git(full, 'rev-parse', '--is-shallow-repository') === 'false')
+  const fromShallow = fetchIn(shallow)
+  check('fetch: the installer\'s shallow clone is brought to the tip and stays shallow', fromShallow.code === 0 && git(shallow, 'rev-parse', 'HEAD') === tip && git(shallow, 'rev-parse', '--is-shallow-repository') === 'true', fromShallow.err)
+
+  commit(work, 'c', '3\n')
+  git(work, 'push', '-q', origin, 'master')
+  writeFileSync(join(full, 'a'), 'edited\n')
+  const dirty = fetchIn(full)
+  check('fetch: local changes stop it, and are left as they were', dirty.code !== 0 && /local changes/.test(dirty.err) && readFileSync(join(full, 'a'), 'utf8') === 'edited\n' && git(full, 'rev-parse', 'HEAD') === tip, dirty.err.trim())
+  git(full, 'checkout', '-q', '--', 'a')
+  git(full, 'checkout', '-q', '-b', 'feature')
+  const elsewhere = fetchIn(full)
+  check('fetch: a checkout on another branch is not switched', elsewhere.code !== 0 && /on feature, not master/.test(elsewhere.err) && git(full, 'symbolic-ref', '--short', 'HEAD') === 'feature', elsewhere.err.trim())
+  git(full, 'checkout', '-q', 'master')
+  commit(full, 'local', 'mine\n')
+  const mine = git(full, 'rev-parse', 'HEAD')
+  const diverged = fetchIn(full)
+  check('fetch: commits not on origin stop it, and are kept', diverged.code !== 0 && /not on origin/.test(diverged.err) && git(full, 'rev-parse', 'HEAD') === mine, diverged.err.trim())
+
+  // The settings a rerun installs with: the environment's, else the installed service's, else the default.
+  const home = join(root, 'home')
+  const setting = (key, env = {}) => withHelpers(`setting ${key} fallback`, { HOME: home, DEEPBOT_HOME: '', DEEPBOT_PROFILE: '', ...env }).out
+  check('setting: with no service installed, the default', setting('DEEPBOT_PROFILE') === 'fallback')
+  mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true })
+  writeFileSync(join(home, 'Library', 'LaunchAgents', 'ai.deepbot.gateway.plist'), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>EnvironmentVariables</key><dict>
+<key>DEEPBOT_PROFILE</key><string>work</string><key>DEEPBOT_HOME</key><string>/elsewhere/agent</string>
+</dict></dict></plist>
+`)
+  check('setting: a rerun keeps the installed service\'s profile and agent home', setting('DEEPBOT_PROFILE') === 'work' && setting('DEEPBOT_HOME') === '/elsewhere/agent', `${setting('DEEPBOT_PROFILE')} ${setting('DEEPBOT_HOME')}`)
+  check('setting: one given in the environment wins', setting('DEEPBOT_PROFILE', { DEEPBOT_PROFILE: 'given' }) === 'given')
+  check('setting: main takes both from it', /^DEEPBOT_HOME="\$\(setting DEEPBOT_HOME "\$HOME\/dsh-agent"\)"$/m.test(installer) && /^DEEPBOT_PROFILE="\$\(setting DEEPBOT_PROFILE agent\)"$/m.test(installer))
+
+  // The record of a finished install: written after the services are in, and only then.
+  const dshHome = join(root, 'dsh')
+  withHelpers(`DSH_HOME="${dshHome}"; record_install "${full}"`, gitEnv)
+  check('record: the commit an install finished at is written', readFileSync(join(dshHome, 'service', 'deepbot.commit'), 'utf8').trim() === mine)
+  const afterServices = installer.indexOf('services_done || return 1\nrecord_install "$DEEPBOT_DIR"')
+  check('record: only after every service is in, and when they are skipped', afterServices !== -1 && /record_install "\$DEEPBOT_DIR"\n  return 0\nfi/.test(installer))
+  check('the end says how to update: dsh update', /Update later: .*dsh update/.test(installer))
+  rmSync(root, { recursive: true, force: true })
 }
 
 rmSync(dir, { recursive: true, force: true })

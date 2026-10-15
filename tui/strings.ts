@@ -27,6 +27,7 @@ const en = {
   dsh [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
   dsh gateway <command>  connect a messenger, run the service: setup, remove, start, stop, restart,
                          status, manifest (dsh gateway setup --help)
+  dsh update             update this install: the latest of its branch, built, the bot restarted
   dsh <anything else>   handed to the DeepSeek Harness CLI (DSH_BIN, by default the dsh in the app)
 
   --name     the gateway to connect to (tuiName in the deepbot config, by default default)
@@ -183,6 +184,7 @@ const ko: Strings = {
   dsh [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
   dsh gateway <명령>   메신저 연결과 서비스 실행: setup, remove, start, stop, restart, status,
                        manifest (dsh gateway setup --help)
+  dsh update           이 설치를 최신으로: branch의 최신 코드를 받아 build하고 bot을 재시작
   dsh <그 외 인자>   DeepSeek Harness CLI로 그대로 넘김 (DSH_BIN, 기본은 앱 안의 dsh)
 
   --name     연결할 gateway 이름 (deepbot 설정의 tuiName, 기본 default)
@@ -333,6 +335,7 @@ const zh: Strings = {
   dsh [--name <gateway>] [--socket <path>] [--tenant <name>] [--resume <conversation>]
   dsh gateway <命令>   连接消息平台、运行服务：setup、remove、start、stop、restart、status、
                        manifest（dsh gateway setup --help）
+  dsh update           更新此安装：拉取所在 branch 的最新代码、build 并重启 bot
   dsh <其他参数>   原样交给 DeepSeek Harness CLI（DSH_BIN，默认为应用内的 dsh）
 
   --name     要连接的 gateway 名称（deepbot 配置中的 tuiName，默认 default）
