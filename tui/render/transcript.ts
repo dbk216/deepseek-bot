@@ -35,6 +35,8 @@ export class Transcript {
   follow = true
   /** Lines added below the viewport since the user scrolled away. */
   unseen = 0
+  /** The next layout's growth is blocks folded or unfolded, not lines that arrived. */
+  private quiet = false
   private lastHeight = 0
   private lastWidth = -1
   selection: { anchor: Point; head: Point } | null = null
@@ -91,6 +93,12 @@ export class Transcript {
     this.dirty = true
   }
 
+  /** Call after folding or unfolding blocks: what that adds is not new lines for a reader scrolled away. */
+  refold(): void {
+    this.dirty = true
+    this.quiet = true
+  }
+
   /** All lines at this width. Cheap when nothing changed. */
   layout(width: number): Line[] {
     if (!this.dirty && width === this.flatWidth) return this.flat
@@ -116,7 +124,8 @@ export class Transcript {
     this.flat = out
     this.flatWidth = width
     this.dirty = false
-    if (!this.follow && grew > 0 && width === this.lastWidth) this.unseen += grew
+    if (!this.follow && grew > 0 && width === this.lastWidth && !this.quiet) this.unseen += grew
+    this.quiet = false
     this.lastWidth = width
     return out
   }
@@ -161,12 +170,14 @@ export class Transcript {
     this.layout(width)
     const before = this.spans.find((s) => s.block === block)
     change()
-    this.dirty = true
+    this.refold()
     this.layout(width)
     const after = this.spans.find((s) => s.block === block)
     if (before === undefined || after === undefined) return
+    // A head above the view comes to its second row (the first may hold a prompt), so what was folded is seen.
+    const row = before.from >= this.top ? before.from - this.top : 1
     const maxTop = Math.max(0, this.flat.length - this.lastHeight)
-    this.top = Math.max(0, Math.min(maxTop, after.from - (before.from - this.top)))
+    this.top = Math.max(0, Math.min(maxTop, after.from - row))
     this.follow = this.top >= maxTop
     if (this.follow) this.unseen = 0
   }

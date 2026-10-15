@@ -602,7 +602,8 @@ What appears besides the conversation:
 - **Scrolling.** `PgUp`/`PgDn` go half a screen; `ctrl+home`/`ctrl+end` (rxvt's too) go to the top and to
   the bottom, which follows the conversation again. Scrolled up past a prompt, the prompt holds the top row
   on one line, dim, so the lines in view say what they answer; a click there does nothing to the line it
-  covers. A click on a tool's result unfolds or folds that one in place, its head where it was.
+  covers. A click on a tool's result unfolds or folds that one in place, its head kept in view; the view then
+stays there (ctrl+end follows again), and what a fold adds is not counted as new lines.
 - **The agent panel** lists the turn's subagents (running ones first, with their time and tokens)
   and background shells; a subagent's view shows its task, tools and answers.
 - **`/model`** lists the models the registered providers advertise (the harness's `llm` service),

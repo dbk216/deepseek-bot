@@ -1914,8 +1914,10 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('click: both results start folded', t.term.screen.text().split('ctrl+o to expand').length - 1 === 2 && !/x out 7$/m.test(t.term.screen.text()) && fold !== null)
   t.key(SGR(0, fold.col, fold.row)); t.key(SGR(0, fold.col, fold.row, true)); t.clock.advance(20)
   const after = t.term.screen.text()
-  // Unfolded in place: its head and first lines in view; the other one, below, stays folded.
-  check('click: on a folded result unfolds that one only', /x out 1$/m.test(after) && /x out 7$/m.test(after) && !/y out 7$/m.test(after) && after.split('ctrl+o to expand').length - 1 <= 1, after.split('\n').filter((l) => /out 1 |expand|collapse/.test(l)).join(' | '))
+  // Unfolded in place: its head and first lines in view. The other one, below, brought into view: still folded.
+  t.key('\x1b[1;5F'); t.clock.advance(20)
+  const below = t.term.screen.text()
+  check('click: on a folded result unfolds that one only', /x out 1$/m.test(after) && /x out 7$/m.test(after) && /y out 12$/m.test(below) && !/y out 7$/m.test(below) && below.split('ctrl+o to expand').length - 1 === 1, below.split('\n').filter((l) => /out 1$|out 12$|expand/.test(l)).join(' | '))
   t.key(SGR(0, fold.col, rowOf('Bash(one)'))); t.key(SGR(0, fold.col, rowOf('Bash(one)'), true)); t.clock.advance(20)
   check('click: again folds it', !/x out 7$/m.test(t.term.screen.text()) && t.term.screen.text().split('ctrl+o to expand').length - 1 === 2)
   t.key('\x0f'); t.clock.advance(20)
@@ -1963,6 +1965,25 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const tiny = setup({ cols: 60, rows: 5 })
   tiny.app.openPicker({ title: 'Model', rows, onPick: () => {} }); tiny.key('z'); tiny.key('z'); tiny.clock.advance(20)
   check('picker: on a short screen a filter with no match still says so', tiny.term.screen.text().includes('no match'), tiny.term.screen.text().split('\n').join(' | '))
+  // Scrolled up, a result unfolded by a click or by ctrl+o grew in place: those are not new lines. And scrolled
+  // into a long unfolded result, its head above the view, a click folds it and it stays in sight.
+  const f = setup({ cols: 80, rows: 30 })
+  f.key('the ask\r')
+  f.app.turnStarted()
+  f.app.toolCall({ name: 'bash', callId: 'b1', title: 'big' }); f.app.toolResult('b1', true, Array.from({ length: 40 }, (_, i) => `b out ${i + 1}`).join('\n'))
+  f.app.final(Array.from({ length: 60 }, (_, i) => `after ${i + 1}`).join('\n\n')); f.app.turnEnded(); f.clock.advance(20)
+  f.key('\x1b[1;5H'); f.clock.advance(20)
+  const big = f.term.screen.find('Bash(big)')
+  f.key(SGR(0, big.col, big.row)); f.key(SGR(0, big.col, big.row, true)); f.clock.advance(20)
+  check('click: unfolding, scrolled up, is not new lines', /b out 1$/m.test(f.term.screen.text()) && !/↓ \d+ new/.test(f.term.screen.text()), f.term.screen.text().split('\n').find((l) => / new /.test(l)) ?? '')
+  for (let i = 0; i < 5; i++) f.key(SGR(65, 10, 10))
+  f.clock.advance(20)
+  const inside = f.term.screen.find('b out 20')
+  const headAbove = f.term.screen.find('Bash(big)') === null
+  f.key(SGR(0, inside.col, inside.row)); f.key(SGR(0, inside.col, inside.row, true)); f.clock.advance(20)
+  check('click: folding a result whose head was above the view keeps it in sight', headAbove && f.term.screen.find('Bash(big)') !== null, `${headAbove} ${f.term.screen.text().split('\n').slice(0, 3).join(' | ')}`)
+  f.key('\x0f'); f.clock.advance(20)
+  check('ctrl+o: scrolled up, unfolding is not new lines', !/↓ \d+ new/.test(f.term.screen.text()), f.term.screen.text().split('\n').find((l) => / new /.test(l)) ?? '')
 }
 
 // 81. A light terminal gets the light palette: told by COLORFGBG, or by its answer to the OSC 11 query the app

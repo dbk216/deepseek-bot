@@ -875,8 +875,8 @@ export class App {
         case 'w': this.editor.killWord(); break
         case 'l': this.terminal.invalidate(); break
         case 'j': this.editor.insert('\n'); break
-        case 'o': this.detail.expanded = !this.detail.expanded; this.foldGeneration++; this.transcript.touch(); break
-        case 't': this.thinkingDetail.expanded = !this.thinkingDetail.expanded; this.transcript.touch(); break
+        case 'o': this.detail.expanded = !this.detail.expanded; this.foldGeneration++; this.transcript.refold(); break
+        case 't': this.thinkingDetail.expanded = !this.thinkingDetail.expanded; this.transcript.refold(); break
         default: return
       }
       this.refreshCompletion()
