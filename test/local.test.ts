@@ -444,6 +444,52 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
 }
 
 {
+  // A route whose key is not set fails every turn, so /model leaves it out. Read as the harness's own Models page
+  // reads it: a provider's settings name its key (`apiKeyEnv`), the credentials service says whether it is set.
+  // The DeepSeek account signs in and names no key: it lists models only once signed in, and stays. Two routes
+  // under llm-pi-ai's `providers` (as the installer writes them), one with its key and one without, so the key is
+  // read at the provider's own path; and one whose key cannot be read is listed, as before.
+  const llm = {
+    listProviders: () => [{ id: 'deepseek-official' }, { id: 'og' }, { id: 'custom' }, { id: 'flaky' }, { id: 'deepseek-account' }],
+    listModels: async (p) => [{ provider: p, id: ({ 'deepseek-official': 'deepseek-v4-flash', og: 'm', custom: 'c', flaky: 'f' })[p] ?? 'acct', name: 'N' }],
+    resolveModelInfo: async () => ({}),
+    listConfigurableProviders: () => [
+      { provider: 'deepseek-official', displayName: 'DeepSeek', settingsNs: 'llm-deepseek-api-key', settingsPath: [] },
+      { provider: 'og', displayName: 'OpenGateway', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'og'] },
+      { provider: 'flaky', displayName: 'Flaky', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'flaky'] },
+      { provider: 'custom', displayName: 'Custom endpoint', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'custom'] },
+      { provider: 'deepseek-account', displayName: 'DeepSeek Account', settingsNs: 'llm-deepseek-account', settingsPath: [] },
+    ],
+  }
+  const settings = { describe: () => [
+    { ns: 'llm-deepseek-api-key', value: { apiKeyEnv: 'DEEPSEEK_API_KEY' } },
+    { ns: 'llm-pi-ai', value: { providers: { og: { apiKeyEnv: 'OG_API_KEY' }, custom: { apiKeyEnv: 'CUSTOM_API_KEY' }, flaky: { apiKeyEnv: 'FLAKY_API_KEY' } } } },
+    // The account names no key today; were it to name one, it would still be skipped, as the harness skips it.
+    { ns: 'llm-deepseek-account', value: { apiKeyEnv: 'DEEPSEEK_ACCOUNT_KEY' } },
+  ] }
+  // Thrown before any promise, for the flaky route: the check goes on to the next provider.
+  const credentials = { describe: (ref) => { if (ref === 'FLAKY_API_KEY') throw new Error('store unreadable'); return Promise.resolve({ configured: ref === 'OG_API_KEY', writable: true }) }, resolve: async () => undefined }
+  const t = boot({ services: { llm, settings, credentials, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm' }) } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  const ready = await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'models' })
+  const listed = await c.waitFor((f) => f.type === 'models')
+  const ids = (listed?.items ?? []).map((m) => `${m.provider}/${m.id}`).join()
+  check('model: a route with no key is left out of /model; one with a key, one whose key cannot be read, and the account that signs in, stay', ids === 'og/m,flaky/f,deepseek-account/acct', ids)
+  c.send({ type: 'model', provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  const refused = await c.waitFor((f) => f.type === 'error' && f.code === 'model')
+  check('model: one asked for by name on a route with no key is refused, naming the route and the key, and that ~/.dsh/.env needs a restart', refused !== null && /^deepseek-official has no key/.test(refused.message) && /DEEPSEEK_API_KEY/.test(refused.message) && /restart/.test(refused.message), JSON.stringify(refused))
+  check('model: and not kept', JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`] === undefined)
+  check('model: the route left out is logged, once', t.logs.filter((l) => /deepseek-official.*DEEPSEEK_API_KEY/.test(l)).length === 1, JSON.stringify(t.logs.filter((l) => /models:/.test(l))))
+  check('model: a key that cannot be read keeps its route, and says so once', t.logs.filter((l) => /could not read whether flaky's key \(FLAKY_API_KEY\)/.test(l)).length === 1, JSON.stringify(t.logs.filter((l) => /models:/.test(l))))
+  await c.close()
+  await t.done()
+}
+
+{
   // shift+tab: the next effort the conversation's model takes, worked out by the gateway, and every terminal on
   // the conversation told. A /model switch used to reach only the terminal that made it.
   let resolves = 0

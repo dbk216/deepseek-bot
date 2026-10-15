@@ -569,9 +569,14 @@ What appears besides the conversation:
   plugin cannot install). `shift+tab` steps the effort of the model it is on, round, and
   keeps it as the conversation's own choice, as `/model` does. A
   model no provider lists, or an effort the model does not take, is refused. The choice is kept per
-  conversation in the state file; Slack and the other conversations keep theirs. The list is every
-  model a registered route advertises, including a route whose key is in neither `~/.dsh/.env` nor the app's store (`~/.dsh/.credentials.yaml`) — a conversation
-  moved to one fails its turns until `/model default`. Reminders the harness delivers on its own
+  conversation in the state file; Slack and the other conversations keep theirs. The list leaves out a
+  route whose key is not set — the key its settings name (`apiKeyEnv`) is in none of the places the
+  harness reads keys from — and one asked for by name is refused with that key's name; the harness's own
+  Models page reads keys the same way. A key put in `~/.dsh/.env` counts once the gateway restarts (the
+  harness reads that file at launch); one entered in the app counts at once. A route that names no key is
+  listed as it is, and the DeepSeek account, which signs in, lists its models once signed in. A
+  conversation already on a route whose key is gone (chosen before, or the key removed since) fails its
+  turns until the key is set or another model is chosen. Reminders the harness delivers on its own
   schedule are not known to follow a conversation's choice (unverified). The deployment's own
   reasoning effort (`agent-default-model`) now reaches a turn too; it was dropped before. The status
   line shows the effort at its left, in sky blue, and the model at its right.

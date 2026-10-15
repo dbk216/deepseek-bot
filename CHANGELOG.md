@@ -49,6 +49,10 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **`/model` listed routes with no key.** Every model a registered provider advertises was listed, and a
+  conversation moved to a route whose key is set nowhere the harness looks failed every turn. Such a
+  route is now left out, read the way the harness's own Models page reads it, and one asked for by name
+  is refused with the key it lacks. The DeepSeek account, which signs in, stays.
 - **A custom endpoint's context window could be written as another number.** Shell arithmetic wraps at
   2^64, so the installer took `18446744073709551716` and wrote `contextWindow: 100`. A window is now a
   whole number from 1 to 999999999, and one outside that is refused with what was typed.

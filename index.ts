@@ -70,7 +70,7 @@ import type { Origin, TurnOutcome, TurnSummary } from './types/core.js'
 import type {
   AgentDefaultModelService, AgentsService, LlmService, AgentPresetsService, AttachmentsService,
   CredentialsService, FileSystemService, PermissionPresetsService, SessionProjectionsService,
-  SessionQueryService, SessionsService, WorkspaceRegistryService,
+  SessionQueryService, SessionsService, SettingsService, WorkspaceRegistryService,
 } from './types/dsh.js'
 
 export const name = 'deepbot'
@@ -2205,14 +2205,53 @@ export function apply(ctx, config) {
   const llm = () => ctx.get('llm') as LlmService | undefined
   const providerId = (p: { id?: string; provider?: string }) => String(p.id ?? p.provider ?? '')
 
-  /** Every model the registered providers advertise, provider by provider. One that fails to list is left out, and logged. */
-  async function listModels(): Promise<Array<{ provider: string; id: string; name: string; description?: string }>> {
+  /**
+   * The providers whose key is not set, each with the key's name: a model on one fails every turn. Read as the
+   * harness's own Models page reads it — a provider's settings name its key (`apiKeyEnv`), and the credentials
+   * service, which looks where the harness looks, says whether it is set. A provider that names no key is not
+   * one, and the DeepSeek account, which signs in, is skipped by name as the harness skips it; with either
+   * service missing, none is. A key put in ~/.dsh/.env counts from the gateway's next start: the harness reads
+   * that file once, at launch.
+   */
+  const keylessLogged = new Set<string>()
+  async function keylessProviders(): Promise<Map<string, string>> {
+    const out = new Map<string, string>()
+    const service = llm()
+    const settings = ctx.get('settings') as SettingsService | undefined
+    const credentials = ctx.get('credentials') as CredentialsService | undefined
+    if (typeof service?.listConfigurableProviders !== 'function' || typeof settings?.describe !== 'function' || typeof credentials?.describe !== 'function') return out
+    try {
+      const namespaces = await settings.describe({ redactSecrets: true })
+      for (const p of service.listConfigurableProviders()) {
+        if (p.provider === 'deepseek-account') continue
+        let value: unknown = namespaces.find((n) => n.ns === p.settingsNs)?.value
+        for (const step of p.settingsPath ?? []) value = typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[step] : undefined
+        const ref = typeof value === 'object' && value !== null ? (value as Record<string, unknown>).apiKeyEnv : undefined
+        if (typeof ref !== 'string' || ref === '') continue
+        const info = await Promise.resolve().then(() => credentials.describe?.(ref)).catch((e) => {
+          // Kept in the list: a key that cannot be read is not known to be missing.
+          if (!keylessLogged.has(`${p.provider}?`)) { keylessLogged.add(`${p.provider}?`); log(`models: could not read whether ${p.provider}'s key (${ref}) is set — kept in /model: ${String((e as Error)?.message ?? e).slice(0, 120)}`) }
+          return undefined
+        })
+        if (info?.configured !== false) continue
+        out.set(p.provider, ref)
+        if (!keylessLogged.has(`${p.provider}:${ref}`)) { keylessLogged.add(`${p.provider}:${ref}`); log(`models: ${p.provider} has no key (${ref} is not set) — left out of /model`) }
+      }
+    } catch (e) {
+      if (!keylessLogged.has('')) { keylessLogged.add(''); log(`models: could not read which providers have a key: ${String((e as Error)?.message ?? e).slice(0, 160)}`) }
+    }
+    return out
+  }
+
+  /** Every model the registered providers advertise, provider by provider, but for those with no key. One that fails to list is left out, and logged. */
+  async function listModels(keyless?: Map<string, string>): Promise<Array<{ provider: string; id: string; name: string; description?: string }>> {
     const service = llm()
     if (service === undefined) return []
+    keyless ??= await keylessProviders()
     const out = []
     for (const p of service.listProviders()) {
       const id = providerId(p)
-      if (id === '') continue
+      if (id === '' || keyless.has(id)) continue
       try { out.push(...await service.listModels(id)) } catch (e) { log(`models: ${id} could not list: ${String((e as Error)?.message ?? e).slice(0, 160)}`) }
     }
     return out
@@ -2259,9 +2298,12 @@ export function apply(ctx, config) {
    * A conversation's own model, from the terminal's /model: only one the providers list, with an
    * effort that model takes. The next turn runs on it; a running one keeps its own. null clears it.
    */
-  async function setModel(key: string, choice: { provider: string; model: string; effort?: string | null } | null): Promise<null | { code: 'unknown-model' } | { code: 'effort'; efforts: string[] }> {
+  async function setModel(key: string, choice: { provider: string; model: string; effort?: string | null } | null): Promise<null | { code: 'unknown-model' } | { code: 'no-key'; ref: string } | { code: 'effort'; efforts: string[] }> {
     if (choice === null) { if (state.models) delete state.models[key]; saveStateNow(); return null }
-    const known = await listModels()
+    const keyless = await keylessProviders()
+    const ref = keyless.get(choice.provider)
+    if (ref !== undefined) return { code: 'no-key', ref }
+    const known = await listModels(keyless)
     if (!known.some((m) => m.provider === choice.provider && m.id === choice.model)) return { code: 'unknown-model' }
     const { efforts, defaultEffort } = await modelInfo(choice.provider, choice.model)
     if (choice.effort != null && !efforts.includes(choice.effort)) return { code: 'effort', efforts }

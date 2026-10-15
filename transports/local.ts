@@ -62,7 +62,7 @@ interface LocalHost {
   /** Step a conversation's effort through the ones its model takes; what was wrong, or null. */
   stepEffort?: (key: string, step: 1 | -1) => Promise<null | { code: 'no-efforts'; model: string }>
   /** Set (or with null, clear) a conversation's own model; what was wrong with it, or null. */
-  setModel?: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => Promise<null | { code: 'unknown-model' } | { code: 'effort'; efforts: string[] }>
+  setModel?: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => Promise<null | { code: 'unknown-model' } | { code: 'no-key'; ref: string } | { code: 'effort'; efforts: string[] }>
   /** The tenant a conversation is recorded in (null: the home), or undefined when none is recorded. */
   boundTenant?: (key: string) => string | null | undefined
   /** The tenant a conversation is in now: recorded, asked for, or configured. */
@@ -374,7 +374,8 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
           let problem: Awaited<ReturnType<typeof setModel>>
           try { problem = await setModel(key, wanted) } catch (e) { if (client.conversation === asked) refuse(client, 'model', String((e as Error)?.message ?? e).slice(0, 200)); return }
           if (problem !== null && wanted !== null) {
-            if (client.conversation === asked) refuse(client, 'model', problem.code === 'unknown-model' ? say.unknownModel(`${wanted.provider}/${wanted.model}`) : say.noSuchEffort(`${wanted.provider}/${wanted.model}`, String(wanted.effort), problem.efforts))
+            const named = `${wanted.provider}/${wanted.model}`
+            if (client.conversation === asked) refuse(client, 'model', problem.code === 'unknown-model' ? say.unknownModel(named) : problem.code === 'no-key' ? say.noModelKey(wanted.provider, problem.ref) : say.noSuchEffort(named, String(wanted.effort), problem.efforts))
             return
           }
           // The choice holds for the conversation that made it: every terminal still on it is told, and
