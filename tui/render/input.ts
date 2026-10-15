@@ -107,7 +107,14 @@ export class InputParser {
     const events: InputEvent[] = []
     if (this.buffer === '\x1b') events.push(key('escape'))
     // A terminal's answer that never finished is dropped, not typed.
-    else if (/^\x1b\]\d/.test(this.buffer)) { this.buffer = ''; return events }
+    else if (/^\x1b\]\d+;/.test(this.buffer)) { this.buffer = ''; return events }
+    // ESC ] and digits that never became one: alt+], and the digits typed.
+    else if (this.buffer.startsWith('\x1b]')) {
+      const rest = this.buffer.slice(2)
+      this.buffer = ''
+      events.push(key('char', { ch: ']', alt: true }), ...this.feed(rest))
+      return events
+    }
     else if (this.buffer.startsWith('\x1b')) {
       // An unfinished sequence that will never finish: treat ESC as a key and re-feed the rest.
       const rest = this.buffer.slice(1)
@@ -142,13 +149,15 @@ export class InputParser {
         events.push(this.mouse(Number(m[1]), Number(m[2]) - 1, Number(m[3]) - 1, m[4] === 'm'))
         return m[0].length
       }
-      const m = /^\x1b\[([\d;]*)([A-Za-z~])/.exec(b)
+      // rxvt ends home, end and the like with ^ (ctrl), $ (shift) or @ (both) where xterm has ~ and a modifier.
+      const m = /^\x1b\[([\d;]*)([A-Za-z~^$@])/.exec(b)
       if (m === null) return /^\x1b\[[\d;]*$/.test(b) ? 0 : this.junk(b)
       const [, params, final] = m
       const parts = params.split(';')
-      if (final === '~') {
+      if (final === '~' || final === '^' || final === '$' || final === '@') {
         const name = CSI_TILDE[parts[0]]
-        if (name !== undefined) events.push(key(name, mods(parts[1])))
+        const rxvt = { ctrl: final === '^' || final === '@', alt: false, shift: final === '$' || final === '@' }
+        if (name !== undefined) events.push(key(name, final === '~' ? mods(parts[1]) : rxvt))
       } else if (final === 'u') {
         // CSI u (kitty / fixterms): codepoint ; modifiers
         const cp = Number(parts[0])
@@ -167,9 +176,10 @@ export class InputParser {
     }
     if (b[1] === ']') {
       // An operating system command, as the answer to QUERY_BACKGROUND: ESC ] digits ; … ended by BEL or ST.
-      // ESC ] and anything but a digit is alt+].
-      if (b.length === 2) return 0
-      if (/^\x1b\]\d/.test(b)) {
+      // ESC ] and digits so far may be one, or alt+] and digits typed: wait (flush says which); ESC ] and
+      // anything else is alt+].
+      if (/^\x1b\]\d*$/.test(b)) return 0
+      if (/^\x1b\]\d+;/.test(b)) {
         const bel = b.indexOf('\x07')
         const st = b.indexOf('\x1b\\', 2)
         const end = bel === -1 ? st : st === -1 ? bel : Math.min(bel, st)

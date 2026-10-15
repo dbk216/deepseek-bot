@@ -8,6 +8,8 @@
  * effort the row was given, or at none (the model's default), from which → takes the first and ← the last.
  */
 
+import { graphemes } from './render/width.js'
+
 export interface PickerRow {
   label: string
   detail?: string
@@ -60,7 +62,7 @@ export class Picker {
   /** Backspace in the filter: false when there was nothing typed to take back. */
   erase(): boolean {
     if (this.query === '') return false
-    this.query = [...this.query].slice(0, -1).join('')
+    this.query = graphemes(this.query).slice(0, -1).join('')
     this.refilter()
     return true
   }
@@ -108,6 +110,8 @@ export class Picker {
 
   /** ←→: the highlighted row's effort, through the ones it takes, round. */
   stepEffort(delta: number): boolean {
+    // Nothing matching: no row is shown, and none's effort is stepped unseen.
+    if (this.position === 0) return false
     const values = this.spec.rows[this.cursor]?.efforts ?? []
     if (values.length === 0) return false
     const at = values.indexOf(this.efforts[this.cursor] ?? '')

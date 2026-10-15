@@ -1875,7 +1875,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   tr.push(lines('u1', 3, 'first')); tr.push(lines('a1', 10)); tr.push(lines('u2', 3, 'second')); tr.push(lines('a2', 10))
   tr.visible(80, 5)
   const heldAt = (top) => { tr.follow = false; tr.top = top; return tr.promptAbove() }
-  check('scroll: the prompt held is the one wholly above, none while one is at the top', heldAt(20) === 'second' && heldAt(14) === null && heldAt(5) === 'first' && heldAt(1) === null, JSON.stringify([heldAt(20), heldAt(14), heldAt(5), heldAt(1)]))
+  check('scroll: the prompt held is the one wholly above, none while one is at the top', heldAt(20) === 'second' && heldAt(14) === null && heldAt(13) === null && heldAt(5) === 'first' && heldAt(1) === null, JSON.stringify([heldAt(20), heldAt(14), heldAt(13), heldAt(5), heldAt(1)]))
   check('completion: a list longer than its window says where the highlight is', /^ ?1\/\d+ · ↑↓ pick/.test(c.term.screen.row(29)), c.term.screen.row(29))
 }
 {
@@ -1892,7 +1892,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.key('\x1b[5~'); t.clock.advance(20)
   const moved = rowOf(anchor) - before
   check('scroll: PgUp goes half a screen', before !== -1 && moved >= 9 && moved <= 13, `${anchor}: ${before} → ${rowOf(anchor)}`)
-  check('scroll: scrolled up, the prompt above holds the top line, dim', /› second question/.test(t.term.screen.row(0)) && t.term.screen.grid[0 * 80 + 2].style.includes(';2'), `${t.term.screen.row(0)} ${JSON.stringify(t.term.screen.grid[2].style)}`)
+  check('scroll: scrolled up, the prompt above holds the top line, dim', /› second question/.test(t.term.screen.row(0)) && t.term.screen.grid[0 * 80 + 2].style === '\x1b[0;2m', `${t.term.screen.row(0)} ${JSON.stringify(t.term.screen.grid[2].style)}`)
   t.key('\x1b[6~'); t.clock.advance(20)
   check('scroll: PgDn comes back by as much', rowOf(anchor) === before, `${rowOf(anchor)} vs ${before}`)
   t.key('\x1b[1;5H'); t.clock.advance(20)
@@ -1914,11 +1914,55 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('click: both results start folded', t.term.screen.text().split('ctrl+o to expand').length - 1 === 2 && !/x out 7$/m.test(t.term.screen.text()) && fold !== null)
   t.key(SGR(0, fold.col, fold.row)); t.key(SGR(0, fold.col, fold.row, true)); t.clock.advance(20)
   const after = t.term.screen.text()
-  check('click: on a folded result unfolds that one only', /x out 7$/m.test(after) && !/y out 7$/m.test(after) && after.split('ctrl+o to expand').length - 1 === 1, after.split('\n').filter((l) => /out 1 |expand|collapse/.test(l)).join(' | '))
+  // Unfolded in place: its head and first lines in view; the other one, below, stays folded.
+  check('click: on a folded result unfolds that one only', /x out 1$/m.test(after) && /x out 7$/m.test(after) && !/y out 7$/m.test(after) && after.split('ctrl+o to expand').length - 1 <= 1, after.split('\n').filter((l) => /out 1 |expand|collapse/.test(l)).join(' | '))
   t.key(SGR(0, fold.col, rowOf('Bash(one)'))); t.key(SGR(0, fold.col, rowOf('Bash(one)'), true)); t.clock.advance(20)
   check('click: again folds it', !/x out 7$/m.test(t.term.screen.text()) && t.term.screen.text().split('ctrl+o to expand').length - 1 === 2)
   t.key('\x0f'); t.clock.advance(20)
   check('click: ctrl+o still unfolds them all', /x out 7$/m.test(t.term.screen.text()) && /y out 7$/m.test(t.term.screen.text()))
+}
+
+// 80b. What review found in 80. Unfolding a long result keeps its head where it was; the held prompt line is not
+// the line under it; alt+key closes a picker as before and a paste goes to its filter; ←→ with nothing matching
+// steps nothing; backspace takes a whole character; and on a short screen "no match" still shows.
+{
+  const t = setup({ cols: 80, rows: 30 })
+  t.app.turnStarted()
+  t.app.toolCall({ name: 'bash', callId: 'long', title: 'long' }); t.app.toolResult('long', true, Array.from({ length: 60 }, (_, i) => `long out ${i + 1}`).join('\n'))
+  t.app.turnEnded(); t.clock.advance(20)
+  const head = t.term.screen.find('Bash(long)')
+  t.key(SGR(0, head.col, head.row)); t.key(SGR(0, head.col, head.row, true)); t.clock.advance(20)
+  // (Unfolded, a result shows its last 40 lines: from 21 here.)
+  check('click: unfolding a long result keeps its head in view, its first lines under it', t.term.screen.find('Bash(long)') !== null && /long out 21$/m.test(t.term.screen.text()), `${head.row} → ${t.term.screen.find('Bash(long)')?.row}`)
+  // The held prompt row: a click there is not a click on what it covers.
+  const u = setup({ cols: 80, rows: 30 })
+  u.key('the question\r')
+  u.app.turnStarted()
+  u.app.toolCall({ name: 'bash', callId: 'u1', title: 'one' }); u.app.toolResult('u1', true, Array.from({ length: 40 }, (_, i) => `u out ${i + 1}`).join('\n'))
+  u.app.turnEnded(); u.key('\x0f'); u.clock.advance(20)
+  // Scrolled into the unfolded result: the held prompt covers one of its lines.
+  u.key('\x1b[5~'); u.clock.advance(20)
+  const held = /› the question/.test(u.term.screen.row(0)) && /u out \d+/.test(u.term.screen.row(1))
+  u.key(SGR(0, 5, 0)); u.key(SGR(0, 5, 0, true)); u.clock.advance(20)
+  check('held line: a click on it does nothing to what it covers', held && !u.term.screen.text().includes('ctrl+o to expand') && u.copied.length === 0, `${u.term.screen.row(0)} | ${u.term.screen.row(1)}`)
+
+  const p = setup({ cols: 80, rows: 30 })
+  const rows = [{ label: 'og/m1', efforts: ['low', 'high'] }, { label: 'og/m2', efforts: ['low', 'high'] }]
+  const picked = []
+  const open = () => { p.app.openPicker({ title: 'Model', rows, onPick: (i, e) => picked.push([i, e]) }); p.clock.advance(20) }
+  open(); p.key('\x1bx'); p.clock.advance(20)
+  check('picker: alt+key closes it, as before, and goes to the box', p.app.picker === null && p.app.editor.text === 'x', JSON.stringify([p.app.picker === null, p.app.editor.text]))
+  p.app.editor.set(''); open()
+  p.key('\x1b[200~m2\x1b[201~'); p.clock.advance(20)
+  check('picker: a paste goes to its filter', p.app.picker !== null && p.app.picker.query === 'm2' && p.app.editor.text === '', JSON.stringify([p.app.picker?.query, p.app.editor.text]))
+  p.key('\x7f'); p.key('\x7f'); p.key('z'); p.key('z'); p.key('\x1b[C'); p.key('\x7f'); p.key('\x7f'); p.key('\r'); p.clock.advance(20)
+  check('picker: → with nothing matching steps no hidden row\'s effort', picked.length === 1 && picked[0][1] === null, JSON.stringify(picked))
+  open(); p.key('a'); p.key('👍🏽'); p.key('\x7f'); p.clock.advance(20)
+  check('picker: backspace takes the whole character typed', p.app.picker?.query === 'a', JSON.stringify(p.app.picker?.query))
+  p.key('\x1b'); p.clock.advance(60)
+  const tiny = setup({ cols: 60, rows: 5 })
+  tiny.app.openPicker({ title: 'Model', rows, onPick: () => {} }); tiny.key('z'); tiny.key('z'); tiny.clock.advance(20)
+  check('picker: on a short screen a filter with no match still says so', tiny.term.screen.text().includes('no match'), tiny.term.screen.text().split('\n').join(' | '))
 }
 
 // 81. A light terminal gets the light palette: told by COLORFGBG, or by its answer to the OSC 11 query the app

@@ -153,6 +153,24 @@ export class Transcript {
     if (this.follow) this.unseen = 0
   }
 
+  /**
+   * Change a block in place (a fold turned over), keeping its first line on the row it is on: a long
+   * result unfolded at the bottom shows its head, not its tail.
+   */
+  keepInPlace(block: Block, width: number, change: () => void): void {
+    this.layout(width)
+    const before = this.spans.find((s) => s.block === block)
+    change()
+    this.dirty = true
+    this.layout(width)
+    const after = this.spans.find((s) => s.block === block)
+    if (before === undefined || after === undefined) return
+    const maxTop = Math.max(0, this.flat.length - this.lastHeight)
+    this.top = Math.max(0, Math.min(maxTop, after.from - (before.from - this.top)))
+    this.follow = this.top >= maxTop
+    if (this.follow) this.unseen = 0
+  }
+
   /** The block a transcript line belongs to, or null. */
   blockAt(line: number): Block | null {
     let lo = 0
@@ -175,7 +193,7 @@ export class Transcript {
     if (this.follow) return null
     let found: string | null = null
     for (const s of this.spans) {
-      if (s.from >= this.top) break
+      if (s.from > this.top) break
       if (s.block.prompt !== undefined) found = s.to <= this.top ? s.block.prompt : null
     }
     return found

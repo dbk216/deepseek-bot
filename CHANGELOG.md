@@ -44,7 +44,7 @@ the caveat about version numbers is at the bottom.
   row's name or detail, any case), backspace on an empty filter closing it as before. A list longer than
   its window says where its highlight is, `Model (3/12)`, and the completion list's hint does too.
   `PgUp`/`PgDn` went nearly a whole screen and now go half; `ctrl+home`/`ctrl+end` go to the top and the
-  bottom; scrolled up past a prompt, its first line holds the top row, dim; and a click on a tool's result
+  bottom; scrolled up past a prompt, the prompt holds the top row on one line, dim; and a click on a tool's result
   unfolds or folds that one alone (`ctrl+o` still does them all).
 - **The terminal's input box as Claude Code and pi have it.** An empty box said nothing, a box past its
   six rows hid the rest without a sign, a pasted log filled it, a new line took `alt+↵`, and a message

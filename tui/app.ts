@@ -234,6 +234,8 @@ export class App {
     /** What each picker line is: a row's index, -2 its effort, -1 anything else. */
     pickerTop: -1, pickerMap: [] as number[],
     completionTop: -1, completionFirst: 0, completionShown: 0,
+    /** The row the held prompt covers, or -1. */
+    heldRow: -1,
     editorRows: 0, editorFirst: 0, statusRow: -1, effortSpan: null as { from: number; to: number } | null,
   }
 
@@ -809,6 +811,8 @@ export class App {
       const cut = event.text.length > MAX_PASTE_CHARS
       const text = (cut ? event.text.slice(0, MAX_PASTE_CHARS) : event.text).replace(/\r\n?/g, '\n')
       if (cut) this.showToast(t().pasteCut(MAX_PASTE_CHARS.toLocaleString('en-US')))
+      // Over a list with nothing typed, a paste is typed into its filter, as keys are.
+      if (this.picker !== null && this.question === null && this.editor.text === '') { this.picker.type(text.replace(/\s+/g, ' ')); this.terminal.requestRender(true); return }
       this.search = null
       this.shortcuts = false
       // Pasted into an open question, as typed into it: the person's own words.
@@ -1074,7 +1078,8 @@ export class App {
         return true
       case 'escape': this.closePicker(); return true
       case 'char':
-        if (key.alt) return false
+        // alt+key closes it and goes to the box, as typing did before the list filtered.
+        if (key.alt) { this.closePicker(); return false }
         // A / with nothing typed is a command: the list closes and the key is the box's, as it was.
         if (key.ch === '/' && p.query === '') { this.closePicker(); return false }
         // A digit with nothing typed jumps to its row; anything else is typed into the filter.
@@ -1245,6 +1250,8 @@ export class App {
         if (m.x >= span.from && m.x < span.to) { this.pick(m.y - this.geometry.choiceRow); this.terminal.requestRender(true) }
         return
       }
+      // The held prompt's row covers a line: a press there is not a press on that line.
+      if (m.y === g.heldRow) return
       if (!inTranscript) { this.clearSelection(); return }
       const line = pane.lineAt(m.y - transcriptTop) ?? Math.max(0, pane.size - 1)
       pane.beginSelection({ line, col: m.x })
@@ -1275,7 +1282,8 @@ export class App {
         this.clearSelection()
         const block = at === undefined ? null : pane.blockAt(at)
         const turn = block === null ? undefined : this.folds.get(block)
-        if (turn !== undefined) { turn(); pane.touch(); this.terminal.requestRender(true) }
+        // Turned over in place: its head stays on its row, and a long result unfolds below it.
+        if (turn !== undefined) { pane.keepInPlace(block!, this.o.io.columns(), turn); this.terminal.requestRender(true) }
         return
       }
       const method = (this.o.copy ?? ((t: string) => systemCopy(t, { env: this.o.env, platform: this.o.platform, write: (d) => this.o.io.write(d) })))(text)
@@ -1379,7 +1387,7 @@ export class App {
       transcriptTop, transcriptHeight, dividerRow, editorTop, choiceRow: choiceRow === -1 ? -1 : choiceRow + 1, choiceSpans, panelTop, panelFirst: panel.first, panelShown, questionTop, questionRowsAt,
       pickerTop, pickerMap: pickerLines.map((line) => line.row),
       completionTop: completionLines.length === 0 ? -1 : completionTop, completionFirst: completion.first, completionShown: completionLines.length,
-      editorRows: boxHidden ? 0 : editorRows, editorFirst, statusRow, effortSpan: null,
+      editorRows: boxHidden ? 0 : editorRows, editorFirst, statusRow, effortSpan: null, heldRow: -1,
     }
     if (panelTop >= 0) this.drawPanel(screen, panelTop, panel.rows, panel.first)
 
@@ -1411,6 +1419,7 @@ export class App {
     })
 
     // Scrolled up past a prompt: it holds the top line, dim, so what is in view says what it answers.
+    this.geometry.heldRow = held !== null ? transcriptTop : -1
     if (held !== null) {
       screen.put(0, transcriptTop, ' '.repeat(cols), '')
       screen.put(0, transcriptTop, fit(`› ${held.replace(/\s+/g, ' ').trim()}`, cols - 1), s(theme.dim))
@@ -1545,7 +1554,8 @@ export class App {
     // would not fit with them.
     let title = 1
     let effortLine = p.hasEffortLine ? 1 : 0
-    if (room - title - effortLine < 1) title = 0
+    // With nothing matching there are no rows, and the title is what says so.
+    if (room - title - effortLine < 1 && p.shown.length > 0) title = 0
     if (room - title - effortLine < 1) effortLine = 0
     const win = p.window(Math.max(1, Math.min(PICKER_MAX_ROWS, room - title - effortLine)))
     // The title says where the highlight is when the list is longer than its window or filtered, and what was typed.

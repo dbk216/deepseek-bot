@@ -426,6 +426,17 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   const unfinished = new InputParser()
   const none = [...unfinished.feed('\x1b]11;rgb:ff'), ...unfinished.flush()]
   check('background: an answer that never finishes is dropped at the timeout, not typed', none.length === 0, JSON.stringify(none))
+  const lone = new InputParser()
+  const altAlone = [...lone.feed('\x1b]'), ...lone.flush()]
+  check('background: alt+] alone is alt+], not escape', altAlone.length === 1 && altAlone[0].type === 'key' && altAlone[0].alt && altAlone[0].ch === ']', JSON.stringify(altAlone))
+  const altDigit = [...lone.feed('\x1b]1'), ...lone.flush()]
+  check('background: alt+] then a digit is both, not an answer', altDigit.length === 2 && altDigit[0].alt && altDigit[0].ch === ']' && altDigit[1].ch === '1', JSON.stringify(altDigit))
+  const early = new InputParser()
+  const atDigit = [...early.feed('\x1b]1'), ...early.feed('1;rgb:ffff/ffff/ffff\x07')]
+  check('background: an answer split right after its first digit is still one answer', atDigit.length === 1 && atDigit[0].type === 'background' && atDigit[0].background === 'light', JSON.stringify(atDigit))
+  // rxvt's ctrl+home and ctrl+end, and shift.
+  const rx = lone.feed('\x1b[7^\x1b[8^\x1b[7$')
+  check('input: rxvt ctrl+home, ctrl+end, shift+home', rx.length === 3 && rx[0].name === 'home' && rx[0].ctrl && rx[1].name === 'end' && rx[1].ctrl && rx[2].name === 'home' && rx[2].shift, JSON.stringify(rx))
   const alt = p.feed('\x1b]a')
   check('background: alt+] followed by a key is still alt+]', alt.length === 2 && alt[0].type === 'key' && alt[0].alt && alt[0].ch === ']', JSON.stringify(alt))
   useBackground('light')

@@ -594,12 +594,15 @@ What appears besides the conversation:
   place — arrows and Enter, Space on multi-select, or type (or paste) your own answer.
 - **`/model` and `/sessions` open a picker** in the input box's place: `↑↓` or the wheel to move, a digit to
   jump, `↵` or a click to pick, `esc` to close. Typing filters it, as Claude Code's lists do: a row stays
-  when every word typed is in its name or detail, in any case (after a letter, digits are typed too), and
-  backspace on an empty filter closes it, and `/` with nothing typed closes it to start a command. A list longer than its window, or filtered, says where the
-  highlight is (`Model (3/12)`), as the completion list does in its hint. `/resume <n>` still works typed.
-- **Scrolling.** `PgUp`/`PgDn` go half a screen; `ctrl+home`/`ctrl+end` go to the top and to the bottom,
-  which follows the conversation again. Scrolled up past a prompt, its first line holds the top row, dim,
-  so the lines in view say what they answer.
+  when every word typed is in its name or detail, in any case (after a letter, digits are typed too; a paste
+  goes to the filter too). Backspace on an empty filter closes it, `/` with nothing typed closes it to start
+  a command, and alt with a key closes it and types the key. A list longer than its window, or filtered,
+  says where the highlight is (`Model (3/12)`), as the completion list does in its hint. `/resume <n>`
+  still works typed.
+- **Scrolling.** `PgUp`/`PgDn` go half a screen; `ctrl+home`/`ctrl+end` (rxvt's too) go to the top and to
+  the bottom, which follows the conversation again. Scrolled up past a prompt, the prompt holds the top row
+  on one line, dim, so the lines in view say what they answer; a click there does nothing to the line it
+  covers. A click on a tool's result unfolds or folds that one in place, its head where it was.
 - **The agent panel** lists the turn's subagents (running ones first, with their time and tokens)
   and background shells; a subagent's view shows its task, tools and answers.
 - **`/model`** lists the models the registered providers advertise (the harness's `llm` service),
