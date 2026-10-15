@@ -73,7 +73,7 @@ catalogChecks('adapter', (l) => messages(l))
 
 // 4. The terminal's own words are English, whatever the deployment's language: it is not the bot speaking.
 {
-  check('the terminal speaks English', t().connecting === 'connecting…' && t().hints.idle(false).startsWith('↵ send'))
+  check('the terminal speaks English', t().connecting === 'connecting…' && t().hints.idle(false) === '? for shortcuts')
 }
 
 // 5. The words people type are understood in every language at once, English first.

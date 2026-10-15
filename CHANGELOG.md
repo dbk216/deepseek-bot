@@ -35,6 +35,11 @@ the caveat about version numbers is at the bottom.
   replaces the messenger there (the guided setup asks first); the old one's tokens stay, its channel
   ids give way to every channel and its people to the ones given. `--yes`, which guarded a `*` that
   opened several messengers at once, is gone.
+- **The terminal's status line, approvals and hints as Claude Code has them.** A running turn is one
+  indicator, `✻ Thinking… (12s · esc to interrupt)`, in place of a label and a second spinner with the
+  elapsed time; an approval shows the request's first line and its options numbered, answered with
+  `↑↓`, a digit or a click and `↵`, `esc` answering no (it stopped the turn, and `↑` brought back the last
+  message, which `↵` sent again); the hint line is `? for shortcuts`, and `?` on an empty box shows them.
 - **The terminal's transcript as Claude Code and pi draw it.** A call reads `● Name(what it was asked)`;
   its result sits under `⎿`, a read as `Read N lines`, a search as `Found N lines`, a list as
   `Found N files` (counted by the gateway before it cuts a long result), a shell's last five lines, anything

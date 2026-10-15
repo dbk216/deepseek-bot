@@ -110,7 +110,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   check('cursor: rests in the input box after the prompt', box !== null && cursor.y === box.row && cursor.x === box.col + 4, JSON.stringify({ cursor, box }))
 }
 
-// 3. A streamed turn: spinner while running, text as it arrives, a dropped attempt, a tool step.
+// 3. A streamed turn: the working indicator while running, text as it arrives, a dropped attempt, a tool step.
 {
   const t = setup()
   t.key('배포 일정 알려줘\r')
@@ -123,7 +123,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   const streaming = t.term.screen.text()
   check('stream: a failed attempt\'s text is dropped', !streaming.includes('잘못된 시도'))
   check('stream: text appears as it streams, with no caret', streaming.includes('어제 스레드 기준으로') && !streaming.includes('▍'))
-  check('stream: the status line shows a spinner and elapsed time', /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d+\.\ds/.test(streaming))
+  check('stream: the status line shows what it is doing, for how long, and how to stop it', /✻ \S+… \(\d+s · esc to interrupt\)/.test(streaming))
   t.app.toolCall({ name: 'recall', title: '2 passages' })
   t.app.delta('staging 먼저.')
   t.app.final('staging 먼저, 그다음 production.')
@@ -132,7 +132,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   const done = t.term.screen.text()
   check('stream: a tool step appears between the two parts', done.includes('● Recall(2 passages)'))
   check('stream: the final text replaces the streamed text', done.includes('staging 먼저, 그다음 production.') && !done.includes('staging 먼저.▍'))
-  check('stream: no spinner after the turn', !/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d+\.\ds/.test(done))
+  check('stream: no working indicator after the turn', !done.includes('esc to interrupt'))
 }
 
 // 3b. The turn's reply takes the place of what was streamed — and only the reply does.
@@ -148,7 +148,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.clock.advance(20)
   const asking = t.term.screen.text()
   check('mid-turn: the approval request is its own message; the streamed text stays', asking.includes('build 폴더를 지울게.') && asking.includes('권한이 필요합니다'))
-  check('choice: offered above the input box', /⚠ +허용 +거부/.test(asking) || (asking.includes('⚠') && asking.includes(' 허용 ') && asking.includes(' 거부 ')))
+  check('choice: the request\'s first line, then its options numbered, one a row', /⚠ 권한이 필요합니다: rm -rf build/.test(asking) && /❯ 1\. 허용/.test(asking) && / {2}2\. 거부/.test(asking), asking.split('\n').slice(-6).join(' | '))
   check('choice: and the input box gives way to it while nothing is typed, as in Claude Code', !asking.includes('╭') && !asking.includes('╰'), asking.split('\n').slice(-4).join(' | '))
   t.key('\x1b[C')
   t.key('\r')
@@ -169,8 +169,8 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   check('answer: without a stream the reply is simply shown (the fallback)', t.term.screen.text().includes('스트림 없이 온 답변'))
   t.app.offer('ts-2', [{ id: 'a', label: '허용' }, { id: 'b', label: '거부' }])
   t.clock.advance(20)
-  const at = t.term.screen.find(' 허용 ')
-  t.key(SGR(0, at.col + 1, at.row)); t.key(SGR(0, at.col + 1, at.row, true))
+  const at = t.term.screen.find('1. 허용')
+  if (at !== null) { t.key(SGR(0, at.col + 1, at.row)); t.key(SGR(0, at.col + 1, at.row, true)) }
   check('choice: a click on an option picks it', t.actions[0] === 'a' && t.app.choice === null)
   t.app.offer('ts-3', [{ id: 'x', label: '허용' }])
   t.app.unpost('ts-3')
@@ -533,7 +533,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.thinking('계획을 세우는 중\n둘째 생각\n셋째 생각\n넷째 생각')
   t.clock.advance(20)
   let screen = t.term.screen.text()
-  check('thinking: shown while it streams, its latest lines', screen.includes('thinking…') && screen.includes('넷째 생각') && !screen.includes('계획을 세우는 중'), screen.split('\n').slice(10, 20).join(' | '))
+  check('thinking: shown while it streams, its latest lines', screen.includes('Thinking…') && screen.includes('넷째 생각') && !screen.includes('계획을 세우는 중'), screen.split('\n').slice(10, 20).join(' | '))
   t.app.delta('답을 씁니다')
   t.clock.advance(20)
   screen = t.term.screen.text()
@@ -774,7 +774,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.clock.advance(480)
   const second = styleAt('● Bash')
   check('tool: the dot blinks while the tool runs', first !== null && second !== null && first !== second, `${first} / ${second}`)
-  check('status: says which tool runs', t.term.screen.text().includes('running bash…'))
+  check('status: says which tool runs', t.term.screen.text().includes('Running bash…'))
   t.app.toolResult('c1', true, 'a.txt')
   t.clock.advance(20)
   check('tool: green once it succeeded', (styleAt('● Bash') ?? '').includes(OK), styleAt('● Bash'))
@@ -785,10 +785,10 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.toolCall({ name: 'fetch', callId: 'c3', title: 'https://example.com' })
   t.app.thinking('weighing the two options\n')
   t.clock.advance(20)
-  const label = t.term.screen.find('✻ thinking…')
+  const label = t.term.screen.find('✻ Thinking…')
   const styles = label === null ? new Set() : new Set(Array.from({ length: 9 }, (_, i) => cell(label.row, label.col + 2 + i).style))
   check('thinking: in sky blue, with a light passing over its label', label !== null && styles.size > 1 && [...styles].some((s) => String(s).includes(SKY)), [...styles].join(' | ').slice(0, 120))
-  check('status: says it is thinking', /✻ thinking…/.test(t.term.screen.row(t.term.screen.find('▸▸ effort').row)))
+  check('status: says it is thinking', /✻ Thinking… \(\d+s · esc to interrupt\)/.test(t.term.screen.row(t.term.screen.find('esc to interrupt')?.row ?? 0)))
   t.app.delta('The answer.')
   t.app.final('The answer.')
   t.app.turnEnded()
@@ -843,11 +843,11 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('clear: the old conversation\'s queue shows before', t.term.screen.text().includes('1 queued'))
   t.app.clear()
   t.clock.advance(20)
-  check('clear: after, nothing is queued and no old tool is named', !t.term.screen.text().includes('queued') && !t.term.screen.text().includes('running bash'))
+  check('clear: after, nothing is queued and no old tool is named', !t.term.screen.text().includes('queued') && !t.term.screen.text().includes('Running bash'))
   t.app.turnStarted()
   t.clock.advance(20)
   // Checked while the first turn runs: its end would reset the tool anyway, and hide a clear() that did not.
-  check('clear: the new conversation\'s first turn is working, not running the old one\'s tool', t.term.screen.text().includes('working…') && !t.term.screen.text().includes('running bash'))
+  check('clear: the new conversation\'s first turn is working, not running the old one\'s tool', t.term.screen.text().includes('Working…') && !t.term.screen.text().includes('Running bash'))
   t.app.turnEnded()
   t.clock.advance(20)
   check('clear: and its end does not bring the old message in', !t.term.screen.text().includes('left behind'))
@@ -862,7 +862,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.clock.advance(20)
   const at = t.term.screen.find('› plain')
   check('no colour: what was said has no band and no trailing spaces', at !== null && !t.term.screen.grid.some((c) => c.style.includes('48;')) && t.term.screen.row(at.row).trimEnd() === '› plain')
-  check('no colour: the thinking label is one style', (() => { const l = t.term.screen.find('✻ thinking…'); return l !== null && new Set(Array.from({ length: 9 }, (_, i) => t.term.screen.grid[l.row * 60 + l.col + 2 + i].style)).size === 1 })())
+  check('no colour: the thinking label is one style', (() => { const l = t.term.screen.find('✻ Thinking…'); return l !== null && new Set(Array.from({ length: 9 }, (_, i) => t.term.screen.grid[l.row * 60 + l.col + 2 + i].style)).size === 1 })())
   t.app.turnEnded()
 }
 
@@ -1245,6 +1245,55 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.clock.advance(20)
   check('diff: a wrapped row copies as one line, no padding in it', t.copied.at(-1) === `+ ${long}`, JSON.stringify(t.copied.at(-1)))
   t.app.turnEnded()
+}
+
+// 77. Working, approvals and hints after Claude Code. One indicator while a turn runs, with the time and the key that
+// stops it; an approval's options answered by number, and esc answers no; the hint line is "? for shortcuts", and
+// ? on an empty box shows them.
+{
+  const t = setup({ cols: 100, rows: 30 })
+  t.app.turnStarted()
+  t.clock.advance(3200)
+  const running = t.term.screen.text()
+  const statusRow = running.split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: one indicator, the time and how to stop it', /✻ Working… \(3s · esc to interrupt\)/.test(statusRow), statusRow)
+  check('working: no second spinner and no effort label while it runs', !/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(running) && !statusRow.includes('▸▸'), statusRow)
+  t.app.thinking('생각 중')
+  t.clock.advance(20)
+  check('working: thinking says so', /✻ Thinking… \(3s · esc to interrupt\)/.test(t.term.screen.text()), t.term.screen.text().split('\n').find((l) => l.includes('✻ Thinking')) ?? '(none)')
+
+  t.app.message('ts-a', '권한이 필요합니다: rm -rf build\n세부 내용', null, false)
+  t.app.offer('ts-a', [{ id: 'approval:allow:k', label: 'Allow', style: 'primary' }, { id: 'approval:deny:k', label: 'Deny', style: 'danger' }])
+  t.clock.advance(20)
+  t.key('2')
+  check('approval: a digit picks that option', t.actions.at(-1) === 'approval:deny:k' && t.app.choice === null, JSON.stringify(t.actions))
+  t.app.offer('ts-a', [{ id: 'approval:allow:k2', label: 'Allow', style: 'primary' }, { id: 'approval:deny:k2', label: 'Deny', style: 'danger' }])
+  t.clock.advance(20)
+  check('approval: the hint line says the keys', /↑↓ .*1–2 .*↵ .*esc deny/.test(t.term.screen.row(29)), t.term.screen.row(29))
+  t.key('\x1b'); t.clock.advance(60)
+  check('approval: esc answers no, and the turn goes on', t.actions.at(-1) === 'approval:deny:k2' && t.cancels === 0 && t.app.choice === null, JSON.stringify({ actions: t.actions, cancels: t.cancels }))
+  t.app.offer('ts-a', [{ id: 'approval:allow:k3', label: 'Allow' }, { id: 'approval:deny:k3', label: 'Deny' }])
+  t.key('\x1b[B'); t.key('\r')
+  check('approval: ↓ and Enter pick the next one', t.actions.at(-1) === 'approval:deny:k3', JSON.stringify(t.actions))
+  // ↑ moves through the options too: it used to bring back the last message sent, which Enter then sent again.
+  t.key('지난 메시지'); t.key('\r'); t.clock.advance(20)
+  const sentBefore = t.sent.length
+  t.app.offer('ts-a', [{ id: 'approval:allow:k4', label: 'Allow' }, { id: 'approval:deny:k4', label: 'Deny' }])
+  t.key('\x1b[B'); t.key('\x1b[A'); t.key('\r')
+  check('approval: ↑ moves through the options, not the history', t.actions.at(-1) === 'approval:allow:k4' && t.sent.length === sentBefore && t.app.editor.text === '', JSON.stringify({ actions: t.actions.slice(-1), sent: t.sent.slice(sentBefore) }))
+  t.app.turnEnded()
+  t.clock.advance(20)
+
+  check('hint: "? for shortcuts" while nothing is typed', t.term.screen.row(29).trim() === '? for shortcuts', t.term.screen.row(29))
+  t.key('?'); t.clock.advance(20)
+  const panel = t.term.screen.text()
+  check('shortcuts: ? on an empty box shows them, in the box\'s place', panel.includes('Shortcuts') && panel.includes('shift+tab effort') && panel.includes('ctrl+t expand/fold thinking') && !panel.includes('╭') && t.app.editor.text === '', panel.split('\n').slice(-8).join(' | '))
+  t.key('\x1b'); t.clock.advance(60)
+  check('shortcuts: esc closes them', !t.term.screen.text().includes('Shortcuts') && t.term.screen.text().includes('╭'))
+  t.key('?'); t.key('a'); t.clock.advance(20)
+  check('shortcuts: typing closes them and types', t.app.editor.text === 'a' && !t.term.screen.text().includes('Shortcuts'), JSON.stringify(t.app.editor.text))
+  t.key('?'); t.clock.advance(20)
+  check('shortcuts: ? in text being typed is a question mark', t.app.editor.text === 'a?')
 }
 
 const failed = results.filter((r) => !r.ok)

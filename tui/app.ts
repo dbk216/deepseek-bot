@@ -100,7 +100,6 @@ export interface AppOptions {
   stepEffort?: () => void
 }
 
-const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 const EDITOR_MAX_ROWS = 6
 const TOAST_MS = 1500
 /** A paste larger than this is cut: the core keeps a few thousand characters of a message anyway. */
@@ -158,6 +157,8 @@ export class App {
   private runningTool: string | null = null
   /** Whether this turn was marked stopped already. */
   private interrupted = false
+  /** The keys on show (? on an empty box), in the input box's place. */
+  private shortcuts = false
   /** Messages sent while a turn runs: shown above the input until their turn starts. */
   private pending: string[] = []
   /** Words the core answers at once, without a turn: the stop words, and the others (the usage word). */
@@ -682,6 +683,17 @@ export class App {
     if (!(key.ctrl && key.name === 'char' && key.ch === 'c')) this.quitArmed = 0
     if (key.name !== 'escape') this.clearSelection()
 
+    // The shortcuts, opened with ? on an empty box: esc or ? closes them; any other key closes them and does its own thing.
+    if (this.shortcuts) {
+      this.shortcuts = false
+      this.terminal.requestRender(true)
+      if (key.name === 'escape' || (key.name === 'char' && key.ch === '?' && !key.ctrl && !key.alt)) return
+    } else if (key.name === 'char' && key.ch === '?' && !key.ctrl && !key.alt && this.editor.text === '' && this.view.kind === 'main'
+      && this.question === null && this.picker === null && this.choice === null && this.search === null && this.completion === null) {
+      this.shortcuts = true
+      this.terminal.requestRender(true)
+      return
+    }
     if (this.question !== null && this.onQuestionKey(key)) return
     if (this.picker !== null && this.onPickerKey(key)) return
     if (this.focus === 'panel' && this.onPanelKey(key)) return
@@ -714,13 +726,19 @@ export class App {
       this.terminal.requestRender(true)
       return
     }
-    // With an open choice and nothing typed, the arrows and Enter answer it.
-    if (this.choice !== null && this.editor.text === '' && ['left', 'right', 'tab', 'enter'].includes(key.name) && !key.alt) {
+    // With an open choice and nothing typed, the arrows, a digit and Enter answer it, and esc answers no.
+    if (this.choice !== null && this.editor.text === '' && !key.alt && !key.ctrl) {
       const c = this.choice
-      if (key.name === 'enter') this.pick(c.index)
-      else c.index = (c.index + (key.name === 'left' || key.shift ? c.options.length - 1 : 1)) % c.options.length
-      this.terminal.requestRender(true)
-      return
+      const digit = key.name === 'char' && /^[1-9]$/.test(key.ch ?? '') ? Number(key.ch) - 1 : -1
+      const no = c.options.findIndex((o) => o.style === 'danger' || /(^|:)deny(:|$)/.test(o.id))
+      if (digit >= 0 && digit < c.options.length) { this.pick(digit); this.terminal.requestRender(true); return }
+      if (key.name === 'escape' && no !== -1) { this.pick(no); this.terminal.requestRender(true); return }
+      if (['left', 'right', 'up', 'down', 'tab', 'enter'].includes(key.name)) {
+        if (key.name === 'enter') this.pick(c.index)
+        else c.index = (c.index + (key.name === 'left' || key.name === 'up' || key.shift ? c.options.length - 1 : 1)) % c.options.length
+        this.terminal.requestRender(true)
+        return
+      }
     }
     switch (key.name) {
       case 'enter':
@@ -1027,9 +1045,9 @@ export class App {
         }
         return
       }
-      if (m.y === this.geometry.choiceRow) {
-        const hit = this.geometry.choiceSpans.findIndex((span) => m.x >= span.from && m.x < span.to)
-        if (hit !== -1) { this.pick(hit); this.terminal.requestRender(true) }
+      if (this.geometry.choiceRow >= 0 && m.y >= this.geometry.choiceRow && m.y < this.geometry.choiceRow + this.geometry.choiceSpans.length) {
+        const span = this.geometry.choiceSpans[m.y - this.geometry.choiceRow]
+        if (m.x >= span.from && m.x < span.to) { this.pick(m.y - this.geometry.choiceRow); this.terminal.requestRender(true) }
         return
       }
       if (!inTranscript) { this.clearSelection(); return }
@@ -1077,7 +1095,9 @@ export class App {
     const s = (style) => sgr(style, this.mode)
     const editor = this.editor.layout(this.editorWidth())
     const editorRows = Math.min(EDITOR_MAX_ROWS, editor.rows.length)
-    const choiceRows = this.choice === null || this.question !== null ? 0 : 1
+    // An approval as Claude Code asks one: the request's first line, then its options numbered, one a row.
+    const choiceRows = this.choice === null || this.question !== null ? 0 : 1 + this.choice.options.length
+    const shortcutLines = this.shortcuts ? this.shortcutLines(cols) : []
     const questionLines = this.question === null ? [] : this.questionLines(cols)
     const stripRows = this.interview !== null && this.view.kind === 'main' ? 3 : 0
     const allRows = this.rows()
@@ -1091,9 +1111,9 @@ export class App {
     // A choice on screen (a picker, a question's options, an approval) takes the input box's place while
     // nothing is typed, as in Claude Code: one keystroke of text brings the box back.
     const boxHidden = this.editor.text === '' && this.search === null
-      && ((this.picker !== null && this.question === null) || (this.question !== null && !this.question.typing) || (this.choice !== null && this.question === null))
+      && ((this.picker !== null && this.question === null) || (this.question !== null && !this.question.typing) || (this.choice !== null && this.question === null) || this.shortcuts)
     const boxRows = boxHidden ? 0 : editorRows + 2
-    const fixed = pendingRows + 1 /* divider */ + 1 /* status */ + panelShown + choiceRows + questionLines.length + completionLines.length + boxRows + 1 /* hint */
+    const fixed = pendingRows + 1 /* divider */ + 1 /* status */ + panelShown + choiceRows + questionLines.length + completionLines.length + shortcutLines.length + boxRows + 1 /* hint */
     // The picker gets what is left after a row of transcript: on a small screen it shrinks; the hint line stays.
     const pickerLines = this.question === null && this.picker !== null ? this.pickerLines(cols, rows - (1 + stripRows) - 1 - fixed) : []
     const bottom = fixed + pickerLines.length
@@ -1110,7 +1130,9 @@ export class App {
     const questionTop = questionLines.length === 0 ? -1 : statusRow + 1 + panelShown + choiceRows
     const pickerTop = pickerLines.length === 0 ? -1 : statusRow + 1 + panelShown + choiceRows + questionLines.length
     const completionTop = statusRow + 1 + panelShown + choiceRows + questionLines.length + pickerLines.length
-    const editorTop = completionTop + completionLines.length
+    const shortcutsTop = completionTop + completionLines.length
+    const editorTop = shortcutsTop + shortcutLines.length
+    shortcutLines.forEach((line, i) => screen.put(1, shortcutsTop + i, line.text, line.style))
     pickerLines.forEach((line, i) => screen.put(1, pickerTop + i, line.text, line.style))
     completionLines.forEach((line, i) => {
       const x = screen.put(1, completionTop + i, line.label, line.selected ? s({ ...theme.accent, bold: true }) : s(theme.text))
@@ -1123,17 +1145,15 @@ export class App {
     })
     const choiceSpans: Array<{ from: number; to: number }> = []
     if (choiceRows > 0 && this.choice !== null) {
-      let x = screen.put(1, choiceRow, '⚠ ', s(theme.warn))
+      const title = (this.posted.get(this.choice.ts)?.text ?? '').split('\n')[0].trim()
+      const x = screen.put(1, choiceRow, '⚠ ', s(theme.warn))
+      if (title !== '') screen.put(x, choiceRow, title, s({ ...theme.text, bold: true }), cols - 1)
       this.choice.options.forEach((option, i) => {
-        const label = ` ${option.label} `
         const selected = i === this.choice!.index
-        const style = selected ? s({ ...(option.style === 'danger' ? theme.danger : theme.accent), inverse: true, bold: true }) : s(theme.muted)
-        const from = x
-        x = screen.put(x, choiceRow, label, style)
-        choiceSpans.push({ from, to: x })
-        x = screen.put(x, choiceRow, '  ')
+        const style = selected ? s({ ...(option.style === 'danger' ? theme.danger : theme.accent), bold: true }) : s(theme.muted)
+        const to = screen.put(1, choiceRow + 1 + i, `${selected ? '❯' : ' '} ${i + 1}. ${option.label}`, style)
+        choiceSpans.push({ from: 1, to })
       })
-      screen.put(x + 2, choiceRow, t().choiceHint, s(theme.dim))
     }
     // A click on a row shown must not scroll the box: the rows stay until the cursor leaves them.
     let editorFirst = Math.min(this.editorScroll, Math.max(0, editor.rows.length - editorRows))
@@ -1141,7 +1161,7 @@ export class App {
     else if (editor.cursor.y >= editorFirst + editorRows) editorFirst = editor.cursor.y - editorRows + 1
     this.editorScroll = editorFirst
     this.geometry = {
-      transcriptTop, transcriptHeight, dividerRow, editorTop, choiceRow, choiceSpans, panelTop, panelFirst: panel.first, panelShown, questionTop, questionRowsAt,
+      transcriptTop, transcriptHeight, dividerRow, editorTop, choiceRow: choiceRow === -1 ? -1 : choiceRow + 1, choiceSpans, panelTop, panelFirst: panel.first, panelShown, questionTop, questionRowsAt,
       pickerTop, pickerMap: pickerLines.map((line) => line.row),
       completionTop: completionLines.length === 0 ? -1 : completionTop, completionFirst: completion.first, completionShown: completionLines.length,
       editorRows: boxHidden ? 0 : editorRows, editorFirst, statusRow, effortSpan: null,
@@ -1218,7 +1238,9 @@ export class App {
     const search = this.search
     const hint = search !== null ? t().hints.search(search.query, search.found)
       : this.completion !== null ? t().hints.completion
+      : this.shortcuts ? t().hints.shortcuts
       : this.picker !== null && this.question === null && this.editor.text === '' ? t().hints.picker(this.picker.hasEfforts)
+      : this.choice !== null && this.question === null && this.editor.text === '' ? t().hints.choice(this.choice.options.length)
       : this.question?.typing ? t().hints.typing
       : this.question !== null ? t().hints.question(this.question.current?.multiSelect === true)
       : this.focus === 'panel' ? t().hints.panel
@@ -1227,6 +1249,19 @@ export class App {
           : this.status.running ? t().hints.running
             : t().hints.idle(allRows.length > 0)
     screen.put(1, editorTop + boxRows, hint, s(theme.dim))
+  }
+
+  /** The keys, as `/help` lists them, in columns: what ? shows in the input box's place. */
+  private shortcutLines(cols: number): Array<{ text: string; style: string }> {
+    const items = t().helpKeys.flatMap((line) => line.split(' · ')).map((item) => item.trim()).filter((item) => item !== '')
+    const width = Math.min(cols - 4, Math.max(...items.map((item) => stringWidth(item))) + 3)
+    const perRow = Math.max(1, Math.floor((cols - 2) / width))
+    const rows: Array<{ text: string; style: string }> = [{ text: t().shortcutsTitle, style: sgr({ ...theme.text, bold: true }, this.mode) }]
+    for (let i = 0; i < items.length; i += perRow) {
+      const text = items.slice(i, i + perRow).map((item) => item + ' '.repeat(Math.max(0, width - stringWidth(item)))).join('').trimEnd()
+      rows.push({ text, style: sgr(theme.muted, this.mode) })
+    }
+    return rows
   }
 
   /** The completion list, a window of rows around the picked candidate. */
@@ -1357,19 +1392,22 @@ export class App {
     if (!this.status.connected) {
       x = screen.put(x, y, `○ ${this.status.link}`, s(theme.warn))
     } else {
-      // The effort, where Claude Code shows its mode, with the key that steps it while nothing runs.
-      if (this.status.effort !== null && this.status.effort !== '') {
+      // The effort, where Claude Code shows its mode, with the key that steps it; while a turn runs the line
+      // is the turn's.
+      if (!this.status.running && this.status.effort !== null && this.status.effort !== '') {
         const from = x
         x = screen.put(x, y, `▸▸ ${t().effortLabel(this.status.effort)}`, s(theme.thinking))
         this.geometry.effortSpan = { from, to: x }
-        if (!this.status.running) x = screen.put(x, y, ' (shift+tab)', s(theme.dim))
+        x = screen.put(x, y, ' (shift+tab)', s(theme.dim))
       }
       if (this.status.running) {
-        // Thinking in the sky blue it has in the transcript; anything else in the brand's light blue.
+        // One indicator, as Claude Code has it: what it is doing, for how long, how to stop it. Thinking in
+        // the sky blue it has in the transcript; anything else in the brand's light blue.
         const thinking = this.thought !== null && this.thought.streaming
         const label = thinking ? t().thinking : this.runningTool !== null ? t().runningTool(this.runningTool) : t().working
-        x = screen.put(x, y, x > 1 ? '  ✻ ' : '✻ ', s(thinking ? theme.thinking : theme.accent))
+        x = screen.put(x, y, '✻ ', s(thinking ? theme.thinking : theme.accent))
         for (const span of shimmer(label, thinking ? palette.sky : palette.light, palette.glint, currentFrame(), this.mode)) x = screen.put(x, y, span.text, span.style)
+        x = screen.put(x, y, t().runningFor(Math.floor((now - this.status.startedAt) / 1000)), s(theme.dim))
       }
       if (this.pending.length > 0) x = screen.put(x, y, sep(t().queuedCount(this.pending.length)), s(theme.muted))
       const counts = panelCounts(this.panel.agents, this.panel.jobs)
@@ -1379,10 +1417,6 @@ export class App {
     if (this.toast !== null) x = screen.put(x, y, `  ${this.toast.text}`, s(theme.ok))
 
     const parts: string[] = []
-    if (this.status.running) {
-      const frame = SPINNER[Math.floor(now / 80) % SPINNER.length]
-      parts.push(`${frame} ${((now - this.status.startedAt) / 1000).toFixed(1)}s`)
-    }
     if (this.status.contextPct !== null) {
       const filled = Math.round(Math.max(0, Math.min(100, this.status.contextPct)) / 12.5)
       parts.push(`ctx ${'▰'.repeat(filled)}${'▱'.repeat(8 - filled)} ${Math.round(this.status.contextPct)}%`)

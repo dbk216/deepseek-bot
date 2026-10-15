@@ -251,7 +251,7 @@ async function until(predicate, ms = 3000) {
   bind(app, { type: 'panel', agents: [], jobs: [], usage: { tokens: 8100, contextPct: 23.4 } })
   bind(app, { type: 'ready', version: 1, conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
   bind(app, { type: 'ready', version: 1, language: 'zh', conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
-  check('language: a gateway that names another language (an older one) leaves the terminal in English', words().hints.idle(false).startsWith('↵ send') && await until(() => term.screen.text().includes('↵ send')) && !term.screen.text().includes('发送'))
+  check('language: a gateway that names another language (an older one) leaves the terminal in English', words().hints.idle(false) === '? for shortcuts' && await until(() => term.screen.text().includes('? for shortcuts')) && !term.screen.text().includes('发送'))
   await until(() => term.screen.text().includes('8.1k tok'))
   check('usage: the conversation\'s tokens and context fill the status line', /ctx ▰▰▱▱▱▱▱▱ 23% · 8\.1k tok/.test(term.screen.text()), term.screen.text().split('\n').find((l) => l.includes('tok')))
   check('model: the gateway\'s model is named in the info line', term.screen.text().includes('deepseek-v4.1 · /home/agent'))

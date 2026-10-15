@@ -520,17 +520,21 @@ alone until `dsh gateway setup` adds a messenger; from a clone, run `node dist/t
 **What it shows.** What the person said sits on a band across the pane; the answer starts at a white
 `●`; a tool call's `●` blinks while it runs and turns green or red with its result (grey when the turn
 ended without one); thinking is in sky blue, its label swept by a light while it streams, and folds to
-one line when the answer starts. A blank line separates the steps of a turn; nothing rules one exchange
-off from the next. The status line says what is happening — `thinking…`, `running bash…`,
-`working…` — under the same light. A message sent while a turn runs waits above the input, tagged
-queued, and joins the transcript when its turn starts. Under `NO_COLOR` there is no band and nothing
-sweeps.
+one line when the answer starts. A blank line separates the steps of a turn; nothing rules one exchange off from the
+next. While a turn runs the status
+line is one indicator, as Claude Code's: what is happening, for how long, and how to stop it —
+`✻ Thinking… (12s · esc to interrupt)`, `Running bash…`, `Working…` — under the same light. A message sent
+while a turn runs waits above the input, tagged queued, and joins the transcript when its turn starts.
+The hint line under the input box is `? for shortcuts`; `?` on an empty box shows the keys below in its
+place. An approval shows the request's first line and its options numbered: `↑↓`, a digit or a click
+and `↵` answer it, `esc` answers no. Under `NO_COLOR` there is no band and nothing sweeps.
 
 | Keys | |
 |---|---|
 | `↵` / `alt+↵` | send / new line |
 | `shift+tab`, or a click on it | step this conversation's reasoning effort (shown at the left of the status line) |
-| `esc` | stop the running turn (what was waiting behind it comes back to the input); in a view, back to the conversation |
+| `esc` | stop the running turn (what was waiting behind it comes back to the input); on an approval, answer no; in a view, back to the conversation |
+| `?` on an empty box | show the shortcuts (`esc` or any key closes them) |
 | `ctrl+c` twice, `ctrl+d` | quit (the terminal is always restored) |
 | wheel, `PgUp`/`PgDn` | scroll; drag selects and copies (pbcopy locally, OSC 52 over SSH) |
 | `tab`, `↑↓`, `↵`, or a click | the agent panel: open a subagent or a shell |
