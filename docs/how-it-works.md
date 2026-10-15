@@ -520,8 +520,8 @@ alone until `dsh gateway setup` adds a messenger; from a clone, run `node dist/t
 **What it shows.** What the person said sits on a band across the pane; the answer starts at a white
 `●`; a tool call's `●` blinks while it runs and turns green or red with its result (grey when the turn
 ended without one); thinking is in sky blue, its label swept by a light while it streams, and folds to
-one line when the answer starts. A blank line separates the steps of a turn and a rule separates one
-exchange from the next. The status line says what is happening — `thinking…`, `running bash…`,
+one line when the answer starts. A blank line separates the steps of a turn; nothing rules one exchange
+off from the next. The status line says what is happening — `thinking…`, `running bash…`,
 `working…` — under the same light. A message sent while a turn runs waits above the input, tagged
 queued, and joins the transcript when its turn starts. Under `NO_COLOR` there is no band and nothing
 sweeps.
@@ -538,7 +538,8 @@ sweeps.
 | `/` or `@`, then `↑↓` and `tab` | complete a command, or a file of the workspace (`↵` or a click runs a command that takes nothing) |
 | a click in the input box | puts the cursor there |
 | `ctrl+r` | search what was typed before (`ctrl+r` again: older; `↵` keeps it to edit; `esc` cancels) |
-| `ctrl+o` | unfold or fold the thinking and the tool results |
+| `ctrl+o` | unfold or fold the tool results |
+| `ctrl+t` | unfold or fold the thinking |
 
 Commands: `/new`, `/sessions`, `/resume <n|id>`, `/tenant [name]`, `/interview <topic>`, `/model`,
 `/usage`, `/clear`, `/help`, `/quit` (or `/exit`). Anything else that starts with `/` is sent as text. What is sent or run
@@ -549,10 +550,15 @@ What appears besides the conversation:
 - **Answers stream** as the model writes them (from `agent/assistant-stream`), with Markdown drawn
   for a terminal: tables, code highlighted by token class for the common languages, and links you
   can click (OSC 8; only http(s) and mailto). The posted reply then takes the streamed text's place.
-- **Tool calls** show as the turn makes them: the tool's own title for the call (from the harness's
-  tool registry), an edit's changed lines, and the result under it — a few lines, all on `ctrl+o`.
-- **Thinking** is shown apart from the answer and folded once the answer starts, when the model
-  streams its reasoning (`reasoning-delta`); the route this deployment uses sends none.
+- **Tool calls** show as Claude Code draws them: `● Name(what it was asked)` (the title from the
+  harness's tool registry), the result under `⎿` — a read as `Read N lines`, a search as `Found N lines`,
+  a list as `Found N files`, a shell's last five lines, anything else its first three, those two with
+  `… +N lines (ctrl+o to expand)`; a failure as `Error: …` in red. An edit says `Updated <path> with A
+  additions and R removals`, its changed lines on green and red. No rule between exchanges, no caret on
+  streaming text; a turn the person stops is marked `⎿ Interrupted`.
+- **Thinking** is shown apart from the answer and folds once the answer starts to `∴ Thought for Ns`,
+  opened with `ctrl+t` (apart from the tool output's `ctrl+o`, as pi has it), when the model streams its
+  reasoning (`reasoning-delta`); the route this deployment uses sends none.
 - **The input box keeps the bottom rows.** The conversation sits right above it, a short one with the
   empty rows over it, so what is new and what a command shows are where one types. A choice — `/model`'s
   or `/sessions`' list, a question's options, an approval — takes the box's place while nothing is typed,

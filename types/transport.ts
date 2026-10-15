@@ -103,7 +103,7 @@ export type StreamFrame =
    */
   | { kind: 'tool'; name: string; callId?: string; title?: string; diff?: Array<{ path: string; old: string | null; new: string | null; oldCut?: boolean; newCut?: boolean }> }
   /** A call's result, by its call id: whether it failed, and its text (cut). */
-  | { kind: 'tool.result'; callId: string; ok: boolean; text: string }
+  | { kind: 'tool.result'; callId: string; ok: boolean; text: string; lines?: number }
 
 /** A question a turn asks the person (the ask_user_question tool, a plan review). */
 export interface QuestionItem {

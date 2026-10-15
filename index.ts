@@ -1341,7 +1341,9 @@ export function apply(ctx, config) {
           if (live !== undefined && typeof via(live).stream === 'function' && typeof callId === 'string') {
             const text = (Array.isArray(message?.content) ? message.content : [])
               .filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n')
-            via(live).stream(live, { kind: 'tool.result', callId, ok: message?.isError !== true && event.data?.error === undefined, text: clip(text, 4000) })
+            // How many lines, counted before the cut: the terminal says "Read 300 lines" of a long file.
+            const lines = text.replace(/\n+$/, '') === '' ? 0 : text.replace(/\n+$/, '').split('\n').length
+            via(live).stream(live, { kind: 'tool.result', callId, ok: message?.isError !== true && event.data?.error === undefined, text: clip(text, 4000), lines })
           }
         }
 
@@ -2666,7 +2668,8 @@ export function apply(ctx, config) {
       // its place — not "nothing is running" under a message that says "작업 중".
       if (stopped === 'none' && withdrawn > 0) {
         await progress.settle(key)
-        await replyInPlaceOf({ channel, threadTs }, say.stoppedWithdrawn(withdrawn), progress.take(key)?.ts ?? null)
+        // The terminal marks it and puts what waited back in its input box.
+        if (channel !== LOCAL_CHANNEL) await replyInPlaceOf({ channel, threadTs }, say.stoppedWithdrawn(withdrawn), progress.take(key)?.ts ?? null)
         settleInflight(key)
         return
       }
@@ -2681,7 +2684,8 @@ export function apply(ctx, config) {
         const turn = runningTurns.get(key)
         if (turn !== undefined) turn.reported = true
         await progress.settle(key)
-        await replyInPlaceOf({ channel, threadTs }, say.stoppedStarting, progress.take(key)?.ts ?? null)
+        // The terminal marks it itself, as it marks a running turn stopped.
+        if (channel !== LOCAL_CHANNEL) await replyInPlaceOf({ channel, threadTs }, say.stoppedStarting, progress.take(key)?.ts ?? null)
       } else if (stopped === 'none') {
         await transport.post({ channel, threadTs }, say.nothingRunning)
       }
@@ -2767,7 +2771,9 @@ export function apply(ctx, config) {
         } else if (r.reason?.kind === 'cancelled') {
           const why = r.reason.cause === 'timed out' ? say.timedOut : say.stopped
           log(`turn cancelled cause=${String(r.reason.cause ?? '-')}${r.reported === true ? ' (already reported)' : ''}`)
-          if (r.reported !== true) await replyInPlaceOf(replyTarget, why, placeholderTs)
+          // The terminal marks a turn the person stopped itself ("⎿ Interrupted"); any other end it is told.
+          const marked = replyTarget.channel === LOCAL_CHANNEL && r.reason.cause === 'user'
+          if (r.reported !== true && !marked) await replyInPlaceOf(replyTarget, why, placeholderTs)
           // Already reported: a working message put up since (the turn's own, when slow) is removed, not
           // turned into a second report — edited only where the platform cannot delete.
           else if (placeholderTs !== null) {

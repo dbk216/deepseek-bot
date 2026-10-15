@@ -12,7 +12,7 @@
  * always next to where one types. A choice (a picker, a question's options, an approval) takes the box's
  * place while nothing is typed; the completion list opens just above the box.
  */
-import { answerBlock, bannerBlock, noticeBlock, ruleBlock, spacerBlock, thinkingBlock, toolBlock, toolCallBlock, userBlock, type AnswerBlock, type Detail, type NoticeKind, type ThinkingBlock, type ToolCallBlock, type ToolStep } from './blocks.js'
+import { answerBlock, bannerBlock, interruptedBlock, noticeBlock, spacerBlock, thinkingBlock, toolBlock, toolCallBlock, userBlock, type AnswerBlock, type Detail, type NoticeKind, type ThinkingBlock, type ToolCallBlock, type ToolStep } from './blocks.js'
 import { complete, type CommandInfo, type Completion } from './complete.js'
 import type { AgentItem, JobItem, ViewLine } from './bridge.js'
 import { formatTokens, panelCounts, panelRows, panelWindow, rowStatus, type PanelRow } from './panel.js'
@@ -144,8 +144,10 @@ export class App {
   picker: Picker | null = null
   /** A deep interview in progress: its topic and the model's latest report on it. */
   interview: { topic: string; state: InterviewState | null } | null = null
-  /** What folded blocks show, shared by every thinking and tool block; ctrl+o toggles it. */
+  /** What tool blocks show, folded or all of it; ctrl+o toggles it. */
   readonly detail: Detail = { expanded: false }
+  /** The same for thinking, apart, as pi has it: ctrl+t. */
+  readonly thinkingDetail: Detail = { expanded: false }
   /** The reasoning streaming now, until the answer starts. */
   private thought: ThinkingBlock | null = null
   /** The reasoning of the model call still under way, folded: a retry of that call drops it. */
@@ -154,8 +156,8 @@ export class App {
   private readonly calls = new Map<string, ToolCallBlock>()
   /** The tool running now, for the status line. */
   private runningTool: string | null = null
-  /** Exchanges shown so far: a rule goes between one and the next. */
-  private exchanges = 0
+  /** Whether this turn was marked stopped already. */
+  private interrupted = false
   /** Messages sent while a turn runs: shown above the input until their turn starts. */
   private pending: string[] = []
   /** Words the core answers at once, without a turn: the stop words, and the others (the usage word). */
@@ -229,6 +231,7 @@ export class App {
     // end does not hide the second.
     if (this.busy++ === 0) {
       this.turnBlock = null
+      this.interrupted = false
       this.status.running = true
       this.status.startedAt = this.clock.now()
       this.startSpinner()
@@ -273,7 +276,7 @@ export class App {
   thinking(text: string): void {
     if (this.thought === null) {
       this.closeAnswer()
-      this.thought = thinkingBlock(this.detail, this.mode)
+      this.thought = thinkingBlock(this.thinkingDetail, this.mode, () => this.clock.now())
       this.step(this.thought)
     }
     this.thought.append(text)
@@ -306,12 +309,12 @@ export class App {
     this.terminal.requestRender()
   }
 
-  toolResult(callId: string, ok: boolean, text: string): void {
+  toolResult(callId: string, ok: boolean, text: string, lines?: number): void {
     const block = this.calls.get(callId)
     if (block === undefined) return
     this.calls.delete(callId)
     if (this.calls.size === 0) this.runningTool = null
-    block.result(ok, text)
+    block.result(ok, text, lines)
     this.transcript.touch()
     this.terminal.requestRender()
   }
@@ -341,7 +344,8 @@ export class App {
       // Nothing is waiting any more: whatever is still shown above the input was answered with it.
       for (const text of this.pending.splice(0)) this.shown(text)
     } else if (this.pending.length > 0) {
-      // The next waiting message's turn starts now.
+      // The next waiting message's turn starts now: it is marked when it is stopped, apart from the one that ended.
+      this.interrupted = false
       this.shown(this.pending.shift()!)
       this.status.startedAt = this.clock.now()
     }
@@ -406,6 +410,9 @@ export class App {
         const back = this.pending.splice(0).join('\n')
         this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
       }
+      this.shown(text)
+      if (atOnce === 'stop') this.markInterrupted()
+      return
     }
     this.shown(text)
   }
@@ -427,7 +434,6 @@ export class App {
   }
 
   private shown(text: string): void {
-    if (this.exchanges++ > 0) this.transcript.push(ruleBlock(this.mode))
     this.transcript.push(userBlock(text, this.mode))
     this.transcript.push(spacerBlock())   // one blank line between a question and what answers it
     this.gapped = true
@@ -532,10 +538,9 @@ export class App {
     this.closeAnswer()
     this.posted.clear()
     this.turnBlock = null
-    // Nothing of the old conversation's turn: what waited behind it, its running tool, its exchanges.
+    // Nothing of the old conversation's turn: what waited behind it, its running tool.
     this.pending = []
     this.runningTool = null
-    this.exchanges = 0
     this.gapped = true
     this.choice = null
     this.transcript.clear()
@@ -702,6 +707,7 @@ export class App {
         case 'l': this.terminal.invalidate(); break
         case 'j': this.editor.insert('\n'); break
         case 'o': this.detail.expanded = !this.detail.expanded; this.transcript.touch(); break
+        case 't': this.thinkingDetail.expanded = !this.thinkingDetail.expanded; this.transcript.touch(); break
         default: return
       }
       this.refreshCompletion()
@@ -934,11 +940,20 @@ export class App {
 
   /** Stop the turn. The gateway withdraws the messages waiting behind it, so they come back to the input. */
   private cancel(): void {
+    this.markInterrupted()
     this.o.backend.cancel()
     if (this.pending.length === 0) return
     const back = this.pending.splice(0).join('\n')
     this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
     this.terminal.requestRender(true)
+  }
+
+  /** A turn the person stopped, marked where it stopped: once a turn, however it was stopped. */
+  private markInterrupted(): void {
+    if (!this.status.running || this.interrupted) return
+    this.interrupted = true
+    this.transcript.push(interruptedBlock(this.mode))
+    this.transcript.toBottom()
   }
 
   private pick(index: number): void {

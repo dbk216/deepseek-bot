@@ -51,7 +51,7 @@ const en = {
   },
   helpKeys: [
     '↵ send · alt+↵ newline · esc interrupt · shift+tab effort · wheel/PgUp/PgDn scroll · drag to copy · click to place the cursor or pick',
-    '/ commands · @ files (tab inserts) · ctrl+r search what you typed · ctrl+o expand/fold thinking and tool output',
+    '/ commands · @ files (tab inserts) · ctrl+r search what you typed · ctrl+o expand/fold tool output · ctrl+t expand/fold thinking',
   ],
   ago: (seconds: number) => seconds < 60 ? `${seconds}s ago` : seconds < 3600 ? `${Math.round(seconds / 60)}m ago`
     : seconds < 86400 ? `${Math.round(seconds / 3600)}h ago` : `${Math.round(seconds / 86400)}d ago`,
@@ -114,7 +114,13 @@ const en = {
   interviewEstimate: "clarity is the model's own estimate, not a measurement",
   /** The dimensions the interview's example block names; the model tends to keep them. */
   interviewScores: ['goal', 'constraints', 'success criteria', 'context'],
-  moreLines: (n: number) => `${n} more lines`,
+  moreLines: (n: number, expanded: boolean) => `+${n} lines${expanded ? '' : ' (ctrl+o to expand)'}`,
+  readLines: (n: number) => `Read ${n} ${n === 1 ? 'line' : 'lines'}`,
+  foundLines: (n: number) => `Found ${n} ${n === 1 ? 'line' : 'lines'}`,
+  foundFiles: (n: number) => `Found ${n} ${n === 1 ? 'file' : 'files'}`,
+  updated: (path: string, added: number, removed: number) => `Updated ${path} with ${added} ${added === 1 ? 'addition' : 'additions'} and ${removed} ${removed === 1 ? 'removal' : 'removals'}`,
+  failedWith: (text: string) => (text === '' ? 'Error' : /^error\b/i.test(text) ? text : `Error: ${text}`),
+  interrupted: 'Interrupted',
   thinking: 'thinking…',
   working: 'working…',
   runningTool: (name: string) => `running ${name}…`,
@@ -126,7 +132,7 @@ const en = {
   jobRunning: (elapsed: string) => `running · ${elapsed}`,
   /** A subagent's or a shell's state, as the harness names it; one it does not know is shown as it is. */
   status: (status: string) => String(status),
-  thought: (n: number, expanded: boolean) => `thought · ${n} chars${expanded ? '' : ' · ctrl+o expand'}`,
+  thought: (seconds: number, expanded: boolean) => `Thought for ${seconds}s${expanded ? '' : ' (ctrl+t to expand)'}`,
   diffUncompared: '… too large to compare line by line',
   diffWithheld: (n: number) => `… large change: only the lines that are certain, ${n} left out (truncated)`,
   diffHead: '… large change: only the beginning (truncated)',

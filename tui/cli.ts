@@ -105,7 +105,7 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       if (frame.kind === 'text') app.delta(frame.text)
       else if (frame.kind === 'reset') app.resetAttempt()
       else if (frame.kind === 'thinking') app.thinking(frame.text)
-      else if (frame.kind === 'tool.result') app.toolResult(frame.callId, frame.ok, frame.text)
+      else if (frame.kind === 'tool.result') app.toolResult(frame.callId, frame.ok, frame.text, frame.lines)
       else if (frame.kind === 'tool') app.toolCall(frame)
       return
     case 'remove':

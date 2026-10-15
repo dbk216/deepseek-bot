@@ -83,8 +83,6 @@ export const palette = {
   glint: [0xff, 0xff, 0xff] as Rgb,
   /** The band behind what the person said. */
   band: [0x26, 0x2c, 0x38] as Rgb,
-  /** The rule between one exchange and the next. */
-  rule: [0x3a, 0x42, 0x52] as Rgb,
 }
 
 /** Named styles the views use, so a view never spells a colour. */
@@ -98,7 +96,6 @@ export const theme = {
   answerMark: { fg: palette.text } as Style,
   thinking: { fg: palette.sky } as Style,
   thinkingBody: { fg: palette.skyDim, italic: true } as Style,
-  rule: { fg: palette.rule } as Style,
   assistant: {} as Style,
   tool: { fg: palette.muted } as Style,
   toolMark: { fg: palette.primary } as Style,
@@ -108,6 +105,10 @@ export const theme = {
   accent: { fg: palette.primary } as Style,
   warn: { fg: palette.warn } as Style,
   danger: { fg: palette.danger } as Style,
+  // An edit's lines, the colour behind the text as Claude Code and pi draw them.
+  // Cube colours (22 and 52 in 256 colours), so green and red survive a terminal without true colour.
+  diffAdded: { fg: palette.text, bg: [0, 95, 0] as Rgb } as Style,
+  diffRemoved: { fg: palette.text, bg: [95, 0, 0] as Rgb } as Style,
   ok: { fg: palette.ok } as Style,
   selected: { inverse: true } as Style,
   bold: { bold: true } as Style,

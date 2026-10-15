@@ -35,6 +35,14 @@ the caveat about version numbers is at the bottom.
   replaces the messenger there (the guided setup asks first); the old one's tokens stay, its channel
   ids give way to every channel and its people to the ones given. `--yes`, which guarded a `*` that
   opened several messengers at once, is gone.
+- **The terminal's transcript as Claude Code and pi draw it.** A call reads `● Name(what it was asked)`;
+  its result sits under `⎿`, a read as `Read N lines`, a search as `Found N lines`, a list as
+  `Found N files` (counted by the gateway before it cuts a long result), a shell's last five lines, anything
+  else its first three, the last two with `… +N lines (ctrl+o to expand)`, a failure as
+  `Error: …`; an edit says `Updated <path> with A additions and R removals`, its lines on green and red.
+  Thinking folds to `∴ Thought for Ns` and opens with `ctrl+t`, apart from the tool output's `ctrl+o`. No
+  rule between exchanges, no caret on streaming text, and a turn the person stops is marked `⎿ Interrupted`,
+  once, in place of the gateway's "Stopped." (a timeout is still said).
 - **The terminal uses its bottom as Claude Code does.** The input box, the status line and the hint
   line keep the last rows, and the conversation sits right above them, a short one with the empty rows
   over it. `/model` and `/sessions` open a picker in the box's place (`↑↓`, a digit, `↵` or a click;
@@ -213,7 +221,7 @@ the caveat about version numbers is at the bottom.
 - **The terminal shows a turn's parts apart.** What the person said is on a band; answers start at
   a `●`; a tool call's `●` blinks while it runs and turns green or red with its result, and stops
   blinking when the turn ends without one; thinking is sky blue, its label swept by a light while it
-  streams; a blank line separates a turn's steps and a rule separates exchanges; the status line
+  streams; a blank line separates a turn's steps (no rule between exchanges); the status line
   names what is happening (thinking, the running tool, working). A message sent during a turn waits
   above the input, tagged queued, until its turn starts, and `esc` gives what waited back to the
   input, since the gateway withdraws it.

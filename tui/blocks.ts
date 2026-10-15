@@ -49,12 +49,6 @@ export function userBlock(text: string, mode: ColorMode): Block {
   }
 }
 
-/** A line between one exchange and the next. */
-export function ruleBlock(mode: ColorMode): Block {
-  const style = sgr(theme.rule, mode)
-  return { id: nextId('rule'), version: 0, lines: (width) => [blank(), { spans: [pad('  '), pad('─'.repeat(Math.max(0, width - 4)), style)], soft: false }] }
-}
-
 export interface AnswerBlock extends Block {
   version: number
   text: string
@@ -67,7 +61,6 @@ export interface AnswerBlock extends Block {
 
 export function answerBlock(mode: ColorMode): AnswerBlock {
   const styles = markdownStyles(mode)
-  const caret = sgr(theme.accent, mode)
   const mark = sgr(theme.answerMark, mode)
   const block: AnswerBlock = {
     id: nextId('answer'),
@@ -86,7 +79,6 @@ export function answerBlock(mode: ColorMode): AnswerBlock {
       // A dot where the answer starts, in the indent it would have had.
       const lead = lines[0].spans[0]
       if (lead?.decor === true && lead.text === '  ') lines[0].spans[0] = pad('● ', mark)
-      if (block.streaming) lines[lines.length - 1].spans.push({ text: '▍', style: caret, decor: true })
       return lines
     },
   }
@@ -96,20 +88,46 @@ export function answerBlock(mode: ColorMode): AnswerBlock {
 export function toolBlock(name: string, detail: string, mode: ColorMode): Block {
   const mark = sgr(theme.toolMark, mode)
   const style = sgr(theme.tool, mode)
-  const text = detail === '' ? name : `${name} · ${detail}`
+  // As a call is written in the main transcript: Name(what it was asked).
+  const shown = /^[a-z]+$/.test(name) ? name[0].toUpperCase() + name.slice(1) : name
+  const text = detail === '' ? shown : `${shown}(${detail})`
   return { id: nextId('tool'), version: 0, lines: (width) => layout(text, width, style, { first: pad('● ', mark), rest: pad('  ') }) }
 }
 
-/** What folded blocks (thinking, tool steps) show: a few lines, or all of them (ctrl+o). Shared. */
+/** What folded blocks show: a few lines, or all of them — ctrl+o for tool steps, ctrl+t for thinking. */
 export interface Detail { expanded: boolean }
 
 const FOLDED = { thinking: 3, diff: 10, result: 3 }
+/** A shell's output, folded: its last lines, where a failure or the result is. */
+const SHELL_TAIL = 5
+
+/** What a tool's result is, by the tool's name: a read, a search, a list of files, a shell, or anything else. */
+function resultKind(tool: string): 'read' | 'search' | 'files' | 'shell' | 'other' {
+  const name = tool.toLowerCase()
+  if (/^(read|read_file|view|cat)$/.test(name)) return 'read'
+  if (/^(grep|rg|ripgrep|search_files)$/.test(name)) return 'search'
+  if (/^(glob|ls|list|find|list_files|list_directory)$/.test(name)) return 'files'
+  if (/^(bash|shell|sh|exec|run|terminal)$/.test(name)) return 'shell'
+  return 'other'
+}
 const UNFOLDED = { thinking: 400, diff: 200, result: 40 }
 
-/** Lines past `limit` folded into one "… N more lines" line. */
+/** One line saying how many lines a fold hides: "… +N lines (ctrl+o to expand)"; `lead` when it opens the result. */
+function moreLine(n: number, detail: Detail, style: string, lead = '     '): Line {
+  return { spans: [pad(lead, style), { text: `… ${t().moreLines(n, detail.expanded)}`, style }], soft: false }
+}
+
+/** Lines past `limit` folded into one line after them. */
 function fold(lines: Line[], limit: number, detail: Detail, style: string): Line[] {
   if (lines.length <= limit) return lines
-  return [...lines.slice(0, limit), { spans: [pad('    '), { text: `… ${t().moreLines(lines.length - limit)}${detail.expanded ? '' : ' · ctrl+o'}`, style }], soft: false }]
+  return [...lines.slice(0, limit), moreLine(lines.length - limit, detail, style)]
+}
+
+/** The last `limit` lines, the fold line before them: a shell's output ends where it matters. `lead` marks the
+ * fold line when it opens the result (`  ⎿  `), as the first line it hides would have. */
+function tail(lines: Line[], limit: number, detail: Detail, style: string, lead = '     '): Line[] {
+  if (lines.length <= limit) return lines
+  return [moreLine(lines.length - limit, detail, style, lead), ...lines.slice(-limit)]
 }
 
 export interface ThinkingBlock extends Block {
@@ -122,27 +140,30 @@ export interface ThinkingBlock extends Block {
   done(): void
 }
 
-/** The model's reasoning: its latest lines while it streams, one line after, all of it on ctrl+o. */
-export function thinkingBlock(detail: Detail, mode: ColorMode): ThinkingBlock {
+/** The model's reasoning: its latest lines while it streams, "Thought for Ns" after, all of it on ctrl+t. */
+export function thinkingBlock(detail: Detail, mode: ColorMode, now: () => number = Date.now): ThinkingBlock {
   const head = sgr(theme.thinking, mode)
   const body = sgr(theme.thinkingBody, mode)
   let own = 0
+  let began: number | null = null
+  let ended: number | null = null
   const block: ThinkingBlock = {
     id: nextId('thinking'),
-    // The layout depends on ctrl+o as much as on the text, and while it streams, on the frame.
+    // The layout depends on ctrl+t as much as on the text, and while it streams, on the frame.
     get version() { return `${own}:${detail.expanded ? 1 : 0}:${block.streaming ? currentFrame() : '-'}` },
     text: '',
     streaming: true,
-    append(text) { block.text += text; own++ },
-    reset() { block.text = ''; own++ },
-    done() { block.streaming = false; own++ },
+    append(text) { if (began === null) began = now(); block.text += text; own++ },
+    reset() { block.text = ''; began = null; own++ },
+    done() { if (block.streaming) ended = now(); block.streaming = false; own++ },
     lines(width) {
       const text = block.text.trim()
       if (text === '') return []
+      const seconds = Math.max(1, Math.round(((ended ?? now()) - (began ?? now())) / 1000))
       const label = block.streaming
         ? shimmer(t().thinking, palette.sky, palette.glint, currentFrame(), mode)
-        : [{ text: t().thought([...text].length, detail.expanded), style: head }]
-      const lines: Line[] = [{ spans: [pad('✻ ', head), ...label], soft: false }]
+        : [{ text: t().thought(seconds, detail.expanded), style: head }]
+      const lines: Line[] = [{ spans: [pad(block.streaming ? '✻ ' : '∴ ', head), ...label], soft: false }]
       if (!detail.expanded && !block.streaming) return lines
       const all = layout(text, width, body, { first: pad('  '), rest: pad('  ') })
       return [...lines, ...(detail.expanded ? fold(all, UNFOLDED.thinking, detail, head) : all.slice(-FOLDED.thinking))]
@@ -161,7 +182,8 @@ export interface ToolStep {
 export interface ToolCallBlock extends Block {
   callId?: string
   name: string
-  result(ok: boolean, text: string): void
+  /** `lines`: how many it had before the gateway cut it, when it says. */
+  result(ok: boolean, text: string, lines?: number): void
   /** The turn ended with no result for it: stop blinking. */
   settle(): void
 }
@@ -175,7 +197,8 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
   const name = sgr({ ...theme.text, bold: true }, mode)
   const style = sgr(theme.tool, mode)
   const removed = sgr(theme.danger, mode)
-  const added = sgr(theme.ok, mode)
+  const removedRow = sgr(theme.diffRemoved, mode)
+  const addedRow = sgr(theme.diffAdded, mode)
   // Only what changed: the lines around a change are in the file (and the core sends the changed
   // part alone). When a side was cut, the comparison was made against a text that stops early, and
   // proves little:
@@ -187,10 +210,11 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
   let uncompared = false
   let withheld = 0
   const linesOf = (text: string | null) => (text === null ? [] : text.split('\n'))
-  const changes = (step.diff ?? []).flatMap((d) => {
+  // Each file's changed lines, under a line saying which file and how much came and went.
+  const files = (step.diff ?? []).map((d) => {
     const ops = lineDiff(linesOf(d.old), linesOf(d.new))
     // Too long to compare line by line: said, never guessed at.
-    if (ops === null) { uncompared = true; return [] }
+    if (ops === null) { uncompared = true; return { path: d.path, sure: [] as Array<{ op: string; text: string }> } }
     const changed = ops.filter((l) => l.op !== ' ')
     const wholeOld = d.newCut === true && d.oldCut !== true ? new Set(linesOf(d.old)) : null
     const wholeNew = d.oldCut === true && d.newCut !== true ? new Set(linesOf(d.new)) : null
@@ -198,11 +222,12 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
       ? d.newCut !== true && (wholeNew === null || !wholeNew.has(l.text))
       : d.oldCut !== true && (wholeOld === null || !wholeOld.has(l.text))))
     withheld += changed.length - sure.length
-    return sure
+    return { path: d.path, sure }
   })
+  const changes = files.flatMap((f) => f.sure)
   const cut = (step.diff ?? []).some((d) => d.oldCut === true || d.newCut === true)
   let own = 0
-  let outcome: { ok: boolean; text: string } | null = null
+  let outcome: { ok: boolean; text: string; lines?: number } | null = null
   let settled = false
   const running = () => outcome === null && !settled
   const block: ToolCallBlock = {
@@ -210,17 +235,36 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
     get version() { return `${own}:${detail.expanded ? 1 : 0}:${running() ? (blink(currentFrame()) ? 'on' : 'off') : '-'}` },
     callId: step.callId,
     name: step.name,
-    result(ok, text) { outcome = { ok, text }; own++ },
+    result(ok, text, lines) { outcome = { ok, text, lines }; own++ },
     settle() { if (running()) { settled = true; own++ } },
     lines(width) {
       const title = (step.title ?? '').split('\n')[0]
       const mark = outcome !== null ? (outcome.ok ? marks.ok : marks.failed) : settled ? marks.settled : blink(currentFrame()) ? marks.on : marks.off
-      const out = layout(title === '' || title === step.name ? step.name : `${step.name}  ${title}`, width, style, { first: pad('● ', mark), rest: pad('  ') })
+      // As Claude Code writes a call: the tool's name, then what it was asked in brackets.
+      const shownName = /^[a-z]+$/.test(step.name) ? step.name[0].toUpperCase() + step.name.slice(1) : step.name
+      const asked = title === '' || title === step.name ? '' : `(${title})`
+      const out = layout(`${shownName}${asked}`, width, style, { first: pad('● ', mark), rest: pad('  ') })
       // The tool's name in bold, what it was asked in the tool's own grey.
       const head = out[0]?.spans[1]
-      if (head !== undefined && head.text.startsWith(step.name)) out[0].spans.splice(1, 1, { text: step.name, style: name }, { text: head.text.slice(step.name.length), style })
-      const diff = changes.flatMap((d) => layout(d.text === '' ? ' ' : d.text, width, d.op === '-' ? removed : added, { first: pad(`  ${d.op} `, d.op === '-' ? removed : added), rest: pad('    ') }))
-      out.push(...fold(diff, detail.expanded ? UNFOLDED.diff : FOLDED.diff, detail, style))
+      if (head !== undefined && head.text.startsWith(shownName)) out[0].spans.splice(1, 1, { text: shownName, style: name }, { text: head.text.slice(shownName.length), style })
+      const at = pad('  ⎿  ', style)
+      const diff = files.flatMap((f) => {
+        if (f.sure.length === 0) return []
+        const plus = f.sure.filter((d) => d.op === '+').length
+        // "Updated" once the edit answered that it did; until then, and when it failed, the file alone.
+        const said = outcome?.ok === true ? t().updated(f.path, plus, f.sure.length - plus) : f.path
+        const head = layout(said, width, style, { first: at, rest: pad('     ') })
+        // The colour runs behind the whole row, as far as the text is wide; the padding is decor, so a copy
+        // of the row does not carry it.
+        const rows = f.sure.flatMap((d) => {
+          const rowStyle = d.op === '-' ? removedRow : addedRow
+          const laid = layout(`${d.op} ${d.text === '' ? ' ' : d.text}`, width, rowStyle, { first: pad('      '), rest: pad('      ') })
+          for (const row of laid) { const used = widthOf(row); if (used < width) row.spans.push(pad(' '.repeat(width - used), rowStyle)) }
+          return laid
+        })
+        return [...head, ...fold(rows, detail.expanded ? UNFOLDED.diff : FOLDED.diff, detail, style)]
+      })
+      out.push(...diff)
       const note = uncompared ? t().diffUncompared
         : !cut ? ''
           : changes.length > 0 ? (withheld > 0 ? t().diffWithheld(withheld) : t().diffHead)
@@ -228,15 +272,40 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
               : t().diffNoDifference
       if (note !== '') out.push({ spans: [pad('    '), { text: note, style }], soft: false })
       if (outcome !== null) {
-        const shown = outcome.ok ? style : removed
         const text = outcome.text.replace(/\s+$/, '')
-        const rows = layout(text === '' ? t().noOutput : text, width, shown, { first: pad('  ⎿ ', shown), rest: pad('    ') })
-        out.push(...fold(rows, detail.expanded ? UNFOLDED.result : FOLDED.result, detail, style))
+        // The gateway's count, from before it cut a long result; a "no matches" answer is none.
+        const kind = resultKind(step.name)
+        const none = (kind === 'search' || kind === 'files') && /^(no (matches|files|results)( found)?|found 0\b)/i.test(text)
+        const count = none ? 0 : outcome.lines ?? (text === '' ? 0 : text.split('\n').length)
+        // What the result says: a line of its own for a read or a search unless asked to open it (ctrl+o); an
+        // edit's diff says it already; else its lines, a shell's last ones.
+        const summary = !outcome.ok || detail.expanded ? null
+          : kind === 'read' ? t().readLines(count) : kind === 'search' ? t().foundLines(count) : kind === 'files' ? t().foundFiles(count) : null
+        if (outcome.ok && changes.length > 0 && !detail.expanded) return out
+        const shown = outcome.ok ? style : removed
+        const limit = detail.expanded ? UNFOLDED.result : kind === 'shell' ? SHELL_TAIL : FOLDED.result
+        if (kind === 'shell' && text.includes('\n') && summary === null) {
+          // A shell: its last lines, where the result or the error is; one that failed under a line saying so.
+          const lead = outcome.ok ? '  ⎿  ' : '     '
+          const rows = layout(text, width, shown, { first: pad(lead, shown), rest: pad('     ') })
+          if (!outcome.ok) out.push({ spans: [pad('  ⎿  ', shown), { text: t().failedWith(''), style: shown }], soft: false })
+          out.push(...tail(rows, limit, detail, style, lead))
+        } else {
+          const body = summary ?? (outcome.ok ? (text === '' ? t().noOutput : text) : t().failedWith(text === '' ? t().noOutput : text))
+          const rows = layout(body, width, shown, { first: pad('  ⎿  ', shown), rest: pad('     ') })
+          out.push(...fold(rows, limit, detail, style))
+        }
       }
       return out
     },
   }
   return block
+}
+
+/** A turn stopped by the person: under it, as Claude Code marks it. */
+export function interruptedBlock(mode: ColorMode): Block {
+  const style = sgr(theme.danger, mode)
+  return { id: nextId('interrupted'), version: 0, lines: () => [{ spans: [pad('  ⎿  ', style), { text: t().interrupted, style }], soft: false }] }
 }
 
 export type NoticeKind = 'info' | 'warn' | 'error' | 'ok'
