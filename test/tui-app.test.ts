@@ -12,6 +12,8 @@ import './dist-fresh.ts'   // fails loudly on a stale dist
 
 import { App } from '../dist/tui/app.js'
 import { messages } from '../dist/messages.js'
+import { Picker } from '../dist/tui/picker.js'
+import { Transcript } from '../dist/tui/render/transcript.js'
 import { stringWidth } from '../dist/tui/render/width.js'
 import { RESTORE } from '../dist/tui/render/terminal.js'
 import { fakeClock, fakeTerminal } from './tui-fakes.ts'
@@ -938,8 +940,8 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.key(SGR(65, top.col, top.row)); t.clock.advance(20)
   check('mouse: the wheel over the picker moves the highlight, not the transcript', /❯ 2\. og\/m2/.test(t.term.screen.text()))
   t.key('h'); t.clock.advance(20)
-  check('picker: typing closes it and goes to the input box', t.app.editor.text === 'h' && t.term.screen.find('og/m1') === null, JSON.stringify(t.app.editor.text))
-  t.key('\x15')
+  check('picker: typing filters it, the input box staying empty', t.app.editor.text === '' && t.app.picker !== null && t.term.screen.find('og/m1') === null && t.term.screen.find('og/m3') !== null, JSON.stringify(t.app.editor.text))
+  t.key('\x1b'); t.clock.advance(60)
   open()
   t.app.ask('q-70', [{ id: 'which', question: 'Which one?', options: [{ label: 'a' }, { label: 'b' }], multiSelect: false }])
   t.clock.advance(20)
@@ -1335,8 +1337,9 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   // A picker over it: a digit with no row of its own closes it and is text, not the approval's.
   t.app.openPicker({ title: 'Model', rows: [{ label: 'm1' }], onPick: () => {} }); t.clock.advance(20)
   t.key('2'); t.clock.advance(20)
-  check('approval: a digit that closes a picker over it is text, not an answer', t.actions.length === 0 && t.app.choice !== null && t.app.editor.text === '2', JSON.stringify({ actions: t.actions, text: t.app.editor.text }))
-  t.app.editor.set(''); t.clock.advance(20)
+  // A digit with no row of its own is typed into the picker's filter: the picker's, never the approval's.
+  check('approval: a digit with no row in a picker over it is the picker\'s, not an answer', t.actions.length === 0 && t.app.choice !== null && t.app.picker !== null && t.app.picker.query === '2', JSON.stringify({ actions: t.actions, query: t.app.picker?.query }))
+  t.key('\x1b'); t.app.editor.set(''); t.clock.advance(60)
 
   // A selection: esc clears it, as it does anywhere, and the approval waits.
   const at = t.term.screen.find('rm -rf build')
@@ -1821,6 +1824,101 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.ask('q-i', [{ id: 'q', question: 'which?', options: [{ label: 'a' }], multiSelect: false }]); t.clock.advance(20)
   t.app.withdrawn([idI], [idI]); t.app.clear(); t.clock.advance(20)
   check('queue: what was held for the box stays with its conversation', t.app.editor.text === '' && !t.term.screen.text().includes('I-msg'), JSON.stringify(t.app.editor.text))
+}
+
+// 80. Lists and scrolling after Claude Code and pi. Typing filters a picker instead of closing it, and a long list
+// says where its highlight is; ctrl+home and ctrl+end jump through the transcript, PgUp and PgDn go half a screen,
+// the prompt a reader scrolled away from stays in a line at the top, and a click on a folded result unfolds that one.
+{
+  const t = setup({ cols: 80, rows: 30 })
+  const picked = []
+  const models = Array.from({ length: 12 }, (_, i) => ({ label: `og/model-${i + 1}`, detail: i === 4 ? 'reasoner' : `M ${i + 1}` }))
+  const open = () => { t.app.openPicker({ title: 'Model', rows: models, onPick: (i) => picked.push(i) }); t.clock.advance(20) }
+  open()
+  check('picker: a list longer than its window says where the highlight is', /Model \(1\/12\)/.test(t.term.screen.text()), t.term.screen.text().split('\n').find((l) => l.includes('Model')) ?? '(none)')
+  check('picker: the hint says typing filters', /type to filter/.test(t.term.screen.row(29)), t.term.screen.row(29))
+  t.key('r'); t.key('E'); t.key('a'); t.clock.advance(20)
+  const filtered = t.term.screen.text()
+  check('picker: typing filters the rows, by label or detail, any case', t.app.picker !== null && filtered.includes('og/model-5') && !/og\/model-1 /.test(filtered) && /"rEa"/.test(filtered) && t.app.editor.text === '', filtered.split('\n').filter((l) => l.includes('model') || l.includes('Model')).join(' | '))
+  check('picker: the count is of the rows that match', /\(1\/1\)/.test(filtered))
+  t.key('\r')
+  check('picker: ↵ picks the row the filter left', JSON.stringify(picked) === '[4]', JSON.stringify(picked))
+  open()
+  t.key('3'); t.clock.advance(20)
+  check('picker: a digit with nothing typed still jumps to its row', /❯ +3\. og\/model-3/.test(t.term.screen.text()) && /\(3\/12\)/.test(t.term.screen.text()))
+  t.key('-'); t.key('1'); t.key('1'); t.clock.advance(20)
+  check('picker: after a letter, digits are part of the filter', /"-11"/.test(t.term.screen.text()) && /❯ +11\. og\/model-11/.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => l.includes('model')).join(' | '))
+  t.key('\r')
+  check('picker: and ↵ picks it', picked.at(-1) === 10, JSON.stringify(picked))
+  open()
+  t.key('z'); t.key('z'); t.clock.advance(20)
+  check('picker: no row matches: it says so, and ↵ picks nothing', /no match/.test(t.term.screen.text()) && (t.key('\r'), picked.length === 2 && t.app.picker !== null), JSON.stringify(picked))
+  t.key('\x7f'); t.key('\x7f'); t.clock.advance(20)
+  check('picker: backspace takes the filter back', /Model \(1\/12\)/.test(t.term.screen.text()) && t.app.picker !== null)
+  t.key('\x7f'); t.clock.advance(20)
+  check('picker: and on an empty filter closes the list, as before', t.app.picker === null)
+  open()
+  t.key('/'); t.clock.advance(20)
+  check('picker: / with nothing typed closes it and starts a command', t.app.picker === null && t.app.editor.text === '/', JSON.stringify(t.app.editor.text))
+  t.app.editor.set(''); t.clock.advance(20)
+
+  const c = setup({ cols: 80, rows: 30, extra: { commands: commandInfo() } })
+  c.key('/'); c.clock.advance(20)
+  // The list itself: no row matching, nothing to pick, whoever asks.
+  const own = []
+  const bare = new Picker({ title: 'M', rows: [{ label: 'a' }, { label: 'b' }], onPick: (i) => own.push(i) })
+  bare.type('zz'); bare.pick()
+  check('picker: with nothing matching, pick() picks nothing', own.length === 0 && bare.position === 0, JSON.stringify(own))
+  // The prompt held at the top: the last one wholly above the view, and none while a prompt is itself at the top.
+  const tr = new Transcript()
+  const lines = (id, n, prompt = undefined) => ({ id, version: 0, ...(prompt !== undefined ? { prompt } : {}), lines: () => Array.from({ length: n }, () => ({ spans: [], soft: false })) })
+  tr.push(lines('u1', 3, 'first')); tr.push(lines('a1', 10)); tr.push(lines('u2', 3, 'second')); tr.push(lines('a2', 10))
+  tr.visible(80, 5)
+  const heldAt = (top) => { tr.follow = false; tr.top = top; return tr.promptAbove() }
+  check('scroll: the prompt held is the one wholly above, none while one is at the top', heldAt(20) === 'second' && heldAt(14) === null && heldAt(5) === 'first' && heldAt(1) === null, JSON.stringify([heldAt(20), heldAt(14), heldAt(5), heldAt(1)]))
+  check('completion: a list longer than its window says where the highlight is', /^ ?1\/\d+ · ↑↓ pick/.test(c.term.screen.row(29)), c.term.screen.row(29))
+}
+{
+  const t = setup({ cols: 80, rows: 30 })
+  const lines = (tag) => Array.from({ length: 60 }, (_, i) => `${tag}-${String(i + 1).padStart(2, '0')}`).join('\n\n')
+  t.key('first question\r'); t.app.final(lines('a1'))
+  t.key('second question\r'); t.app.final(lines('a2'))
+  t.clock.advance(20)
+  const rowOf = (needle) => t.term.screen.find(needle)?.row ?? -1
+  check('scroll: at the bottom, no line held at the top', rowOf('a2-60') !== -1 && !t.term.screen.row(0).includes('second question'), t.term.screen.row(0))
+  // The line nearest the top: half a screen down, it is still on it.
+  const anchor = /a2-\d+/.exec(t.term.screen.row(2) + t.term.screen.row(3) + t.term.screen.row(4))?.[0] ?? 'a2-50'
+  const before = rowOf(anchor)
+  t.key('\x1b[5~'); t.clock.advance(20)
+  const moved = rowOf(anchor) - before
+  check('scroll: PgUp goes half a screen', before !== -1 && moved >= 9 && moved <= 13, `${anchor}: ${before} → ${rowOf(anchor)}`)
+  check('scroll: scrolled up, the prompt above holds the top line, dim', /› second question/.test(t.term.screen.row(0)) && t.term.screen.grid[0 * 80 + 2].style.includes(';2'), `${t.term.screen.row(0)} ${JSON.stringify(t.term.screen.grid[2].style)}`)
+  t.key('\x1b[6~'); t.clock.advance(20)
+  check('scroll: PgDn comes back by as much', rowOf(anchor) === before, `${rowOf(anchor)} vs ${before}`)
+  t.key('\x1b[1;5H'); t.clock.advance(20)
+  check('scroll: ctrl+home goes to the top', rowOf('first question') !== -1 && rowOf('a2-60') === -1 && !/› first question/.test(t.term.screen.row(0)), t.term.screen.text().split('\n').slice(0, 4).join(' | '))
+  t.key('\x1b[1;5F'); t.clock.advance(20)
+  t.app.final('arrived last'); t.clock.advance(20)
+  check('scroll: ctrl+end goes to the bottom, and follows again', rowOf('arrived last') !== -1, t.term.screen.text().split('\n').slice(-8, -4).join(' | '))
+  t.app.editor.set('typed'); t.key('\x1b[1;5H'); t.clock.advance(20)
+  check('scroll: ctrl+home with text in the box still scrolls, and the text stays', rowOf('first question') !== -1 && t.app.editor.text === 'typed')
+  t.app.editor.set(''); t.key('\x1b[1;5F'); t.clock.advance(20)
+
+  // Two folded results; a click on the first unfolds it alone.
+  const out = (tag) => Array.from({ length: 12 }, (_, i) => `${tag} out ${i + 1}`).join('\n')
+  t.app.turnStarted()
+  t.app.toolCall({ name: 'bash', callId: 'x1', title: 'one' }); t.app.toolResult('x1', true, out('x'))
+  t.app.toolCall({ name: 'bash', callId: 'y1', title: 'two' }); t.app.toolResult('y1', true, out('y'))
+  t.app.turnEnded(); t.clock.advance(20)
+  const fold = t.term.screen.find('Bash(one)')
+  check('click: both results start folded', t.term.screen.text().split('ctrl+o to expand').length - 1 === 2 && !/x out 7$/m.test(t.term.screen.text()) && fold !== null)
+  t.key(SGR(0, fold.col, fold.row)); t.key(SGR(0, fold.col, fold.row, true)); t.clock.advance(20)
+  const after = t.term.screen.text()
+  check('click: on a folded result unfolds that one only', /x out 7$/m.test(after) && !/y out 7$/m.test(after) && after.split('ctrl+o to expand').length - 1 === 1, after.split('\n').filter((l) => /out 1 |expand|collapse/.test(l)).join(' | '))
+  t.key(SGR(0, fold.col, rowOf('Bash(one)'))); t.key(SGR(0, fold.col, rowOf('Bash(one)'), true)); t.clock.advance(20)
+  check('click: again folds it', !/x out 7$/m.test(t.term.screen.text()) && t.term.screen.text().split('ctrl+o to expand').length - 1 === 2)
+  t.key('\x0f'); t.clock.advance(20)
+  check('click: ctrl+o still unfolds them all', /x out 7$/m.test(t.term.screen.text()) && /y out 7$/m.test(t.term.screen.text()))
 }
 
 const failed = results.filter((r) => !r.ok)

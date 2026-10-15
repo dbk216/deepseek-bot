@@ -35,6 +35,13 @@ the caveat about version numbers is at the bottom.
   replaces the messenger there (the guided setup asks first); the old one's tokens stay, its channel
   ids give way to every channel and its people to the ones given. `--yes`, which guarded a `*` that
   opened several messengers at once, is gone.
+- **The terminal's lists and scrolling as Claude Code and pi have them.** Typing in `/model`'s or
+  `/sessions`' list closed it and went to the input box; it now filters the list (every word typed, in a
+  row's name or detail, any case), backspace on an empty filter closing it as before. A list longer than
+  its window says where its highlight is, `Model (3/12)`, and the completion list's hint does too.
+  `PgUp`/`PgDn` went nearly a whole screen and now go half; `ctrl+home`/`ctrl+end` go to the top and the
+  bottom; scrolled up past a prompt, its first line holds the top row, dim; and a click on a tool's result
+  unfolds or folds that one alone (`ctrl+o` still does them all).
 - **The terminal's input box as Claude Code and pi have it.** An empty box said nothing, a box past its
   six rows hid the rest without a sign, a pasted log filled it, a new line took `alt+↵`, and a message
   queued behind a turn could only be taken back by stopping the turn. Now the empty box shows a dim

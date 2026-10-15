@@ -51,7 +51,7 @@ const en = {
   },
   helpKeys: [
     '↵ send · alt+↵ or \\ ↵ newline · ↑ edit queued messages · esc interrupt · shift+tab effort · wheel/PgUp/PgDn scroll · drag to copy · click to place the cursor or pick',
-    '/ commands · @ files (tab inserts) · ctrl+r search what you typed · ctrl+o expand/fold tool output · ctrl+t expand/fold thinking',
+    '/ commands · @ files (tab inserts) · ctrl+r search what you typed · ctrl+o expand/fold tool output · ctrl+t expand/fold thinking · ctrl+home/end top/bottom',
   ],
   ago: (seconds: number) => seconds < 60 ? `${seconds}s ago` : seconds < 3600 ? `${Math.round(seconds / 60)}m ago`
     : seconds < 86400 ? `${Math.round(seconds / 3600)}h ago` : `${Math.round(seconds / 86400)}d ago`,
@@ -96,8 +96,8 @@ const en = {
   newLines: (n: number) => ` ↓ ${n} new `,
   hints: {
     search: (query: string, found: boolean) => `(history search) ${query}${found ? '' : ' · no match'} · ctrl+r older · ↵ pick · esc cancel`,
-    completion: '↑↓ pick · tab insert · ↵ run · esc close',
-    picker: (efforts: boolean) => `↑↓ pick${efforts ? ' · ←→ effort' : ''} · ↵ choose · esc close`,
+    completion: (at: number, of: number) => `${at > 0 ? `${at}/${of} · ` : ''}↑↓ pick · tab insert · ↵ run · esc close`,
+    picker: (efforts: boolean) => `type to filter · ↑↓ pick${efforts ? ' · ←→ effort' : ''} · ↵ choose · esc close`,
     typing: 'type, then ↵ · esc back to the options',
     question: (multi: boolean) => `↑↓ move${multi ? ' · space select' : ''} · ↵ confirm · esc skip · type to answer in your own words`,
     panel: '↑↓ move · ↵ open · esc back to the input',
@@ -131,6 +131,7 @@ const en = {
   effortNext: (effort: string) => `effort ${effort} from the next turn`,
   cacheShare: (pct: number) => `cache ${pct}%`,
   choiceTitle: 'Choose one',
+  noMatch: 'no match',
   moreKeys: (n: number) => `+${n} more · /help lists them all`,
   shortcutsTitle: 'Shortcuts',
   welcomeKeys: '/help for help · ? for shortcuts · esc to interrupt',

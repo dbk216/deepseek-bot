@@ -168,6 +168,10 @@ export class App {
   interview: { topic: string; state: InterviewState | null } | null = null
   /** What tool blocks show, folded or all of it; ctrl+o toggles it. */
   readonly detail: Detail = { expanded: false }
+  /** Bumped by ctrl+o: a block's own fold counts only if it was set since. */
+  private foldGeneration = 0
+  /** Each tool block's own fold, turned over by a click on it. */
+  private readonly folds = new WeakMap<Block, () => void>()
   /** The same for thinking, apart, as pi has it: ctrl+t. */
   readonly thinkingDetail: Detail = { expanded: false }
   /** The reasoning streaming now, until the answer starts. */
@@ -355,7 +359,14 @@ export class App {
     // A tool call means the model call that asked for it went through: its thinking stays.
     this.attemptThought = null
     this.closeAnswer()
-    const block = toolCallBlock(step, this.detail, this.mode)
+    // Its own fold, which a click turns over; ctrl+o sets every block's again.
+    const own = { expanded: false, at: -1 }
+    const app = this
+    const detail: Detail = {
+      get expanded() { return own.at === app.foldGeneration ? own.expanded : app.detail.expanded },
+    }
+    const block = toolCallBlock(step, detail, this.mode)
+    this.folds.set(block, () => { own.expanded = !detail.expanded; own.at = app.foldGeneration })
     this.runningTool = step.name
     this.step(block)
     if (step.callId !== undefined) {
@@ -617,7 +628,8 @@ export class App {
   /** Closed first, so what the pick does (another picker, another conversation) starts from a clear box. */
   private choosePicker(): void {
     const p = this.picker
-    if (p === null) return
+    // Nothing matches what was typed: nothing to pick, and the list stays for the filter to change.
+    if (p === null || p.position === 0) return
     this.closePicker()
     p.pick()
   }
@@ -848,7 +860,7 @@ export class App {
         case 'w': this.editor.killWord(); break
         case 'l': this.terminal.invalidate(); break
         case 'j': this.editor.insert('\n'); break
-        case 'o': this.detail.expanded = !this.detail.expanded; this.transcript.touch(); break
+        case 'o': this.detail.expanded = !this.detail.expanded; this.foldGeneration++; this.transcript.touch(); break
         case 't': this.thinkingDetail.expanded = !this.thinkingDetail.expanded; this.transcript.touch(); break
         default: return
       }
@@ -887,8 +899,9 @@ export class App {
       case 'delete': this.editor.del(); break
       case 'left': this.editor.left(); break
       case 'right': this.editor.right(); break
-      case 'home': this.editor.home(); break
-      case 'end': this.editor.end(); break
+      // With ctrl, the transcript's top and bottom (the bottom follows again); without, the text's.
+      case 'home': if (key.ctrl) this.pane.toTop(); else this.editor.home(); break
+      case 'end': if (key.ctrl) this.pane.toBottom(); else this.editor.end(); break
       case 'up':
         // The messages waiting here come back to an empty box once the gateway has withdrawn them (withdrawn);
         // the turn goes on. Not while a question, a list or a choice has the keys.
@@ -900,8 +913,9 @@ export class App {
         this.editor.up(width)
         break
       case 'down': this.editor.down(width); break
-      case 'pageup': this.pane.scroll(-Math.max(1, this.geometry.transcriptHeight - 2)); break
-      case 'pagedown': this.pane.scroll(Math.max(1, this.geometry.transcriptHeight - 2)); break
+      // Half a screen, as Claude Code's fullscreen goes: what was at the edge stays in view.
+      case 'pageup': this.pane.scroll(-Math.max(1, Math.floor(this.geometry.transcriptHeight / 2))); break
+      case 'pagedown': this.pane.scroll(Math.max(1, Math.floor(this.geometry.transcriptHeight / 2))); break
       case 'tab':
         // shift+tab steps the effort, as it cycles the mode in Claude Code; tab goes to the panel.
         if (key.shift) { this.o.stepEffort?.(); break }
@@ -1049,11 +1063,16 @@ export class App {
         return true
       case 'escape': this.closePicker(); return true
       case 'char':
-        if (!key.alt && /^[1-9]$/.test(key.ch ?? '') && p.jump(Number(key.ch))) break
-        // Typing goes back to the input box, with the key.
-        this.closePicker()
-        return false
+        if (key.alt) return false
+        // A / with nothing typed is a command: the list closes and the key is the box's, as it was.
+        if (key.ch === '/' && p.query === '') { this.closePicker(); return false }
+        // A digit with nothing typed jumps to its row; anything else is typed into the filter.
+        if (/^[1-9]$/.test(key.ch ?? '') && p.jump(Number(key.ch))) break
+        p.type(key.ch ?? '')
+        break
       case 'backspace': case 'delete':
+        if (p.erase()) break
+        // Nothing typed to take back: the list closes, as it did.
         this.closePicker()
         return false
       default: return false
@@ -1239,7 +1258,15 @@ export class App {
     if (m.action === 'up' && this.dragging) {
       this.dragging = false
       const text = pane.selectedText()
-      if (text === '') { this.clearSelection(); return }
+      if (text === '') {
+        // A click, not a drag: on a tool's block it folds or unfolds that block alone.
+        const at = pane.selection?.anchor.line
+        this.clearSelection()
+        const block = at === undefined ? null : pane.blockAt(at)
+        const turn = block === null ? undefined : this.folds.get(block)
+        if (turn !== undefined) { turn(); pane.touch(); this.terminal.requestRender(true) }
+        return
+      }
       const method = (this.o.copy ?? ((t: string) => systemCopy(t, { env: this.o.env, platform: this.o.platform, write: (d) => this.o.io.write(d) })))(text)
       this.showToast(t().copied([...text].length, method === 'osc52'))
     }
@@ -1356,6 +1383,7 @@ export class App {
     // The pane, with the selection drawn inverted.
     const pane = this.pane
     const visible = pane.visible(cols, transcriptHeight)
+    const held = transcriptHeight > 2 ? pane.promptAbove() : null
     visible.forEach((line, r) => {
       const y = transcriptTop + r
       let x = 0
@@ -1370,6 +1398,12 @@ export class App {
         }
       }
     })
+
+    // Scrolled up past a prompt: it holds the top line, dim, so what is in view says what it answers.
+    if (held !== null) {
+      screen.put(0, transcriptTop, ' '.repeat(cols), '')
+      screen.put(0, transcriptTop, fit(`› ${held.replace(/\s+/g, ' ').trim()}`, cols - 1), s(theme.dim))
+    }
 
     // What waits behind the running turn, each on the band it will have in the transcript.
     if (pendingRows > 0) {
@@ -1423,7 +1457,8 @@ export class App {
     // Hint line: what the keys do here.
     const search = this.search
     const hint = search !== null ? t().hints.search(search.query, search.found)
-      : this.completion !== null ? t().hints.completion
+      // A list longer than its rows says where the highlight is.
+      : this.completion !== null ? t().hints.completion(this.completion.items.length > COMPLETION_MAX_ROWS ? this.completion.index + 1 : 0, this.completion.items.length)
       : this.shortcuts ? t().hints.shortcuts
       : this.picker !== null && this.question === null && this.editor.text === '' ? t().hints.picker(this.picker.hasEfforts)
       : this.choice !== null && this.question === null && this.editor.text === '' ? t().hints.choice(this.choice.options.length, noOption(this.choice) !== -1)
@@ -1501,21 +1536,25 @@ export class App {
     let effortLine = p.hasEffortLine ? 1 : 0
     if (room - title - effortLine < 1) title = 0
     if (room - title - effortLine < 1) effortLine = 0
-    const out: Array<{ text: string; style: string; row: number }> = title === 1 ? [{ text: p.spec.title, style: s({ ...theme.accent, bold: true }), row: -1 }] : []
     const win = p.window(Math.max(1, Math.min(PICKER_MAX_ROWS, room - title - effortLine)))
-    const shown = p.rows.slice(win.first, win.first + win.count)
+    // The title says where the highlight is when the list is longer than its window or filtered, and what was typed.
+    const where = p.query !== '' || win.above + win.below > 0 ? (p.shown.length === 0 ? '' : ` (${p.position}/${p.shown.length})`) : ''
+    const typed = p.query === '' ? '' : ` · "${p.query}"${p.shown.length === 0 ? ` · ${t().noMatch}` : ''}`
+    const out: Array<{ text: string; style: string; row: number }> = title === 1 ? [{ text: fit(`${p.spec.title}${where}${typed}`, Math.max(1, cols - 2)), style: s({ ...theme.accent, bold: true }), row: -1 }] : []
+    const indices = p.shown.slice(win.first, win.first + win.count)
+    const shown = indices.map((i) => p.rows[i])
     const labelWidth = Math.min(Math.max(0, ...shown.map((r) => stringWidth(r.label))), Math.floor(cols / 2))
     const numberWidth = String(p.rows.length).length
     if (win.above > 0) out.push({ text: `  ↑ ${win.above}`, style: s(theme.muted), row: -1 })
     shown.forEach((row, k) => {
-      const i = win.first + k
+      const i = indices[k]
       const at = i === p.cursor
       const label = `${row.label}${' '.repeat(Math.max(0, labelWidth - stringWidth(row.label)))}`
       const text = `${at ? '❯' : ' '} ${String(i + 1).padStart(numberWidth)}. ${label}${row.detail ? `  ${row.detail}` : ''}${row.current ? '  ✓' : ''}`
       out.push({ text, style: at ? s({ ...theme.accent, bold: true }) : s(theme.text), row: i })
     })
     if (win.below > 0) out.push({ text: `  ↓ ${win.below}`, style: s(theme.muted), row: -1 })
-    const current = p.rows[p.cursor]
+    const current = p.position > 0 ? p.rows[p.cursor] : undefined
     if (effortLine === 1 && current?.efforts !== undefined) {
       const text = current.efforts.length === 0 ? `  ${t().noEffort}`
         : `  effort ◂ ${p.effortAt(p.cursor) ?? t().effortDefault} ▸  ${current.efforts.join(' · ')}`

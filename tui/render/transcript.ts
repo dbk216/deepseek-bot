@@ -13,6 +13,8 @@ export interface Block {
   /** Bump when the content changes; the cached layout is dropped. A string may carry an animation frame. */
   version: number | string
   lines(width: number): Line[]
+  /** What the person sent, on a block of their own words: held at the top while a reader scrolls past it. */
+  prompt?: string
 }
 
 interface Cached { version: number | string; width: number; lines: Line[] }
@@ -23,6 +25,8 @@ export class Transcript {
   private blocks: Block[] = []
   private cache = new Map<string, Cached>()
   private flat: Line[] = []
+  /** Where each block's lines are in `flat`, in order. */
+  private spans: Array<{ block: Block; from: number; to: number }> = []
   private flatWidth = -1
   private dirty = true
   /** First visible line. */
@@ -92,14 +96,18 @@ export class Transcript {
     if (!this.dirty && width === this.flatWidth) return this.flat
     const before = this.flat.length
     const out: Line[] = []
+    const spans: Array<{ block: Block; from: number; to: number }> = []
     for (const block of this.blocks) {
       let hit = this.cache.get(block.id)
       if (hit === undefined || hit.version !== block.version || hit.width !== width) {
         hit = { version: block.version, width, lines: block.lines(width) }
         this.cache.set(block.id, hit)
       }
+      const from = out.length
       for (const line of hit.lines) out.push(line)
+      spans.push({ block, from, to: out.length })
     }
+    this.spans = spans
     if (this.cache.size > this.blocks.length * 2) {
       const live = new Set(this.blocks.map((b) => b.id))
       for (const id of this.cache.keys()) if (!live.has(id)) this.cache.delete(id)
@@ -136,6 +144,41 @@ export class Transcript {
   toBottom(): void {
     this.follow = true
     this.unseen = 0
+  }
+
+  /** To the first line; following again only when everything fits. */
+  toTop(): void {
+    this.top = 0
+    this.follow = this.flat.length <= this.lastHeight
+    if (this.follow) this.unseen = 0
+  }
+
+  /** The block a transcript line belongs to, or null. */
+  blockAt(line: number): Block | null {
+    let lo = 0
+    let hi = this.spans.length - 1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      const s = this.spans[mid]
+      if (line < s.from) hi = mid - 1
+      else if (line >= s.to) lo = mid + 1
+      else return s.block
+    }
+    return null
+  }
+
+  /**
+   * While scrolled up, the last prompt whose lines are all above the viewport: what the lines in view
+   * answer. Null at the bottom, or when a prompt is itself in view at the top.
+   */
+  promptAbove(): string | null {
+    if (this.follow) return null
+    let found: string | null = null
+    for (const s of this.spans) {
+      if (s.from >= this.top) break
+      if (s.block.prompt !== undefined) found = s.to <= this.top ? s.block.prompt : null
+    }
+    return found
   }
 
   /** Viewport row → transcript line, or null below the content. */

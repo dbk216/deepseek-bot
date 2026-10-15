@@ -554,13 +554,14 @@ until it closes. Under `NO_COLOR` there is no band and nothing sweeps.
 | `esc` | stop the running turn (what was waiting behind it comes back to the input); on an approval, answer no; in a view, back to the conversation |
 | `?` on an empty box | show the shortcuts (`esc` or any key closes them) |
 | `ctrl+c` twice, `ctrl+d` | quit (the terminal is always restored) |
-| wheel, `PgUp`/`PgDn` | scroll; drag selects and copies (pbcopy locally, OSC 52 over SSH) |
+| wheel, `PgUp`/`PgDn` | scroll (the keys half a screen); drag selects and copies (pbcopy locally, OSC 52 over SSH) |
+| `ctrl+home` / `ctrl+end` | the top of the conversation / the bottom, following it again |
 | `tab`, `↑↓`, `↵`, or a click | the agent panel: open a subagent or a shell |
 | `ctrl+x` | in a subagent view, stop it; in a shell view, stop the job |
 | `/` or `@`, then `↑↓` and `tab` | complete a command, or a file of the workspace (`↵` or a click runs a command that takes nothing) |
 | a click in the input box | puts the cursor there |
 | `ctrl+r` | search what was typed before (`ctrl+r` again: older; `↵` keeps it to edit; `esc` cancels) |
-| `ctrl+o` | unfold or fold the tool results |
+| `ctrl+o` | unfold or fold the tool results; a click on one unfolds or folds that one |
 | `ctrl+t` | unfold or fold the thinking |
 
 Commands: `/new`, `/sessions`, `/resume <n|id>`, `/tenant [name]`, `/interview <topic>`, `/model`,
@@ -588,8 +589,13 @@ What appears besides the conversation:
 - **Approvals** and **a turn's questions** (`ask_user_question`, a plan review) open in the input box's
   place — arrows and Enter, Space on multi-select, or type (or paste) your own answer.
 - **`/model` and `/sessions` open a picker** in the input box's place: `↑↓` or the wheel to move, a digit to
-  jump, `↵` or a click to pick, `esc` to close; typing closes it and goes to the input box. `/resume <n>`
-  still works typed.
+  jump, `↵` or a click to pick, `esc` to close. Typing filters it, as Claude Code's lists do: a row stays
+  when every word typed is in its name or detail, in any case (after a letter, digits are typed too), and
+  backspace on an empty filter closes it, and `/` with nothing typed closes it to start a command. A list longer than its window, or filtered, says where the
+  highlight is (`Model (3/12)`), as the completion list does in its hint. `/resume <n>` still works typed.
+- **Scrolling.** `PgUp`/`PgDn` go half a screen; `ctrl+home`/`ctrl+end` go to the top and to the bottom,
+  which follows the conversation again. Scrolled up past a prompt, its first line holds the top row, dim,
+  so the lines in view say what they answer.
 - **The agent panel** lists the turn's subagents (running ones first, with their time and tokens)
   and background shells; a subagent's view shows its task, tools and answers.
 - **`/model`** lists the models the registered providers advertise (the harness's `llm` service),

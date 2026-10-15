@@ -40,6 +40,7 @@ export function userBlock(text: string, mode: ColorMode): Block {
   return {
     id: nextId('user'),
     version: 0,
+    prompt: text,
     lines(width) {
       const lines = layout(text, width, body, { first: pad('› ', mark), rest: pad('  ', body) })
       // The band runs to the edge; without colour there is no band, and no trailing spaces.
