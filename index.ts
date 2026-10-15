@@ -2827,9 +2827,10 @@ export function apply(ctx, config) {
     // the home, and "data.csv" in one answer uploaded the other's dm/data.csv (found by review).
     const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const named = (path: string) => {
-      // On Windows the walk gives out\report.docx; the answer usually writes out/report.docx.
+      // On Windows the walk gives out\report.docx; the answer usually writes out/report.docx. A "\" before
+      // the name is a path going on, as "/" is: dm\data.csv must not name the home's data.csv.
       const relative = path.slice(home.length + 1).split(sep).join('/')
-      return [relative, `./${relative}`, path, path.slice(home.length + 1)].some((form) => new RegExp(`(^|[^\\w./-])${escape(form)}(?![\\w-])`).test(answer))
+      return [relative, `./${relative}`, path, path.slice(home.length + 1)].some((form) => new RegExp(`(^|[^\\w./\\\\-])${escape(form)}(?![\\w-])`).test(answer))
     }
     const found: string[] = []
     const walk = (dir: string, depth: number) => {

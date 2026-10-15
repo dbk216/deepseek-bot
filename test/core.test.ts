@@ -1040,6 +1040,22 @@ for (const remove of [false, true]) {
   rmSync(elsewhere, { recursive: true, force: true })
   t.done()
 }
+// The same with a Windows path in the answer: "dm\data.csv" names the conversation's own file, and the
+// "\" before data.csv is part of that path, not a boundary that lets the home's data.csv through.
+{
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  const t = boot({
+    agent: 'answer', home, config: { fake: { upload: true } },
+    answer: { text: 'dm\\data.csv 만들었어.', files: { 'data.csv': 'the home\'s', 'dm/data.csv': 'this one' } },
+  })
+  await sleep(80)
+  t.transport.deliver(t.transport.message({ text: '만들어줘' }))
+  await sleep(500)
+  const sent = t.transport.uploads.map((u) => u.filePath.slice(home.length + 1).split(sep).join('/')).sort()
+  check('a path written with "\\" does not upload the home\'s file of the same name', !sent.includes('data.csv') && (process.platform !== 'win32' || JSON.stringify(sent) === '["dm/data.csv"]'), JSON.stringify(sent))
+  rmSync(home, { recursive: true, force: true })
+  t.done()
+}
 
 // 35c. An upload the platform refused is told to the conversation: the answer names a file nobody there
 // received — Discord refuses one over 10 MiB, a Slack app without files:write refuses them all.

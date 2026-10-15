@@ -112,9 +112,10 @@ and by scenarios run against a real model.
 ## Good to know
 
 - macOS only: the services are launchd jobs and the sandbox is Seatbelt. On Windows it builds, the
-  terminal's local transport listens on a named pipe, the tool gate's link and path checks hold, `dsh`
-  forwards to an npm-installed harness, and the suites in CI's Windows job pass; the installer,
-  services, sandbox and watches are not ported there.
+  terminal's local transport listens on a named pipe, `dsh` forwards to an npm-installed harness, and
+  the suites in CI's Windows job pass; the installer, services, sandbox and watches are not ported
+  there. With no sandbox the tool gate is no boundary on Windows, and its `.env` check has known gaps
+  there (`..` after a link, NTFS stream names).
   Another user can open the pipe read-only: that gets nothing, and gives way to a terminal when the
   places are full.
 - Recall matches words, not meaning. A paraphrase that shares no distinctive word can miss.
