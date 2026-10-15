@@ -11,6 +11,7 @@
 import './dist-fresh.ts'   // fails loudly on a stale dist
 
 import { App } from '../dist/tui/app.js'
+import { messages } from '../dist/messages.js'
 import { RESTORE } from '../dist/tui/render/terminal.js'
 import { fakeClock, fakeTerminal } from './tui-fakes.ts'
 import { commandInfo, COMMANDS, help } from '../dist/tui/cli.js'
@@ -1294,6 +1295,122 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('shortcuts: typing closes them and types', t.app.editor.text === 'a' && !t.term.screen.text().includes('Shortcuts'), JSON.stringify(t.app.editor.text))
   t.key('?'); t.clock.advance(20)
   check('shortcuts: ? in text being typed is a question mark', t.app.editor.text === 'a?')
+}
+
+// 77b. What review found in 77. An approval is answered only where it is seen and only by the keys the hint names;
+// esc is "no" only when nothing else (a selection) is what it would close; the status line does not offer esc
+// for a stop it will not do; the time is the running turn's own; and the shortcuts fit the screen.
+{
+  const t = setup({ cols: 100, rows: 30 })
+  const en = messages('en')
+  const allowDeny = (k) => [{ id: `approval:allow:${k}`, label: 'Allow', style: 'primary' }, { id: `approval:deny:${k}`, label: 'Deny', style: 'danger' }]
+  t.app.turnStarted()
+  t.app.message('ts-b', `${en.approvalNeeded('rm -rf build')}\n${en.approvalHowTerminal}`, null, false)
+  t.app.offer('ts-b', allowDeny('b1')); t.clock.advance(20)
+  // The last line that says so: the transcript has the message too, above.
+  const title = t.term.screen.text().split('\n').filter((l) => l.includes('I need permission')).at(-1) ?? '(none)'
+  check('approval: the adapter\'s own request, with one warning sign', /⚠ I need permission: rm -rf build/.test(title) && (title.match(/⚠/g) ?? []).length === 1, title)
+  check('approval: the status line does not offer esc for a stop while esc answers no', !t.term.screen.text().includes('esc to interrupt') && /esc deny/.test(t.term.screen.row(29)), t.term.screen.text().split('\n').find((l) => l.includes('✻')))
+  check('approval: what the message tells the person is how it is answered here', /↑↓/.test(en.approvalHowTerminal) && !/←→/.test(en.approvalHowTerminal), en.approvalHowTerminal)
+
+  // A question over it: the digit that starts an answer is the answer's.
+  t.app.ask('q-b', [{ id: 'n', question: 'How many replicas?', options: [{ label: 'three' }], multiSelect: false }])
+  t.key('1'); t.clock.advance(20)
+  check('approval: a digit typed into a question never answers the approval under it', t.actions.length === 0 && t.app.choice !== null && t.app.editor.text === '1', JSON.stringify({ actions: t.actions, text: t.app.editor.text }))
+  t.key('\r'); t.clock.advance(20)
+  // A picker over it: a digit with no row of its own closes it and is text, not the approval's.
+  t.app.openPicker({ title: 'Model', rows: [{ label: 'm1' }], onPick: () => {} }); t.clock.advance(20)
+  t.key('2'); t.clock.advance(20)
+  check('approval: a digit that closes a picker over it is text, not an answer', t.actions.length === 0 && t.app.choice !== null && t.app.editor.text === '2', JSON.stringify({ actions: t.actions, text: t.app.editor.text }))
+  t.app.editor.set(''); t.clock.advance(20)
+
+  // A selection: esc clears it, as it does anywhere, and the approval waits.
+  const at = t.term.screen.find('rm -rf build')
+  t.key(SGR(0, at.col, at.row)); t.key(SGR(32, at.col + 6, at.row)); t.key(SGR(0, at.col + 6, at.row, true))
+  t.key('\x1b'); t.clock.advance(60)
+  check('approval: esc with text selected clears the selection, and answers nothing', t.actions.length === 0 && t.app.choice !== null && t.cancels === 0 && t.term.screen.grid.filter(inverted).length === 0, JSON.stringify({ actions: t.actions, cancels: t.cancels }))
+  // Each half of what makes an option "no": its style, or its id.
+  t.key('\x1b'); t.clock.advance(60)
+  check('approval: esc answers no', t.actions.at(-1) === 'approval:deny:b1', JSON.stringify(t.actions))
+  t.app.offer('ts-b', [{ id: 'approval:allow:b2', label: 'Allow' }, { id: 'approval:refuse:b2', label: 'Refuse', style: 'danger' }]); t.key('\x1b'); t.clock.advance(60)
+  check('approval: "no" by its danger style alone', t.actions.at(-1) === 'approval:refuse:b2', JSON.stringify(t.actions.at(-1)))
+  t.app.offer('ts-b', [{ id: 'approval:allow:b3', label: 'Allow' }, { id: 'approval:deny:b3', label: 'Deny' }]); t.key('\x1b'); t.clock.advance(60)
+  check('approval: "no" by its id alone', t.actions.at(-1) === 'approval:deny:b3', JSON.stringify(t.actions.at(-1)))
+  // A choice with no "no": the hint does not promise one, and esc is the turn's stop, as the status line says.
+  t.app.offer('ts-b', [{ id: 'pick:a', label: 'A' }, { id: 'pick:b', label: 'B' }]); t.clock.advance(20)
+  check('choice: with no "no" option the hint does not say esc denies', !/esc deny/.test(t.term.screen.row(29)) && t.term.screen.text().includes('esc to interrupt'), t.term.screen.row(29))
+  // ↑ alone, from the first of three, goes to the last: back, not forward. Shift with ↓ is still ↓.
+  t.app.offer('ts-b', [{ id: 'o:1', label: 'One' }, { id: 'o:2', label: 'Two' }, { id: 'o:3', label: 'Three' }]); t.clock.advance(20)
+  t.key('\x1b[A')
+  check('choice: ↑ goes back', t.app.choice?.index === 2, String(t.app.choice?.index))
+  t.key('\x1b[1;2B')
+  check('choice: shift+↓ goes forward, as ↓ does', t.app.choice?.index === 0, String(t.app.choice?.index))
+  t.app.offer('ts-b', Array.from({ length: 12 }, (_, i) => ({ id: `o:${i}`, label: `Option ${i + 1}` }))); t.clock.advance(20)
+  check('choice: the digits named are the ones that work, 1–9', /1–9 pick/.test(t.term.screen.row(29)), t.term.screen.row(29))
+  t.app.offer('ts-b', [{ id: 'o:only', label: 'OK' }]); t.clock.advance(20)
+  check('choice: one option, no range of digits', !/1–1/.test(t.term.screen.row(29)) && /↵ choose/.test(t.term.screen.row(29)), t.term.screen.row(29))
+  // A message whose first line is blank still has a title, and a long one is cut with an ellipsis.
+  t.app.message('ts-c', `\n${en.approvalNeeded('x'.repeat(200))}`, null, false)
+  t.app.offer('ts-c', allowDeny('c1')); t.clock.advance(20)
+  const long = t.term.screen.text().split('\n').filter((l) => l.includes('I need permission')).at(-1) ?? '(none)'
+  check('approval: the first line with words is the title, cut with …', /⚠ I need permission: x+…/.test(long), long.slice(0, 60))
+  t.key('1')
+
+  // Something that arrives while the shortcuts are open closes them; the panel, when it had the keys, gives them back.
+  t.app.turnEnded(); t.clock.advance(20)
+  t.key('?'); t.clock.advance(20)
+  t.app.offer('ts-b', allowDeny('b4')); t.clock.advance(20)
+  check('shortcuts: an approval closes them', !t.term.screen.text().includes('Shortcuts') && /esc deny/.test(t.term.screen.row(29)), t.term.screen.row(29))
+  t.key('1'); t.clock.advance(20)
+  t.app.setPanel([{ id: 'a', label: 'idle a', mode: 'one-shot', status: 'idle', since: null, settledMs: 0, tokens: 0 }], [])
+  t.key('\t'); t.clock.advance(20)
+  const focused = t.app.focus
+  t.app.offer('ts-b', allowDeny('b5')); t.clock.advance(20)
+  check('approval: one arriving while the panel has the keys takes them', focused === 'panel' && t.app.focus === 'editor', `${focused} → ${t.app.focus}`)
+  t.key('\r')
+  check('approval: and ↵ answers it', t.actions.at(-1) === 'approval:allow:b5', JSON.stringify(t.actions.at(-1)))
+  t.key('\t'); t.clock.advance(20)
+  t.key('?'); t.clock.advance(20)
+  check('shortcuts: ? with the panel focused does not open them', !t.term.screen.text().includes('Shortcuts'), String(t.app.focus))
+  t.app.editor.set(''); t.app.setPanel([], []); t.clock.advance(20)
+
+  // Two turns, the second queued by another terminal: the time is the second's own from its start.
+  t.app.turnStarted(); t.app.turnStarted()
+  t.clock.advance(15000)
+  t.app.turnEnded()
+  t.clock.advance(2200)
+  const second = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: the next turn\'s time starts at its start', /\(2s · esc to interrupt\)/.test(second), second)
+  // shift+tab while a turn runs: the effort label is hidden, so the step says itself.
+  t.app.setStatus({ effort: 'high' }); t.clock.advance(20)
+  check('working: an effort step while a turn runs is shown', t.term.screen.text().includes('effort high from the next turn'), t.term.screen.text().split('\n').find((l) => l.includes('✻')))
+  t.app.turnEnded(); t.clock.advance(20)
+  // A stop withdraws the turn waiting behind it; its end is not a next turn's start, and the end of the stopped
+  // one is: a turn queued after the stop has its own time.
+  t.app.turnStarted(); t.app.turnStarted()
+  t.key('\x1b'); t.clock.advance(60)
+  t.app.turnEnded()
+  t.app.turnStarted()
+  t.clock.advance(10000)
+  t.app.turnEnded()
+  t.clock.advance(1200)
+  const after = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: after a withdrawn turn, the turn queued next has its own time', /\(1s · esc to interrupt\)/.test(after), after)
+  t.app.turnEnded(); t.clock.advance(20)
+}
+
+// 77c. The shortcuts in as many columns as fit, and no more rows than the screen has.
+{
+  const wide = setup({ cols: 100, rows: 30 })
+  wide.key('?'); wide.clock.advance(20)
+  const lines = wide.term.screen.text().split('\n')
+  const start = lines.findIndex((l) => l.includes('Shortcuts'))
+  const shown = lines.slice(start + 1).findIndex((l) => l.trim() === '' || /esc close/.test(l))
+  check('shortcuts: in columns as wide as their own items, five rows at 100 columns', start !== -1 && shown > 0 && shown <= 5, `${shown} rows`)
+  const small = setup({ cols: 40, rows: 14 })
+  small.key('?'); small.clock.advance(20)
+  const text = small.term.screen.text()
+  check('shortcuts: on a small screen they stop above the hint, and say how many are not shown', /esc close/.test(small.term.screen.row(13)) && /\+\d+ more/.test(text) && text.includes('Shortcuts'), text.split('\n').slice(-8).join(' | '))
 }
 
 const failed = results.filter((r) => !r.ok)

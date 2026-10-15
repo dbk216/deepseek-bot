@@ -40,6 +40,8 @@ the caveat about version numbers is at the bottom.
   elapsed time; an approval shows the request's first line and its options numbered, answered with
   `↑↓`, a digit or a click and `↵`, `esc` answering no (it stopped the turn, and `↑` brought back the last
   message, which `↵` sent again); the hint line is `? for shortcuts`, and `?` on an empty box shows them.
+  The approval's own message says these keys (it said `←→`, above the input box), and a digit typed into a
+  question or a list opened over an approval stays theirs.
 - **The terminal's transcript as Claude Code and pi draw it.** A call reads `● Name(what it was asked)`;
   its result sits under `⎿`, a read as `Read N lines`, a search as `Found N lines`, a list as
   `Found N files` (counted by the gateway before it cuts a long result), a shell's last five lines, anything

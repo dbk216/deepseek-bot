@@ -83,3 +83,18 @@ export function stringWidth(text: string): number {
   for (const g of graphemes(text)) width += graphemeWidth(g)
   return width
 }
+
+/** The text in at most `columns` cells: cut with an ellipsis when it is wider. */
+export function fit(text: string, columns: number): string {
+  if (stringWidth(text) <= columns) return text
+  if (columns <= 0) return ''
+  let out = ''
+  let used = 0
+  for (const g of graphemes(text)) {
+    const w = graphemeWidth(g)
+    if (used + w > columns - 1) break
+    out += g
+    used += w
+  }
+  return `${out}…`
+}

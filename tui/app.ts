@@ -30,7 +30,7 @@ import { detectColorMode, palette, sgr, theme, type ColorMode } from './render/s
 import { currentFrame, setFrame, shimmer } from './render/motion.js'
 import { Terminal, type TerminalIO } from './render/terminal.js'
 import { Transcript, type Block } from './render/transcript.js'
-import { graphemes, stringWidth } from './render/width.js'
+import { fit, graphemes, stringWidth } from './render/width.js'
 
 export interface Backend {
   send(text: string): void
@@ -108,6 +108,11 @@ const PANEL_MAX_ROWS = 6
 const COMPLETION_MAX_ROWS = 6
 const PICKER_MAX_ROWS = 8
 
+/** A choice's "no": the option drawn as dangerous, or one whose id says deny. -1 when it has none. */
+function noOption(c: Choice): number {
+  return c.options.findIndex((o) => o.style === 'danger' || /(^|:)deny(:|$)/.test(o.id))
+}
+
 export class App {
   readonly mode: ColorMode
   readonly transcript = new Transcript()
@@ -155,6 +160,8 @@ export class App {
   private readonly calls = new Map<string, ToolCallBlock>()
   /** The tool running now, for the status line. */
   private runningTool: string | null = null
+  /** Turns waiting when a stop withdrew them: their ends are not the start of a next turn. */
+  private withdrawing = 0
   /** Whether this turn was marked stopped already. */
   private interrupted = false
   /** The keys on show (? on an empty box), in the input box's place. */
@@ -222,6 +229,8 @@ export class App {
   // ── Called by the backend ───────────────────────────────────────────────
 
   setStatus(patch: Partial<AppStatus>): void {
+    // While a turn runs the effort is not on the status line: a step (shift+tab) says itself.
+    if (this.status.running && typeof patch.effort === 'string' && patch.effort !== '' && patch.effort !== this.status.effort) this.showToast(t().effortNext(patch.effort))
     Object.assign(this.status, patch)
     if ('workspace' in patch || 'session' in patch || 'model' in patch) { this.banner.refresh(); this.transcript.touch() }
     this.terminal.requestRender()
@@ -344,11 +353,16 @@ export class App {
       this.stopSpinner()
       // Nothing is waiting any more: whatever is still shown above the input was answered with it.
       for (const text of this.pending.splice(0)) this.shown(text)
-    } else if (this.pending.length > 0) {
-      // The next waiting message's turn starts now: it is marked when it is stopped, apart from the one that ended.
+      this.withdrawing = 0
+    } else if (this.withdrawing > 0) {
+      // A waiting turn a stop withdrew ended: the stopped turn is still the one running.
+      this.withdrawing--
+    } else {
+      // The next turn starts now (this terminal's waiting message, or one another terminal sent): its time and
+      // its stop mark are its own, apart from the one that ended.
       this.interrupted = false
-      this.shown(this.pending.shift()!)
       this.status.startedAt = this.clock.now()
+      if (this.pending.length > 0) this.shown(this.pending.shift()!)
     }
     this.transcript.touch()
     this.terminal.requestRender()
@@ -407,6 +421,7 @@ export class App {
       const atOnce = this.answeredAtOnce(text)
       if (atOnce === null) { this.pending.push(text); this.terminal.requestRender(true); return }
       // A stop withdraws what waits, in the gateway: it comes back to the box, as with esc.
+      if (atOnce === 'stop') this.withdrawing = Math.max(0, this.busy - 1)
       if (atOnce === 'stop' && this.pending.length > 0) {
         const back = this.pending.splice(0).join('\n')
         this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
@@ -469,6 +484,7 @@ export class App {
     if (this.search !== null) { this.editor.set(this.search.original); this.search = null }
     this.completion = null
     this.picker = null   // the turn's question comes first; the /command can be run again
+    this.shortcuts = false
     this.question = new QuestionFlow(id, items)
     this.transcript.toBottom()
     this.terminal.requestRender(true)
@@ -489,6 +505,7 @@ export class App {
     if (this.search !== null) { this.editor.set(this.search.original); this.search = null }
     this.completion = null
     this.focus = 'editor'
+    this.shortcuts = false
     this.picker = new Picker(spec)
     this.terminal.requestRender(true)
   }
@@ -564,6 +581,8 @@ export class App {
   /** Buttons on a message: shown as a choice in the input box's place until picked or withdrawn. */
   offer(ts: string, options: Choice['options']): void {
     this.choice = options.length === 0 ? null : { ts, options, index: 0 }
+    // Its keys are the input's: the panel gives them back, and the shortcuts close.
+    if (this.choice !== null) { this.focus = 'editor'; this.shortcuts = false }
     this.terminal.requestRender(true)
   }
 
@@ -667,6 +686,7 @@ export class App {
       const text = event.text.length > MAX_PASTE_CHARS ? event.text.slice(0, MAX_PASTE_CHARS) : event.text
       if (text !== event.text) this.showToast(t().pasteCut(MAX_PASTE_CHARS.toLocaleString('en-US')))
       this.search = null
+      this.shortcuts = false
       // Pasted into an open question, as typed into it: the person's own words.
       if (this.question !== null && !this.question.typing) { this.question.cursor = this.question.rows().length - 1; this.question.typing = true }
       this.editor.insert(text)
@@ -682,13 +702,15 @@ export class App {
     const width = this.editorWidth()
     if (!(key.ctrl && key.name === 'char' && key.ch === 'c')) this.quitArmed = 0
     if (key.name !== 'escape') this.clearSelection()
+    // A question or a picker over a choice has the keys: what falls through from it is text, never the choice's answer.
+    const overChoice = this.question !== null || this.picker !== null
 
     // The shortcuts, opened with ? on an empty box: esc or ? closes them; any other key closes them and does its own thing.
     if (this.shortcuts) {
       this.shortcuts = false
       this.terminal.requestRender(true)
       if (key.name === 'escape' || (key.name === 'char' && key.ch === '?' && !key.ctrl && !key.alt)) return
-    } else if (key.name === 'char' && key.ch === '?' && !key.ctrl && !key.alt && this.editor.text === '' && this.view.kind === 'main'
+    } else if (key.name === 'char' && key.ch === '?' && !key.ctrl && !key.alt && this.editor.text === '' && this.view.kind === 'main' && this.focus === 'editor'
       && this.question === null && this.picker === null && this.choice === null && this.search === null && this.completion === null) {
       this.shortcuts = true
       this.terminal.requestRender(true)
@@ -726,16 +748,17 @@ export class App {
       this.terminal.requestRender(true)
       return
     }
-    // With an open choice and nothing typed, the arrows, a digit and Enter answer it, and esc answers no.
-    if (this.choice !== null && this.editor.text === '' && !key.alt && !key.ctrl) {
+    // With an open choice and nothing typed, the arrows, a digit and Enter answer it, and esc answers no — once
+    // there is no selection for esc to clear.
+    if (this.choice !== null && this.editor.text === '' && !overChoice && !key.alt && !key.ctrl) {
       const c = this.choice
       const digit = key.name === 'char' && /^[1-9]$/.test(key.ch ?? '') ? Number(key.ch) - 1 : -1
-      const no = c.options.findIndex((o) => o.style === 'danger' || /(^|:)deny(:|$)/.test(o.id))
+      const no = noOption(c)
       if (digit >= 0 && digit < c.options.length) { this.pick(digit); this.terminal.requestRender(true); return }
-      if (key.name === 'escape' && no !== -1) { this.pick(no); this.terminal.requestRender(true); return }
+      if (key.name === 'escape' && no !== -1 && this.pane.selection === null) { this.pick(no); this.terminal.requestRender(true); return }
       if (['left', 'right', 'up', 'down', 'tab', 'enter'].includes(key.name)) {
         if (key.name === 'enter') this.pick(c.index)
-        else c.index = (c.index + (key.name === 'left' || key.name === 'up' || key.shift ? c.options.length - 1 : 1)) % c.options.length
+        else c.index = (c.index + (key.name === 'left' || key.name === 'up' || (key.name === 'tab' && key.shift) ? c.options.length - 1 : 1)) % c.options.length
         this.terminal.requestRender(true)
         return
       }
@@ -959,6 +982,7 @@ export class App {
   /** Stop the turn. The gateway withdraws the messages waiting behind it, so they come back to the input. */
   private cancel(): void {
     this.markInterrupted()
+    this.withdrawing = Math.max(0, this.busy - 1)
     this.o.backend.cancel()
     if (this.pending.length === 0) return
     const back = this.pending.splice(0).join('\n')
@@ -1097,7 +1121,6 @@ export class App {
     const editorRows = Math.min(EDITOR_MAX_ROWS, editor.rows.length)
     // An approval as Claude Code asks one: the request's first line, then its options numbered, one a row.
     const choiceRows = this.choice === null || this.question !== null ? 0 : 1 + this.choice.options.length
-    const shortcutLines = this.shortcuts ? this.shortcutLines(cols) : []
     const questionLines = this.question === null ? [] : this.questionLines(cols)
     const stripRows = this.interview !== null && this.view.kind === 'main' ? 3 : 0
     const allRows = this.rows()
@@ -1108,6 +1131,9 @@ export class App {
     // Messages waiting behind the running turn, above the divider: three at most, then a count.
     const waiting = this.view.kind === 'main' ? this.pending : []
     const pendingRows = Math.min(waiting.length, 3) + (waiting.length > 3 ? 1 : 0)
+    // The shortcuts open only with nothing else in the box's place: what is left after a row of transcript, the
+    // waiting messages, the divider, the status line, the panel and the hint.
+    const shortcutLines = this.shortcuts ? this.shortcutLines(cols, rows - (1 + stripRows) - 1 - (pendingRows + 1 + 1 + panelShown + 1)) : []
     // A choice on screen (a picker, a question's options, an approval) takes the input box's place while
     // nothing is typed, as in Claude Code: one keystroke of text brings the box back.
     const boxHidden = this.editor.text === '' && this.search === null
@@ -1145,9 +1171,11 @@ export class App {
     })
     const choiceSpans: Array<{ from: number; to: number }> = []
     if (choiceRows > 0 && this.choice !== null) {
-      const title = (this.posted.get(this.choice.ts)?.text ?? '').split('\n')[0].trim()
+      // The message's first line with words, without the warning sign the adapter's own request starts with.
+      const first = (this.posted.get(this.choice.ts)?.text ?? '').split('\n').map((line) => line.trim()).find((line) => line !== '') ?? t().choiceTitle
+      const title = first.replace(/^⚠\uFE0F?\s*/u, '')
       const x = screen.put(1, choiceRow, '⚠ ', s(theme.warn))
-      if (title !== '') screen.put(x, choiceRow, title, s({ ...theme.text, bold: true }), cols - 1)
+      screen.put(x, choiceRow, fit(title, cols - 1 - x), s({ ...theme.text, bold: true }), cols - 1)
       this.choice.options.forEach((option, i) => {
         const selected = i === this.choice!.index
         const style = selected ? s({ ...(option.style === 'danger' ? theme.danger : theme.accent), bold: true }) : s(theme.muted)
@@ -1240,7 +1268,7 @@ export class App {
       : this.completion !== null ? t().hints.completion
       : this.shortcuts ? t().hints.shortcuts
       : this.picker !== null && this.question === null && this.editor.text === '' ? t().hints.picker(this.picker.hasEfforts)
-      : this.choice !== null && this.question === null && this.editor.text === '' ? t().hints.choice(this.choice.options.length)
+      : this.choice !== null && this.question === null && this.editor.text === '' ? t().hints.choice(this.choice.options.length, noOption(this.choice) !== -1)
       : this.question?.typing ? t().hints.typing
       : this.question !== null ? t().hints.question(this.question.current?.multiSelect === true)
       : this.focus === 'panel' ? t().hints.panel
@@ -1251,17 +1279,30 @@ export class App {
     screen.put(1, editorTop + boxRows, hint, s(theme.dim))
   }
 
-  /** The keys, as `/help` lists them, in columns: what ? shows in the input box's place. */
-  private shortcutLines(cols: number): Array<{ text: string; style: string }> {
-    const items = t().helpKeys.flatMap((line) => line.split(' · ')).map((item) => item.trim()).filter((item) => item !== '')
-    const width = Math.min(cols - 4, Math.max(...items.map((item) => stringWidth(item))) + 3)
-    const perRow = Math.max(1, Math.floor((cols - 2) / width))
-    const rows: Array<{ text: string; style: string }> = [{ text: t().shortcutsTitle, style: sgr({ ...theme.text, bold: true }, this.mode) }]
-    for (let i = 0; i < items.length; i += perRow) {
-      const text = items.slice(i, i + perRow).map((item) => item + ' '.repeat(Math.max(0, width - stringWidth(item)))).join('').trimEnd()
-      rows.push({ text, style: sgr(theme.muted, this.mode) })
+  /**
+   * The keys, as `/help` lists them: what ? shows in the input box's place. In as many columns as fit, each as
+   * wide as its own widest key, and in at most `room` rows, the last saying how many did not fit.
+   */
+  private shortcutLines(cols: number, room: number): Array<{ text: string; style: string }> {
+    const usable = Math.max(1, cols - 2)
+    const items = t().helpKeys.flatMap((line) => line.split(' · ')).map((item) => fit(item.trim(), usable)).filter((item) => item !== '')
+    const GAP = 3
+    const widthsFor = (n: number) => Array.from({ length: n }, (_, j) => Math.max(0, ...items.filter((_, i) => i % n === j).map((item) => stringWidth(item))))
+    let perRow = 1
+    for (let n = items.length; n > 1; n--) {
+      if (widthsFor(n).reduce((sum, w) => sum + w, 0) + GAP * (n - 1) <= usable) { perRow = n; break }
     }
-    return rows
+    const widths = widthsFor(perRow)
+    const rows: string[] = []
+    for (let i = 0; i < items.length; i += perRow) {
+      rows.push(items.slice(i, i + perRow).map((item, j) => item + ' '.repeat(Math.max(0, widths[j] - stringWidth(item) + GAP))).join('').trimEnd())
+    }
+    // The title, the rows that fit, and a last row for the rest.
+    const fits = Math.max(1, room) - 1
+    const shown = rows.length <= fits ? rows : rows.slice(0, Math.max(0, fits - 1))
+    const lines = [{ text: t().shortcutsTitle, style: sgr({ ...theme.text, bold: true }, this.mode) }, ...shown.map((text) => ({ text, style: sgr(theme.muted, this.mode) }))]
+    if (shown.length < rows.length) lines.push({ text: fit(t().moreKeys(items.length - shown.length * perRow), usable), style: sgr(theme.dim, this.mode) })
+    return lines
   }
 
   /** The completion list, a window of rows around the picked candidate. */
@@ -1407,7 +1448,7 @@ export class App {
         const label = thinking ? t().thinking : this.runningTool !== null ? t().runningTool(this.runningTool) : t().working
         x = screen.put(x, y, '✻ ', s(thinking ? theme.thinking : theme.accent))
         for (const span of shimmer(label, thinking ? palette.sky : palette.light, palette.glint, currentFrame(), this.mode)) x = screen.put(x, y, span.text, span.style)
-        x = screen.put(x, y, t().runningFor(Math.floor((now - this.status.startedAt) / 1000)), s(theme.dim))
+        x = screen.put(x, y, t().runningFor(Math.floor((now - this.status.startedAt) / 1000), this.escStops()), s(theme.dim))
       }
       if (this.pending.length > 0) x = screen.put(x, y, sep(t().queuedCount(this.pending.length)), s(theme.muted))
       const counts = panelCounts(this.panel.agents, this.panel.jobs)
@@ -1439,6 +1480,12 @@ export class App {
     const home = (this.o.env.HOME ?? '').replace(/\/+$/, '')
     const w = this.status.workspace
     return home !== '' && (w === home || w.startsWith(`${home}/`)) ? `~${w.slice(home.length)}` : w
+  }
+
+  /** Whether esc, now, stops the running turn: not while something on screen takes it (a choice with a "no", a list, the shortcuts, a view). */
+  private escStops(): boolean {
+    return this.view.kind === 'main' && !this.shortcuts && this.question === null && this.picker === null && this.search === null && this.completion === null
+      && !(this.choice !== null && this.editor.text === '' && noOption(this.choice) !== -1)
   }
 
   private showToast(text: string): void {

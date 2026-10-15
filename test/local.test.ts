@@ -1040,7 +1040,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   check('approval: the terminal is asked with buttons, for this request', tuiFrame !== null && /^approval:allow:tui:conv-1#[0-9a-f]{8}$/.test(tuiFrame.buttons[0].id), JSON.stringify(tuiFrame?.buttons))
   // Only the buttons: a word typed in the terminal waits behind the running turn, as the terminal cannot
   // know an approval is pending, and the request used to invite one.
-  check('approval: the terminal\'s request points at its buttons, not at a word to type', !/\*allow\*|reply/i.test(tuiFrame?.text ?? '') && /above the input box/.test(tuiFrame?.text ?? ''), tuiFrame?.text)
+  check('approval: the terminal\'s request points at its buttons, not at a word to type', !/\*allow\*|reply/i.test(tuiFrame?.text ?? '') && /Choose below: ↑↓/.test(tuiFrame?.text ?? ''), tuiFrame?.text)
   c.send({ type: 'action', id: tuiFrame.buttons[1].id })
   // Bounded: a press the gate refused leaves the request pending, which must fail here, not hang the suite.
   check('approval: pressing a button decides it', (await Promise.race([tuiAsk, sleep(2000).then(() => 'still pending')])) === 'rejected')
