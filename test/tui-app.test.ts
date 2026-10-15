@@ -1382,14 +1382,21 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const second = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
   check('working: the next turn\'s time starts at its start', /\(2s · esc to interrupt\)/.test(second), second)
   // shift+tab while a turn runs: the effort label is hidden, so the step says itself.
-  t.app.setStatus({ effort: 'high' }); t.clock.advance(20)
+  // A terminal that attaches mid-turn learns the effort; nothing was stepped.
+  t.app.setStatus({ effort: 'low' }); t.clock.advance(20)
+  check('working: the effort learned while a turn runs is not called a step', !t.term.screen.text().includes('from the next turn'), t.term.screen.text().split('\n').find((l) => l.includes('✻')))
+  t.app.effortStepped('high'); t.clock.advance(20)
   check('working: an effort step while a turn runs is shown', t.term.screen.text().includes('effort high from the next turn'), t.term.screen.text().split('\n').find((l) => l.includes('✻')))
   t.app.turnEnded(); t.clock.advance(20)
   // A stop withdraws the turn waiting behind it; its end is not a next turn's start, and the end of the stopped
   // one is: a turn queued after the stop has its own time.
   t.app.turnStarted(); t.app.turnStarted()
+  t.clock.advance(4000)
   t.key('\x1b'); t.clock.advance(60)
   t.app.turnEnded()
+  t.clock.advance(1000)
+  const stopped = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: the end of a turn a stop withdrew does not restart the stopped turn\'s time', /\(5s/.test(stopped), stopped)
   t.app.turnStarted()
   t.clock.advance(10000)
   t.app.turnEnded()
@@ -1397,6 +1404,36 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const after = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
   check('working: after a withdrawn turn, the turn queued next has its own time', /\(1s · esc to interrupt\)/.test(after), after)
   t.app.turnEnded(); t.clock.advance(20)
+  // The link drops between a stop and the withdrawn turn's end: the gateway's count on reconnect is the truth,
+  // and a turn queued after it starts with its own time.
+  t.app.turnStarted(); t.app.turnStarted()
+  t.key('\x1b'); t.clock.advance(60)
+  t.app.setBusy(1)
+  t.app.turnStarted()
+  t.clock.advance(6000)
+  t.app.turnEnded()
+  t.clock.advance(1200)
+  const reconnected = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: a reconnect forgets the turns a stop withdrew', /\(1s · esc to interrupt\)/.test(reconnected), reconnected)
+  // The panel has the keys: esc gives them back to the input and stops nothing, so the line does not offer it.
+  t.app.setPanel([{ id: 'a', label: 'idle a', mode: 'one-shot', status: 'idle', since: null, settledMs: 0, tokens: 0 }], [])
+  t.key('\t'); t.clock.advance(20)
+  const panelled = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: with the panel focused, no "esc to interrupt"', t.app.focus === 'panel' && !panelled.includes('esc to interrupt'), `${t.app.focus} ${panelled}`)
+  t.key('\x1b'); t.clock.advance(60); t.app.setPanel([], [])
+  // Text selected: esc clears it first, so the line does not offer a stop either.
+  const word = t.term.screen.find('I need permission')
+  t.key(SGR(0, word.col, word.row)); t.key(SGR(32, word.col + 6, word.row)); t.key(SGR(0, word.col + 6, word.row, true)); t.clock.advance(20)
+  const selecting = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: with text selected, no "esc to interrupt"', !selecting.includes('esc to interrupt'), selecting)
+  t.key('\x1b'); t.clock.advance(60)
+  t.app.turnEnded(); t.clock.advance(20)
+  // A first line that is the warning sign alone: the title is the next line with words.
+  t.app.message('ts-d', '⚠️\nI need permission: ls', null, false)
+  t.app.offer('ts-d', allowDeny('d1')); t.clock.advance(20)
+  const lone = t.term.screen.text().split('\n').filter((l) => l.includes('⚠')).at(-1) ?? '(none)'
+  check('approval: a sign alone on the first line is skipped', /⚠ I need permission: ls/.test(lone), lone)
+  t.key('2'); t.clock.advance(20)
 }
 
 // 77c. The shortcuts in as many columns as fit, and no more rows than the screen has.
@@ -1411,6 +1448,12 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   small.key('?'); small.clock.advance(20)
   const text = small.term.screen.text()
   check('shortcuts: on a small screen they stop above the hint, and say how many are not shown', /esc close/.test(small.term.screen.row(13)) && /\+\d+ more/.test(text) && text.includes('Shortcuts'), text.split('\n').slice(-8).join(' | '))
+  const tiny = setup({ cols: 40, rows: 6 })
+  tiny.key('?'); tiny.clock.advance(20)
+  const none = setup({ cols: 40, rows: 5 })
+  none.key('?'); none.clock.advance(20)
+  check('shortcuts: with no room, nothing, and the hint stays', /esc close/.test(none.term.screen.row(4)) && !none.term.screen.text().includes('Shortcuts'), none.term.screen.text().split('\n').join(' | '))
+  check('shortcuts: with room for one line, the title alone, and the hint stays', /esc close/.test(tiny.term.screen.row(5)) && tiny.term.screen.text().includes('Shortcuts'), tiny.term.screen.text().split('\n').join(' | '))
 }
 
 const failed = results.filter((r) => !r.ok)

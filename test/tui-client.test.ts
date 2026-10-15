@@ -80,7 +80,8 @@ async function until(predicate, ms = 3000) {
   const pickers = []
   const closed = []
   const switched = []
-  const modelApp = { stop: () => {}, notice: (text, kind) => notices.push([kind, text]), clear: () => {}, setStatus: (s) => statusSeen.push(s), status: {}, openPicker: (spec) => pickers.push(spec), closePicker: (spec) => closed.push(spec) }
+  const stepped = []
+  const modelApp = { stop: () => {}, notice: (text, kind) => notices.push([kind, text]), clear: () => {}, setStatus: (s) => statusSeen.push(s), status: {}, openPicker: (spec) => pickers.push(spec), closePicker: (spec) => closed.push(spec), effortStepped: (e) => stepped.push(e) }
   const link = { conversation: 'c-1', tenant: undefined, switchTo: (c, tenant) => switched.push([c, tenant]), send: (f) => { sent.push(f); return true } }
   const cmds = createCommands(modelApp, link)
   cmds.intercept('/model 1')
@@ -124,6 +125,7 @@ async function until(predicate, ms = 3000) {
   const quiet = notices.length
   bind(modelApp, { type: 'model', current: { ...current, effort: 'low' }, cause: 'effort' }, cmds)
   check('effort: a step shows in the status line only, not as a line in the transcript', notices.length === quiet && statusSeen.at(-1)?.effort === 'low', JSON.stringify(notices.slice(quiet)))
+  check('effort: and the app is told it was a step (said while a turn runs), a /model answer not', JSON.stringify(stepped) === '["low"]', JSON.stringify(stepped))
   cmds.stepEffort()
   check('effort: shift+tab asks the gateway for the next effort', JSON.stringify(sent.at(-1)) === JSON.stringify({ type: 'effort', step: 1 }), JSON.stringify(sent.at(-1)))
   // A model picker open when the model or effort changes under it (another terminal, a click on the

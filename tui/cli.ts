@@ -68,6 +68,7 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       commands?.modelChanged()
       // A shift+tab shows in the status line; a line in the transcript for each would bury the conversation.
       if (frame.cause !== 'effort') app.notice(t().modelNow(`${frame.current.provider}/${frame.current.model}`, frame.current.effort), 'ok')
+      else app.effortStepped(frame.current.effort)
       return
     case 'history':
       app.history(frame.items)

@@ -229,8 +229,6 @@ export class App {
   // ── Called by the backend ───────────────────────────────────────────────
 
   setStatus(patch: Partial<AppStatus>): void {
-    // While a turn runs the effort is not on the status line: a step (shift+tab) says itself.
-    if (this.status.running && typeof patch.effort === 'string' && patch.effort !== '' && patch.effort !== this.status.effort) this.showToast(t().effortNext(patch.effort))
     Object.assign(this.status, patch)
     if ('workspace' in patch || 'session' in patch || 'model' in patch) { this.banner.refresh(); this.transcript.touch() }
     this.terminal.requestRender()
@@ -249,12 +247,19 @@ export class App {
     this.terminal.requestRender()
   }
 
+  /** An effort step (shift+tab) the gateway took: while a turn runs the effort is not on the status line, so it says itself. */
+  effortStepped(effort: string | null): void {
+    if (this.status.running && effort !== null && effort !== '') this.showToast(t().effortNext(effort))
+  }
+
   /**
    * What the gateway says when this terminal (re)connects: how many turns are running or waiting
    * here, each of which will still send its typing-off.
    */
   setBusy(count: number): void {
-    // A frame without the count (or a bad one) says nothing runs, never NaN turns.
+    // A frame without the count (or a bad one) says nothing runs, never NaN turns. Turns a stop withdrew
+    // before the link dropped are in the count or gone: none is still to be told apart.
+    this.withdrawing = 0
     const n = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0
     if (n === 0) { if (this.busy > 0) { this.busy = 1; this.turnEnded() } return }
     if (this.busy === 0) this.turnStarted()
@@ -1172,8 +1177,7 @@ export class App {
     const choiceSpans: Array<{ from: number; to: number }> = []
     if (choiceRows > 0 && this.choice !== null) {
       // The message's first line with words, without the warning sign the adapter's own request starts with.
-      const first = (this.posted.get(this.choice.ts)?.text ?? '').split('\n').map((line) => line.trim()).find((line) => line !== '') ?? t().choiceTitle
-      const title = first.replace(/^⚠\uFE0F?\s*/u, '')
+      const title = (this.posted.get(this.choice.ts)?.text ?? '').split('\n').map((line) => line.trim().replace(/^⚠\uFE0F?\s*/u, '')).find((line) => line !== '') ?? t().choiceTitle
       const x = screen.put(1, choiceRow, '⚠ ', s(theme.warn))
       screen.put(x, choiceRow, fit(title, cols - 1 - x), s({ ...theme.text, bold: true }), cols - 1)
       this.choice.options.forEach((option, i) => {
@@ -1297,8 +1301,10 @@ export class App {
     for (let i = 0; i < items.length; i += perRow) {
       rows.push(items.slice(i, i + perRow).map((item, j) => item + ' '.repeat(Math.max(0, widths[j] - stringWidth(item) + GAP))).join('').trimEnd())
     }
-    // The title, the rows that fit, and a last row for the rest.
-    const fits = Math.max(1, room) - 1
+    // The title, the rows that fit, and a last row for the rest; with room for one line, the title alone.
+    if (room < 1) return []
+    if (room === 1) return [{ text: t().shortcutsTitle, style: sgr({ ...theme.text, bold: true }, this.mode) }]
+    const fits = room - 1
     const shown = rows.length <= fits ? rows : rows.slice(0, Math.max(0, fits - 1))
     const lines = [{ text: t().shortcutsTitle, style: sgr({ ...theme.text, bold: true }, this.mode) }, ...shown.map((text) => ({ text, style: sgr(theme.muted, this.mode) }))]
     if (shown.length < rows.length) lines.push({ text: fit(t().moreKeys(items.length - shown.length * perRow), usable), style: sgr(theme.dim, this.mode) })
@@ -1484,7 +1490,7 @@ export class App {
 
   /** Whether esc, now, stops the running turn: not while something on screen takes it (a choice with a "no", a list, the shortcuts, a view). */
   private escStops(): boolean {
-    return this.view.kind === 'main' && !this.shortcuts && this.question === null && this.picker === null && this.search === null && this.completion === null
+    return this.view.kind === 'main' && this.focus === 'editor' && this.pane.selection === null && !this.shortcuts && this.question === null && this.picker === null && this.search === null && this.completion === null
       && !(this.choice !== null && this.editor.text === '' && noOption(this.choice) !== -1)
   }
 
