@@ -218,6 +218,9 @@ function boot({ state = {}, config = {} }: { state?: Record<string, unknown>; co
     // An absolute pattern is the way out of the workspace; on Windows it starts with a drive, not "/".
     const absolutePattern = gate('glob', { pattern: join(etc, '*') })
     check('an absolute glob pattern outside is refused', absolutePattern?.kind === 'deny', JSON.stringify(absolutePattern))
+    // grep's pattern is a regular expression, not a path: \bword\b is rooted only to Windows' isAbsolute.
+    const regex = gate('grep', { pattern: '\\bnotes\\b', path: root })
+    check('a grep pattern is not taken for a path', regex === 'delegated', JSON.stringify(regex))
   } else {
     check('symlinks could be created for this check', false, linked)
   }

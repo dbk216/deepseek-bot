@@ -430,8 +430,23 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   // a/b, dl/../../.env is the home's .env, in a link's target and in the path given alike. And the
   // volume ignores case, so the home's own name in other letters is the home. (Second verification pass.)
   symlinkSync('dl/../../.env', join(home, 'xdots'))
-  check('a link whose target steps back through a linked directory', t.gate(exec('write', { file_path: join(home, 'xdots'), content: 'X=1' }))?.kind === 'deny')
-  check('a path that steps back through a linked directory', t.gate(exec('write', { file_path: `${home}/dl/../../.env`, content: 'X=1' }))?.kind === 'deny')
+  if (process.platform !== 'win32') {
+    check('a link whose target steps back through a linked directory', t.gate(exec('write', { file_path: join(home, 'xdots'), content: 'X=1' }))?.kind === 'deny')
+    check('a path that steps back through a linked directory', t.gate(exec('write', { file_path: `${home}/dl/../../.env`, content: 'X=1' }))?.kind === 'deny')
+  } else {
+    // Windows cancels ".." as text before it follows a link, in a path and in a link's target alike
+    // (measured on NTFS): dl/../../.env is the .env above the home, and dl/../.env is the home's own.
+    check('windows: a link whose target steps back lands above the home', t.gate(exec('write', { file_path: join(home, 'xdots'), content: 'X=1' })) === 'delegated')
+    check('windows: so does a path that steps back', t.gate(exec('write', { file_path: `${home}/dl/../../.env`, content: 'X=1' })) === 'delegated')
+    check('windows: a path whose ".." cancels the linked directory is the home\'s .env', t.gate(exec('write', { file_path: `${home}\\dl\\..\\.env`, content: 'X=1' }))?.kind === 'deny')
+    symlinkSync('dl\\..\\.env', join(home, 'xwin'), 'file')
+    check('windows: and so is a link whose target does that', t.gate(exec('write', { file_path: join(home, 'xwin'), content: 'X=1' }))?.kind === 'deny')
+    // A stream of .env is .env: ::$DATA writes its contents, a named stream creates it.
+    check('windows: .env::$DATA is .env', t.gate(exec('write', { file_path: join(home, '.env::$DATA'), content: 'X=1' }))?.kind === 'deny')
+    check('windows: and so is a named stream of it', t.gate(exec('edit', { file_path: join(home, '.ENV:s'), old_string: 'a', new_string: 'b' }))?.kind === 'deny')
+    // A drive-relative path is relative to the session's directory on that drive: C:notes.txt is the link above.
+    check('windows: a drive-relative path through a link', t.gate(exec('write', { file_path: `${home.slice(0, 2)}notes.txt`, content: 'X=1' }))?.kind === 'deny')
+  }
   const shouting = join(dirname(home), basename(home).toUpperCase())
   if (existsSync(shouting)) {
     check('the home named in other letters', t.gate(exec('write', { file_path: join(shouting, '.env'), content: 'X=1' }))?.kind === 'deny')
@@ -451,6 +466,50 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   const inTenant = (args) => ({ name: 'write', arguments: args, agent: { session: { header: { id: 'slack-abc', cwd: join(home, 'tenants', 'acme') } } } })
   check('a relative path from a tenant\'s directory', t.gate(inTenant({ file_path: '../../.env', content: 'X=1' }))?.kind === 'deny')
   check('while the tenant\'s own notes are not refused', t.gate(inTenant({ file_path: 'notes.md', content: 'hi' })) === 'delegated')
+  rmSync(home, { recursive: true, force: true })
+  t.done()
+}
+
+// 17c. Windows: an existing .env also answers to its 8.3 short name (ENV~1 on a volume that makes them),
+// and a write by that name writes .env.
+if (process.platform === 'win32') {
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  writeFileSync(join(home, '.env'), 'A=1\n')
+  const t = boot({ home, state: { sessions: { 'C_ALLOWED:t1': 'slack-abc' } } })
+  await sleep(80)
+  const exec = (name, args) => ({ name, arguments: args, agent: { session: { header: { id: 'slack-abc' } } } })
+  const short = join(home, 'ENV~1')
+  // The short name is there only when the volume makes 8.3 names, and it is .env only when it is the same file.
+  if (existsSync(short) && statSync(short).ino === statSync(join(home, '.env')).ino) {
+    check('windows: .env by its 8.3 short name', t.gate(exec('write', { file_path: short, content: 'X=1' }))?.kind === 'deny')
+  } else console.log('  TODO  windows: this volume makes no 8.3 names; the short-name check did not run')
+  check('windows: a file named like a short name that is not one is not refused', t.gate(exec('write', { file_path: join(home, 'NOTES~1.md'), content: 'hi' })) === 'delegated')
+  // The gate against the volume itself: write each path for real, and the gate must deny exactly the
+  // ones whose bytes reach the home's .env — so a wrong model of Windows fails here in either direction.
+  mkdirSync(join(home, 'a', 'b'), { recursive: true })
+  symlinkSync(join(home, 'a', 'b'), join(home, 'dl'), 'dir')
+  symlinkSync('..\\..\\.env', join(home, 'a', 'b', 'up2'), 'file')
+  symlinkSync('dl\\..\\.env', join(home, 'cancel'), 'file')
+  symlinkSync('dl\\..\\..\\.env', join(home, 'above'), 'file')
+  const paths = [
+    `${home}\\dl\\..\\.env`, `${home}/dl/../../.env`, join(home, 'dl', 'up2'), join(home, 'cancel'), join(home, 'above'),
+    join(home, '.env::$DATA'), join(home, '.env:s'), join(home, '.env.'), join(home, '.env '), `${home.slice(0, 2)}cancel`,
+    join(home, 'a', '..', '.ENV'), join(home, 'notes.md'),
+  ]
+  const wrong = []
+  for (const p of paths) {
+    const denied = t.gate(exec('write', { file_path: p, content: 'X=1' }))?.kind === 'deny'
+    writeFileSync(join(home, '.env'), 'A=1\n')
+    const cwd = process.cwd()
+    process.chdir(home)   // a drive-relative path is relative to the directory on its drive
+    try { writeFileSync(p, 'MARK') } catch { /* not writable: lands nowhere */ } finally { process.chdir(cwd) }
+    const landed = readFileSync(join(home, '.env'), 'utf8') === 'MARK'
+    // Refused by name though they miss: .env. is one of the .env.* variants, and a named stream of .env
+    // creates .env when there is none. Anything else refused and missing would be a wrong model.
+    const byName = p.endsWith('.env.') || p.endsWith('.env:s')
+    if (denied !== landed && !(denied && byName)) wrong.push(`${p.slice(home.length) || p}: gate ${denied ? 'denies' : 'allows'}, the write ${landed ? 'reaches' : 'misses'} .env`)
+  }
+  check('windows: the gate denies the writes that reach .env, and only those besides the names it refuses', wrong.length === 0, wrong.join('; '))
   rmSync(home, { recursive: true, force: true })
   t.done()
 }

@@ -2,6 +2,8 @@
  * The command line and the frame-to-screen mapping of the terminal (`dsh`), apart from the entry point so
  * the tests can import them without starting a terminal.
  */
+import { existsSync } from 'node:fs'
+import { win32 } from 'node:path'
 import type { App } from './app.js'
 import { NAME, type ClientFrame, type ConversationItem, type ModelChoice, type ModelItem, type ServerFrame } from './protocol.js'
 import { interviewPrompt } from './interview.js'
@@ -48,13 +50,22 @@ export function route(argv: string[]): 'tui' | 'gateway' | 'update' | 'harness' 
   return argv[0] === 'gateway' && GATEWAY_COMMANDS.has(argv[1]) ? 'gateway' : 'harness'
 }
 
+/** The harness CLI inside the app — the same default the gateway's launcher uses. */
+export const HARNESS_CLI = '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
+
 /**
- * The harness CLI inside the app — the same default the gateway's launcher uses. On Windows there is no
- * app: `npm i -g @deepseek-ai/dsh` puts a .cmd shim on PATH that runs this script with node.
+ * Where the harness CLI is. On Windows there is no app: `npm i -g @deepseek-ai/dsh` puts a dsh.cmd shim
+ * in npm's global directory, on PATH, that runs node_modules\@deepseek-ai\dsh\lib\bin.js beside it — so
+ * that script is found the same way, wherever the global directory is (a runner's is not %APPDATA%\npm).
+ * Only a shim with the harness beside it counts: this project's own dsh.cmd has none.
  */
-export const HARNESS_CLI = process.platform === 'win32'
-  ? `${process.env.APPDATA ?? ''}\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js`
-  : '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
+export function harnessCli(env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): string {
+  if (platform !== 'win32') return HARNESS_CLI
+  const entry = (dir: string) => win32.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  // A relative PATH entry is wherever dsh was started, which is not npm's directory.
+  const found = (env.PATH ?? env.Path ?? '').split(';').find((dir) => win32.isAbsolute(dir) && existsSync(win32.join(dir, 'dsh.cmd')) && existsSync(entry(dir)))
+  return entry(found ?? win32.join(env.APPDATA ?? '', 'npm'))
+}
 
 /** What is printed on the way out, so the conversation can be picked up again. */
 export const resumeHint = (conversation: string): string => t().resumeHint(conversation)

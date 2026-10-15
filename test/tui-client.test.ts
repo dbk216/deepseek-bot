@@ -15,7 +15,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { spawnSync } from 'node:child_process'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const DSH_HOME = mkdtempSync(join(tmpdir(), 'deepbot-dshhome-'))
@@ -29,7 +29,7 @@ const listenPath = (stateDir) => process.platform === 'win32'
 
 const { App } = await import('../dist/tui/app.js')
 const { Connection, discover, lookup } = await import('../dist/tui/client.js')
-const { bind, createCommands, parseArgs, resumeHint, route, usage } = await import('../dist/tui/cli.js')
+const { bind, createCommands, harnessCli, parseArgs, resumeHint, route, usage } = await import('../dist/tui/cli.js')
 const USAGE = usage()
 const { createLocalTransport } = await import('../dist/transports/local.js')
 const { t: words } = await import('../dist/tui/strings.js')
@@ -176,6 +176,32 @@ async function until(predicate, ms = 3000) {
   check('forward: and its exit status is dsh\'s', forwarded.status === 3, `status ${forwarded.status} ${forwarded.stderr.trim()}`)
   const missing = spawnSync(process.execPath, [main, 'gateway'], { encoding: 'utf8', env: { ...process.env, DSH_BIN: join(bin, 'nothing-here') } })
   check('forward: a harness CLI that is not there is said, with how to point at it', missing.status === 127 && missing.stderr.includes('DSH_BIN'), `status ${missing.status} ${missing.stderr.trim()}`)
+  check('forward: elsewhere the default is the app\'s CLI', harnessCli({ PATH: bin }, 'darwin') === '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh')
+  // With no DSH_BIN, Windows runs npm's harness found beside a dsh.cmd on PATH, wherever npm's global
+  // directory is — and not this project's own dsh.cmd, earlier on PATH, which has no harness beside it.
+  if (process.platform === 'win32') {
+    const npmDir = join(bin, 'npm-global'), own = join(bin, 'own')
+    const entry = join(npmDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+    mkdirSync(dirname(entry), { recursive: true })
+    mkdirSync(own)
+    writeFileSync(entry, readFileSync(fake))
+    writeFileSync(join(npmDir, 'dsh.cmd'), '@rem npm shim\r\n')
+    writeFileSync(join(own, 'dsh.cmd'), '@rem this project\'s shim\r\n')
+    rmSync(seen, { force: true })
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(path|dsh_bin)$/i.test(k)))
+    env.PATH = `${own};${npmDir};${process.env.PATH ?? ''}`
+    const found = spawnSync(process.execPath, [main, '--version'], { encoding: 'utf8', env })
+    let ran = ''
+    try { ran = readFileSync(seen, 'utf8') } catch { /* not run */ }
+    check('forward: with no DSH_BIN, Windows runs the harness beside a dsh.cmd on PATH', ran === '--version\n' && found.status === 3, `${JSON.stringify(ran)} status ${found.status} ${found.stderr.trim()}`)
+    // The same layout reached by a relative PATH entry is only where dsh was started from: not taken.
+    const cwd = process.cwd()
+    process.chdir(bin)
+    try {
+      const relative = harnessCli({ PATH: 'npm-global', APPDATA: 'C:\\appdata' }, 'win32')
+      check('forward: a relative PATH entry is not searched', relative === 'C:\\appdata\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js', relative)
+    } finally { process.chdir(cwd) }
+  }
   rmSync(bin, { recursive: true, force: true })
 }
 

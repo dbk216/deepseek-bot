@@ -1689,6 +1689,35 @@ export function apply(ctx, config) {
     return current
   }
 
+  /**
+   * Where a write to `target` lands on Windows, which walks differently (measured on NTFS): ".." is
+   * cancelled as text before any link is followed — in the path given, and in a link's target joined to
+   * the link's real directory — so dl\..\.env is the home's .env whatever dl leads to. A drive-relative
+   * C:notes.txt is the session's directory on that drive, as resolve() has it. A name's stream is the
+   * name (.env::$DATA writes .env; .env:s creates it), and an existing file answers to its 8.3 short
+   * name (ENV~1): trueName turns that back into .env.
+   */
+  function landsOnWindows(target: string, base: string): string | null {
+    let path = resolve(base, target)
+    let links = 0
+    for (;;) {
+      const root = parse(path).root
+      const names = path.slice(root.length).split(/[\\/]/).map((name) => name.split(':')[0]).filter((name) => name !== '')
+      let current = root
+      let i = 0
+      for (; i < names.length; i++) {
+        const next = join(current, names[i])
+        let link: string | null = null
+        try { if (lstatSync(next).isSymbolicLink()) link = readlinkSync(next) } catch { /* not there yet */ }
+        if (link === null) { current = next; continue }
+        if (++links > 40) return null
+        path = resolve(current, link, ...names.slice(i + 1))
+        break
+      }
+      if (i === names.length) return trueName(current)
+    }
+  }
+
   /** A path's real name, in the letters the volume stores it in; the path as given when it does not exist. */
   function trueName(path: string): string {
     try { return realpathSync.native(path) } catch { return path }
@@ -1713,7 +1742,7 @@ export function apply(ctx, config) {
     const identity = (dir: string) => { try { const s = statSync(dir); return `${s.dev}:${s.ino}` } catch { return null } }
     const homeId = identity(home)
     const isHome = (dir: string) => homeId !== null ? identity(dir) === homeId : trueName(dir) === trueName(home)
-    const landed = landsOn(target, trueName(base))
+    const landed = process.platform === 'win32' ? landsOnWindows(target, trueName(base)) : landsOn(target, trueName(base))
     const onHome = (file: string) => envName(file) && isHome(dirname(file))
     if (!onHome(path) && landed !== null && !onHome(landed)) return null
     log(`write to the home's .env denied: ${name} ${path}`)
@@ -1728,8 +1757,9 @@ export function apply(ctx, config) {
     const args = exec?.arguments ?? {}
     const candidates: string[] = [args.file_path, args.path, args.dir]
       .filter((value: unknown): value is string => typeof value === 'string' && value !== '')
-    // glob and grep default to the workspace; an absolute pattern is the way out of it.
-    if (typeof args.pattern === 'string' && isAbsolute(args.pattern)) candidates.push(args.pattern)
+    // glob and grep default to the workspace; an absolute glob pattern is the way out of it. grep's pattern
+    // is a regular expression, which Windows' isAbsolute took for a path (\bword\b): grep leaves by path.
+    if (name === 'glob' && typeof args.pattern === 'string' && isAbsolute(args.pattern)) candidates.push(args.pattern)
     if (candidates.length === 0) return null
     // With isolation on, the readable roots are the *speaking conversation's* directory:
     // one tenant's turn must not read another's files, and the shared home would allow it.

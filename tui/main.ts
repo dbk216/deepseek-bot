@@ -15,7 +15,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { constants } from 'node:os'
 import { App } from './app.js'
 import { Connection, discover, lookup } from './client.js'
-import { bind, commandInfo, createCommands, HARNESS_CLI, parseArgs, resumeHint, route, usage, type Commands } from './cli.js'
+import { bind, commandInfo, createCommands, harnessCli, parseArgs, resumeHint, route, usage, type Commands } from './cli.js'
 import { t } from './strings.js'
 import { fileFinder, gitBranch } from './files.js'
 import { appendHistory, historyFile, loadHistory } from './history.js'
@@ -25,7 +25,7 @@ import { update, processIO as updateIO } from '../service/update.js'
 
 /** `dsh <harness arguments>`: run the harness CLI with them, and leave with its status. */
 function forward(argv: string[]): never {
-  const bin = process.env.DSH_BIN || HARNESS_CLI
+  const bin = process.env.DSH_BIN || harnessCli()
   if (!existsSync(bin)) { process.stderr.write(t().noHarness(bin)); process.exit(127) }
   // A DSH_BIN that is this command would call itself forever.
   if (realpathSync(bin) === realpathSync(process.argv[1])) { process.stderr.write(t().selfHarness); process.exit(127) }
