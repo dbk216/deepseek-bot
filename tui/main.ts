@@ -80,9 +80,9 @@ function main(): void {
     env: process.env,
     platform: process.platform,
     backend: {
-      send(text) { if (!connection?.send({ type: 'message', text })) app.notice(t().notSent, 'error') },
+      send(text, id) { if (!connection?.send({ type: 'message', text, ...(id !== undefined ? { id } : {}) })) app.notice(t().notSent, 'error') },
       cancel() { connection?.send({ type: 'cancel' }) },
-      withdraw() { connection?.send({ type: 'withdraw' }) },
+      withdraw(ids) { return connection?.send({ type: 'withdraw', ids }) === true },
       action(id) { if (!connection?.send({ type: 'action', id })) app.notice(t().notSent, 'error') },
       view(kind, id, owner) { connection?.send({ type: 'view', kind, ...(id !== undefined ? { id } : {}), ...(owner !== undefined ? { owner } : {}) }) },
       agentSend(id, text) { if (!connection?.send({ type: 'agent.send', id, text })) app.notice(t().notSent, 'error') },

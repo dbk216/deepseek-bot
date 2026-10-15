@@ -48,6 +48,8 @@ export interface InboundMessage {
   files: AttachmentRef[]
   /** The platform's own payload, for a transport that needs to look deeper. */
   raw: unknown
+  /** The id the sender gave the message (the terminal does), so it can take it back while it waits. */
+  clientId?: string
 }
 
 /**

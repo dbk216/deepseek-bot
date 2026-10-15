@@ -15,6 +15,11 @@ export interface EditorLayout {
 }
 
 export class Editor {
+  /**
+   * Text that is one thing to the cursor and to deleting (a paste chip): ←→ go over it whole, backspace,
+   * delete and ctrl+w take it whole, and typing never lands inside it.
+   */
+  atoms: () => readonly string[] = () => []
   private chars: string[] = []
   private pos = 0
   private history: string[] = []
@@ -40,6 +45,7 @@ export class Editor {
   }
 
   insert(text: string): void {
+    this.outOfAtom()
     const add = graphemes(text.replace(/\r\n?/g, '\n'))
     // Not splice(...add): spreading a large paste into a call overflows the stack.
     this.chars = this.chars.slice(0, this.pos).concat(add, this.chars.slice(this.pos))
@@ -78,17 +84,56 @@ export class Editor {
   // Deleting, like typing, makes a recalled entry text being written again — when it removes something.
   backspace(): void {
     if (this.pos === 0) return
+    if (this.takeAtom((start, end) => start < this.pos && this.pos <= end)) return
     this.chars.splice(this.pos - 1, 1)
     this.pos--
     this.browsing = -1
   }
 
   del(): void {
+    if (this.takeAtom((start, end) => start <= this.pos && this.pos < end)) return
     if (this.pos < this.chars.length) { this.chars.splice(this.pos, 1); this.browsing = -1 }
   }
 
-  left(): void { this.pos = Math.max(0, this.pos - 1) }
-  right(): void { this.pos = Math.min(this.chars.length, this.pos + 1) }
+  left(): void {
+    const atom = this.atomWhere((start, end) => start < this.pos && this.pos <= end)
+    this.pos = atom !== null ? atom.start : Math.max(0, this.pos - 1)
+  }
+
+  right(): void {
+    const atom = this.atomWhere((start, end) => start <= this.pos && this.pos < end)
+    this.pos = atom !== null ? atom.end : Math.min(this.chars.length, this.pos + 1)
+  }
+
+  /** The first atom in the text, by grapheme positions, whose span passes `test`. */
+  private atomWhere(test: (start: number, end: number) => boolean): { start: number; end: number } | null {
+    for (const atom of this.atoms()) {
+      const g = graphemes(atom)
+      if (g.length === 0) continue
+      for (let i = 0; i + g.length <= this.chars.length; i++) {
+        let k = 0
+        while (k < g.length && this.chars[i + k] === g[k]) k++
+        if (k === g.length && test(i, i + g.length)) return { start: i, end: i + g.length }
+      }
+    }
+    return null
+  }
+
+  /** Delete the atom whose span passes `test`, if there is one. */
+  private takeAtom(test: (start: number, end: number) => boolean): boolean {
+    const atom = this.atomWhere(test)
+    if (atom === null) return false
+    this.chars.splice(atom.start, atom.end - atom.start)
+    this.pos = atom.start
+    this.browsing = -1
+    return true
+  }
+
+  /** A cursor inside an atom (a click, a row up) goes to its end before anything is typed. */
+  private outOfAtom(): void {
+    const atom = this.atomWhere((start, end) => start < this.pos && this.pos < end)
+    if (atom !== null) this.pos = atom.end
+  }
 
   /** Start of the current line (Ctrl+A / Home). */
   home(): void {
@@ -118,6 +163,7 @@ export class Editor {
 
   /** Delete the word before the cursor (Ctrl+W / Alt+Backspace). */
   killWord(): void {
+    if (this.takeAtom((start, end) => start < this.pos && this.pos <= end)) return
     const end = this.pos
     while (this.pos > 0 && /\s/.test(this.chars[this.pos - 1])) this.pos--
     while (this.pos > 0 && !/\s/.test(this.chars[this.pos - 1])) this.pos--

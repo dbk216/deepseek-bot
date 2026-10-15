@@ -2473,12 +2473,17 @@ export function apply(ctx, config) {
     // As last read: the /model list asks about every listed model, and a model's efforts do not move.
     effortsFor: async (provider: string, model: string) => knownEfforts.get(`${provider}/${model}`) ?? effortsOf(provider, model),
     stepEffort: (key: string, step: 1 | -1) => stepEffort(key, step),
-    // The terminal's ↑ on an empty box: what waits behind the running turn is taken back; the turn goes on.
-    withdraw: (key: string) => {
-      const withdrawn = withdrawWaiting(key)
-      log(`withdraw requested in ${key} — withdrew ${withdrawn} waiting message(s)`)
-      settleInflight(key)
-      return withdrawn
+    // The terminal's ↑ on an empty box: the messages it names that still wait are taken back; the turn goes
+    // on. Only those: one the terminal shows as running may still wait for a slot, and another terminal's is
+    // its own. The terminals are told which before the typing stops, so none takes those ends for a turn's.
+    withdraw: (key: string, ids: string[], announce: (ids: string[]) => void) => {
+      const tickets = waiting.get(key)
+      const taken = [...(tickets ?? [])].filter((ticket) => ticket.clientId !== undefined && ids.includes(ticket.clientId))
+      announce(taken.map((ticket) => ticket.clientId!))
+      for (const ticket of taken) { ticket.withdrawn = true; tickets?.delete(ticket); ticket.stopWorking() }
+      if (tickets?.size === 0) waiting.delete(key)
+      log(`withdraw requested in ${key} — withdrew ${taken.length} of ${ids.length} named`)
+      return taken.length
     },
     // The tenant a conversation is recorded in (null: the home), or undefined when none is recorded.
     boundTenant: (key: string) => (cfg.tenantIsolation === true ? state.tenantOf?.[key] : undefined),
@@ -2586,7 +2591,7 @@ export function apply(ctx, config) {
    * ticket just before its turn begins. Without this the bot said it had stopped and then started
    * on the next message in the queue.
    */
-  type Ticket = { withdrawn: boolean; stopWorking: () => void }
+  type Ticket = { withdrawn: boolean; stopWorking: () => void; clientId?: string }
   const waiting = new Map<string, Set<Ticket>>()
   function withdrawWaiting(key: string): number {
     const tickets = waiting.get(key)
@@ -2708,7 +2713,7 @@ export function apply(ctx, config) {
     recordInflight(key, { channel, threadTs })
     // Before the queue, so a message waiting behind other turns also shows it was taken.
     const stopWorking = startWorking(key, { channel, threadTs })
-    const ticket: Ticket = { withdrawn: false, stopWorking }
+    const ticket: Ticket = { withdrawn: false, stopWorking, ...(message.clientId !== undefined ? { clientId: message.clientId } : {}) }
     if (!waiting.has(key)) waiting.set(key, new Set())
     waiting.get(key)?.add(ticket)
 

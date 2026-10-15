@@ -40,9 +40,12 @@ the caveat about version numbers is at the bottom.
   queued behind a turn could only be taken back by stopping the turn. Now the empty box shows a dim
   placeholder; the rows it cannot show are counted in its border (`↑ 2 more`, `↓ 1 more`); a paste of
   more than ten lines is a chip, `[paste #1 +12 lines]`, sent as the text it stands for (in an answer to
-  a question too); `\` before `↵` is a new line; and `↑` on an empty box brings the waiting messages
-  back to edit, the hint saying so while any wait. The gateway forgets them (a `withdraw` frame on the
-  local socket), and the running turn goes on.
+  a question too), one thing to the cursor and to deleting; `\` before `↵` is a new line; and `↑` on an
+  empty box takes back the messages waiting there, the hint saying so while any wait. The terminal gives
+  each message an id; a `withdraw` frame names the ones it shows as queued, the gateway takes back those it
+  has not started and tells every terminal on the conversation which (`withdrawn`) before their typing
+  stops, and only then do they come back to the box. The running turn goes on, and a message still
+  waiting for a slot that the terminal shows as running, or another terminal's, stays.
 - **The terminal opens with a welcome box, and its footer says more.** In place of six rows of block
   letters and a header row: a box with the mark (the README's whale), `deepseek-bot` and its version, the
   model, the workspace and session, and where to start; a narrow screen gets the words alone, and a

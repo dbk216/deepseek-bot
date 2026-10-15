@@ -103,6 +103,9 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       if (frame.on) app.turnStarted()
       else app.turnEnded()
       return
+    case 'withdrawn':
+      app.withdrawn(frame.ids)
+      return
     case 'post':
       app.message(frame.ts, frame.text, frame.replace, frame.answer)
       if (frame.buttons.length > 0) app.offer(frame.ts, frame.buttons)

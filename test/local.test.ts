@@ -488,30 +488,49 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   await t.done()
 }
 {
-  // ↑ in the terminal takes back what waits behind the running turn: the gateway withdraws it and the turn goes on.
+  // ↑ in the terminal takes back what waits behind the running turn: by the ids the terminal gave its own
+  // messages, so a message the terminal shows as running (still waiting for a slot) and another terminal's
+  // waiting message stay. Every terminal on the conversation is told which were withdrawn before their
+  // typing stops, so none takes those ends for a next turn.
   let cancelled = 0
-  let followups = 0
+  const ran = []
   let release = () => {}
   const agents = {
-    create: async (o) => ({ agent: { session: { header: { id: o.sessionId }, seq: 0, eventAt: () => undefined }, followup: () => { followups++ }, whenIdle: () => (followups === 0 ? Promise.resolve() : new Promise((r) => { release = () => r(undefined) })), cancel: () => { cancelled++ } }, dispose: async () => {} }),
-    resume: async (o) => ({ agent: { session: { header: { id: o.resumeSessionId }, seq: 0, eventAt: () => undefined }, followup: () => { followups++ }, whenIdle: async () => {}, cancel: () => { cancelled++ } }, dispose: async () => {} }),
+    create: async (o) => ({ agent: { session: { header: { id: o.sessionId }, seq: 0, eventAt: () => undefined }, followup: (m) => { ran.push(JSON.stringify(m?.content ?? m)) }, whenIdle: () => (ran.length === 0 ? Promise.resolve() : new Promise((r) => { release = () => r(undefined) })), cancel: () => { cancelled++ } }, dispose: async () => {} }),
+    resume: async (o) => ({ agent: { session: { header: { id: o.resumeSessionId }, seq: 0, eventAt: () => undefined }, followup: (m) => { ran.push(JSON.stringify(m?.content ?? m)) }, whenIdle: async () => {}, cancel: () => { cancelled++ } }, dispose: async () => {} }),
   }
   const t = boot({ services: { agents } })
   await sleep(100)
-  const c = client(listenPath(t.stateDir))
-  await c.opened
-  c.send({ type: 'hello', version: PROTOCOL_VERSION })
-  await c.waitFor((f) => f.type === 'ready')
-  c.send({ type: 'message', text: '첫 일' })
-  for (let i = 0; i < 100 && followups === 0; i++) await sleep(10)
-  c.send({ type: 'message', text: '기다리는 일' })
+  const a = client(listenPath(t.stateDir))
+  await a.opened
+  a.send({ type: 'hello', version: PROTOCOL_VERSION })
+  const ready = await a.waitFor((f) => f.type === 'ready')
+  const b = client(listenPath(t.stateDir))
+  await b.opened
+  b.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: ready.conversation })
+  await b.waitFor((f) => f.type === 'ready')
+  a.send({ type: 'message', text: '첫 일', id: 'a-1' })
+  for (let i = 0; i < 100 && ran.length === 0; i++) await sleep(10)
+  a.send({ type: 'message', text: '기다리는 일', id: 'a-2' })
+  b.send({ type: 'message', text: '다른 터미널의 일', id: 'b-1' })
   await sleep(100)
-  c.send({ type: 'withdraw' })
-  await sleep(150)
+  const before = a.frames.length
+  a.send({ type: 'withdraw', ids: ['a-1', 'a-2', 'b-9'] })
+  await a.waitFor((f) => f.type === 'withdrawn')
+  await b.waitFor((f) => f.type === 'withdrawn')
+  await sleep(50)
+  const after = a.frames.slice(before).map((f) => f.type === 'typing' ? `typing:${f.on}` : f.type)
+  check('withdraw: only the named messages still waiting, and every terminal is told which', JSON.stringify(a.frames.find((f) => f.type === 'withdrawn')?.ids) === '["a-2"]' && JSON.stringify(b.frames.find((f) => f.type === 'withdrawn')?.ids) === '["a-2"]', JSON.stringify(a.frames.filter((f) => f.type === 'withdrawn')))
+  check('withdraw: told before the withdrawn message\'s typing stops', after.indexOf('withdrawn') !== -1 && after.indexOf('withdrawn') < after.indexOf('typing:false'), JSON.stringify(after))
   release()
-  await sleep(300)
-  check('withdraw: what waits is taken back, the running turn is not stopped, and the taken message never runs', t.logs.some((l) => /withdrew 1 waiting/.test(l)) && cancelled === 0 && followups === 1, JSON.stringify({ cancelled, followups, log: t.logs.filter((l) => /withdr/.test(l)) }))
-  await c.close()
+  for (let i = 0; i < 100 && ran.length < 2; i++) await sleep(10)
+  await sleep(200)
+  check('withdraw: what waits is taken back, the running turn is not stopped, and the taken message never runs', t.logs.some((l) => /withdrew 1 of 3 named/.test(l)) && cancelled === 0 && ran.length === 2 && !ran.some((m) => m.includes('기다리는 일')) && ran.some((m) => m.includes('다른 터미널의 일')), JSON.stringify({ cancelled, ran: ran.map((m) => m.slice(-20)), log: t.logs.filter((l) => /withdr/.test(l)) }))
+  a.send({ type: 'withdraw', ids: 'a-2' })
+  const bad = await a.waitFor((f) => f.type === 'error')
+  check('withdraw: ids that are not a list are refused', bad?.code === 'bad-frame', JSON.stringify(bad))
+  await a.close()
+  await b.close()
   await t.done()
 }
 {

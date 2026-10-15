@@ -533,11 +533,14 @@ off from the next. While a turn runs the status line is one indicator, as Claude
 happening, for how long, and how to stop it — `✻ Thinking… (12s · esc to interrupt)`, `Running bash…`,
 `Working…` — under the same light; `esc to interrupt` is left out while esc does something else (answers
 an approval no, closes a list). A message sent while a turn runs waits above the input, tagged queued,
-and joins the transcript when its turn starts; `↑` on an empty box takes those back into it to edit, and
-the gateway forgets them, the turn going on. The empty box says what it is for (`Message deepseek-bot ·
-/ commands · @ files`); past its six rows it counts the ones it cannot show in its border (`↑ 2 more`,
-`↓ 1 more`), as pi does. A paste of more than ten lines is a chip, `[paste #1 +40 lines]`, until it is
-sent as the text it stands for. The hint line under the input box is `? for shortcuts`; `?` on an empty
+and joins the transcript when its turn starts. `↑` on an empty box asks the gateway to take those back,
+by the ids the terminal gave them: the ones it had not started come back into the box to edit once it says
+so, and the turn goes on. A message the terminal shows as running stays (it may still be waiting for a
+slot), and so does what another terminal on the conversation queued; every terminal is told which were
+taken back. The empty box says what it is for (`Message deepseek-bot · / commands · @ files`); past its
+six rows it counts the ones it cannot show in its border (`↑ 2 more`, `↓ 1 more`), as pi does. A paste of
+more than ten lines (CR or LF) is a chip, `[paste #1 +40 lines]`, until it is sent as the text it stands
+for; the cursor goes over a chip whole, and backspace, delete and ctrl+w take it whole. The hint line under the input box is `? for shortcuts`; `?` on an empty
 box shows the keys below in its place, in as many columns as fit. An approval shows the request's first
 line and its options numbered: `↑↓`, a digit or a click and `↵` answer it, `esc` answers no (with text
 selected, esc clears the selection first). A question or a list opened over an approval has the keys

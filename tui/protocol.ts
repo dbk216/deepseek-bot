@@ -25,11 +25,11 @@ export const MAX_FRAME_BYTES = 1024 * 1024
 
 export type ClientFrame =
   | { type: 'hello'; version: number; conversation?: string; tenant?: string }
-  | { type: 'message'; text: string }
+  | { type: 'message'; text: string; id?: string }
   | { type: 'action'; id: string }
   | { type: 'cancel' }
   /** Take back the messages waiting behind the running turn, which goes on. */
-  | { type: 'withdraw' }
+  | { type: 'withdraw'; ids: string[] }
   | { type: 'usage' }
   | { type: 'sessions' }
   | { type: 'history' }
@@ -54,6 +54,9 @@ export type ServerFrame =
   | ({ type: 'stream' } & StreamFrame)
   | { type: 'remove'; ts: string }
   | { type: 'typing'; on: boolean }
+  /** Which of the conversation's waiting messages were withdrawn, by the ids their terminals gave them. Sent
+   * before their typing stops, to every terminal on the conversation. */
+  | { type: 'withdrawn'; ids: string[] }
   | { type: 'sessions'; items: ConversationItem[] }
   | { type: 'history'; items: Array<{ role: 'user' | 'assistant'; text: string }> }
   | { type: 'panel'; agents: AgentItem[]; jobs: JobItem[]; usage: Usage }

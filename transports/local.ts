@@ -61,9 +61,12 @@ interface LocalHost {
   listModels?: () => Promise<ModelItem[]>
   /** The efforts a model takes ([] for none, or when they cannot be read), for the /model picker. */
   effortsFor?: (provider: string, model: string) => Promise<string[]>
+  /**
+   * Take back the conversation's waiting messages that carry these ids (others, and one already started,
+   * stay). `announce` is told which, before their typing stops. How many were taken back.
+   */
+  withdraw?: (key: string, ids: string[], announce: (ids: string[]) => void) => number
   /** Step a conversation's effort through the ones its model takes; what was wrong, or null. */
-  /** Take back the messages waiting behind a conversation's running turn; how many there were. */
-  withdraw?: (key: string) => number
   stepEffort?: (key: string, step: 1 | -1) => Promise<null | { code: 'no-efforts'; model: string }>
   /** Set (or with null, clear) a conversation's own model; what was wrong with it, or null. */
   setModel?: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => Promise<null | { code: 'unknown-model' } | { code: 'no-key'; ref: string } | { code: 'effort'; efforts: string[] }>
@@ -339,6 +342,8 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         if (typeof text !== 'string' || text === '') {
           return refuse(client, words === null ? 'bad-frame' : `${frame.type}-unsupported`, words === null ? say.needsText : `no ${frame.type} word is configured`)
         }
+        // The terminal's own id for the message, so ↑ can take it back while it waits.
+        const id = frame.type === 'message' && typeof frame.id === 'string' && /^[\w-]{1,64}$/.test(frame.id) ? frame.id : undefined
         handlers?.onMessage({
           eventId: `local-${randomUUID()}`,
           target: { channel: LOCAL_CHANNEL, threadTs: client.conversation },
@@ -348,6 +353,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
           addressed: true,
           files: [],
           raw: frame,
+          ...(id !== undefined ? { clientId: id } : {}),
         })
         return
       }
@@ -405,7 +411,13 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
       }
       case 'withdraw': {
         if (client.conversation === null) return refuse(client, 'no-hello', 'say hello first')
-        host.withdraw?.(`${LOCAL_CHANNEL}:${client.conversation}`)
+        const ids = frame.ids
+        if (!Array.isArray(ids) || ids.length > 200 || !ids.every((id) => typeof id === 'string')) return refuse(client, 'bad-frame', say.needsText)
+        const conversation = client.conversation
+        // Every terminal on the conversation is told, so each counts those ends apart and takes back its own.
+        const announce = (withdrawn: string[]) => toConversation(conversation, { type: 'withdrawn', ids: withdrawn })
+        if (host.withdraw === undefined) announce([])
+        else host.withdraw(`${LOCAL_CHANNEL}:${conversation}`, ids, announce)
         return
       }
       case 'sessions': {

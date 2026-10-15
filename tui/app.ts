@@ -33,10 +33,12 @@ import { Transcript, type Block } from './render/transcript.js'
 import { fit, graphemes, stringWidth } from './render/width.js'
 
 export interface Backend {
-  send(text: string): void
+  /** A message, with the id this terminal gave it (so ↑ can take it back while it waits). */
+  send(text: string, id?: string): void
   cancel(): void
-  /** Take back the messages waiting behind the running turn, which goes on. */
-  withdraw?(): void
+  /** Ask the gateway to take back the messages waiting here, by their ids; false when it could not be asked.
+   * The gateway answers with `withdrawn`, the turn going on. */
+  withdraw?(ids: string[]): boolean
   /** A choice the bot offered (an approval button) was picked. */
   action(id: string): void
   /** Look at a subagent or a job (or back at the conversation); the gateway keeps it fresh. */
@@ -129,6 +131,10 @@ export class App {
   readonly mode: ColorMode
   readonly transcript = new Transcript()
   readonly editor = new Editor()
+  /** How many paste chips are kept: those in the box or in what was sent. */
+  get pasteChips(): number {
+    return this.pastes.size
+  }
   readonly terminal: Terminal
   readonly status: AppStatus = {
     connected: false, link: t().connecting, workspace: '', session: '', model: '', effort: null,
@@ -172,7 +178,7 @@ export class App {
   private readonly calls = new Map<string, ToolCallBlock>()
   /** The tool running now, for the status line. */
   private runningTool: string | null = null
-  /** Turns waiting when a stop withdrew them: their ends are not the start of a next turn. */
+  /** Turns a stop or a withdraw took back while they waited: their ends are not the start of a next turn. */
   private withdrawing = 0
   /** Whether this turn was marked stopped already. */
   private interrupted = false
@@ -182,7 +188,10 @@ export class App {
   /** The keys on show (? on an empty box), in the input box's place. */
   private shortcuts = false
   /** Messages sent while a turn runs: shown above the input until their turn starts. */
-  private pending: string[] = []
+  private pending: Array<{ text: string; id: string }> = []
+  /** For the ids of the messages this terminal sends: unique among the terminals on a conversation. */
+  private readonly idTag = Math.random().toString(36).slice(2, 10)
+  private sentCount = 0
   /** Words the core answers at once, without a turn: the stop words, and the others (the usage word). */
   private stopWords: string[] = []
   private instantWords: string[] = []
@@ -232,6 +241,8 @@ export class App {
     })
     this.banner = welcomeBlock(() => ({ version: this.o.version ?? '', model: this.status.model, workspace: this.shownWorkspace(), session: this.status.session ?? '' }), this.mode)
     this.transcript.push(this.banner)
+    // A paste chip is one thing to the cursor and to deleting.
+    this.editor.atoms = () => [...this.pastes.keys()]
   }
 
   start(): void {
@@ -380,17 +391,17 @@ export class App {
       this.status.running = false
       this.stopSpinner()
       // Nothing is waiting any more: whatever is still shown above the input was answered with it.
-      for (const text of this.pending.splice(0)) this.shown(text)
+      for (const waiting of this.pending.splice(0)) this.shown(waiting.text)
       this.withdrawing = 0
     } else if (this.withdrawing > 0) {
-      // A waiting turn a stop withdrew ended: the stopped turn is still the one running.
+      // A waiting turn a stop or a withdraw took back ended: the turn running is still the same one.
       this.withdrawing--
     } else {
       // The next turn starts now (this terminal's waiting message, or one another terminal sent): its time and
       // its stop mark are its own, apart from the one that ended.
       this.interrupted = false
       this.status.startedAt = this.clock.now()
-      if (this.pending.length > 0) this.shown(this.pending.shift()!)
+      if (this.pending.length > 0) this.shown(this.pending.shift()!.text)
     }
     this.transcript.touch()
     this.terminal.requestRender()
@@ -436,22 +447,42 @@ export class App {
 
   /** Send a message shown as `display` (a command's short form) rather than as its full text. */
   sendAs(display: string, text: string): void {
-    this.said(display)
-    this.o.backend.send(text)
+    const id = this.messageId()
+    this.said(display, id)
+    this.o.backend.send(text, id)
+  }
+
+  private messageId(): string {
+    return `${this.idTag}-${++this.sentCount}`
+  }
+
+  /**
+   * The gateway withdrew these waiting messages (sent to every terminal on the conversation, before their
+   * typing stops): each one's end is not a next turn's start, and those this terminal sent go back to the box.
+   */
+  withdrawn(ids: string[]): void {
+    this.withdrawing += ids.length
+    const mine = this.pending.filter((p) => ids.includes(p.id))
+    if (mine.length > 0) {
+      this.pending = this.pending.filter((p) => !ids.includes(p.id))
+      const back = mine.map((p) => p.text).join('\n')
+      this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
+    }
+    this.terminal.requestRender(true)
   }
 
   /**
    * What the person said, into the transcript — or, while a turn runs, above the input: the gateway
    * answers it after the running turn, and it joins the transcript when its turn starts.
    */
-  private said(text: string): void {
+  private said(text: string, id: string): void {
     if (this.status.running) {
       const atOnce = this.answeredAtOnce(text)
-      if (atOnce === null) { this.pending.push(text); this.terminal.requestRender(true); return }
+      if (atOnce === null) { this.pending.push({ text, id }); this.terminal.requestRender(true); return }
       // A stop withdraws what waits, in the gateway: it comes back to the box, as with esc.
       if (atOnce === 'stop') this.withdrawing = Math.max(0, this.busy - 1)
       if (atOnce === 'stop' && this.pending.length > 0) {
-        const back = this.pending.splice(0).join('\n')
+        const back = this.pending.splice(0).map((p) => p.text).join('\n')
         this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
       }
       this.shown(text)
@@ -711,14 +742,16 @@ export class App {
   private onEvent(event: InputEvent): void {
     if (event.type === 'paste') {
       this.clearSelection()
-      const text = event.text.length > MAX_PASTE_CHARS ? event.text.slice(0, MAX_PASTE_CHARS) : event.text
+      // A terminal may send a pasted line break as CR: one kind of break, before anything is counted or kept.
+      const text = (event.text.length > MAX_PASTE_CHARS ? event.text.slice(0, MAX_PASTE_CHARS) : event.text).replace(/\r\n?/g, '\n')
       if (text !== event.text) this.showToast(t().pasteCut(MAX_PASTE_CHARS.toLocaleString('en-US')))
       this.search = null
       this.shortcuts = false
       // Pasted into an open question, as typed into it: the person's own words.
       if (this.question !== null && !this.question.typing) { this.question.cursor = this.question.rows().length - 1; this.question.typing = true }
       // A long paste is a chip in the box, as pi shows it, and the text again when it is sent.
-      const lines = text.split('\n').length
+      // A final newline ends the last line; it is not another.
+      const lines = text.replace(/\n$/, '').split('\n').length
       if (lines > PASTE_CHIP_LINES) {
         const chip = t().pasteChip(++this.pasteCount, lines)
         this.pastes.set(chip, text)
@@ -816,12 +849,10 @@ export class App {
       case 'home': this.editor.home(); break
       case 'end': this.editor.end(); break
       case 'up':
-        // The messages waiting behind the turn come back to an empty box, taken back from the gateway too.
-        if (this.editor.text === '' && this.pending.length > 0 && this.view.kind === 'main') {
-          // The gateway withdraws every turn waiting here: their ends are not the start of a next one.
-          this.withdrawing = Math.max(0, this.busy - 1)
-          this.o.backend.withdraw?.()
-          this.editor.set(this.pending.splice(0).join('\n'))
+        // The messages waiting here come back to an empty box once the gateway has withdrawn them (withdrawn);
+        // the turn goes on. Not while a question, a list or a choice has the keys.
+        if (this.editor.text === '' && this.pending.length > 0 && this.view.kind === 'main' && this.question === null && this.picker === null && this.choice === null) {
+          if (this.o.backend.withdraw?.(this.pending.map((p) => p.id)) !== true) this.notice(t().notSent, 'error')
           break
         }
         this.editor.up(width)
@@ -928,6 +959,8 @@ export class App {
   private onQuestionKey(key: KeyEvent): boolean {
     const q = this.question!
     if (q.typing) {
+      // A backslash before Enter is a new line here too.
+      if (key.name === 'enter' && !key.alt && !key.shift && this.editor.before === '\\') { this.editor.backspace(); this.editor.insert('\n'); this.terminal.requestRender(true); return true }
       if (key.name === 'enter' && !key.alt && !key.shift) { q.submitCustom(this.unchipped(this.editor.submit())); this.answered(); return true }
       if (key.name === 'escape') { q.typing = false; this.terminal.requestRender(true); return true }
       return false
@@ -1027,8 +1060,11 @@ export class App {
     }
     if (this.view.kind === 'job') { this.showToast(t().shellNoInput); return }
     this.o.remember?.(text)
-    this.said(text)
-    this.o.backend.send(text)
+    const id = this.messageId()
+    this.said(text, id)
+    this.o.backend.send(text, id)
+    // Chips not in what was sent (or sent before, which ↑ brings back) are let go.
+    for (const chip of [...this.pastes.keys()]) if (!this.editor.past.some((entry) => entry.includes(chip))) this.pastes.delete(chip)
   }
 
   /** Stop the turn. The gateway withdraws the messages waiting behind it, so they come back to the input. */
@@ -1037,7 +1073,7 @@ export class App {
     this.withdrawing = Math.max(0, this.busy - 1)
     this.o.backend.cancel()
     if (this.pending.length === 0) return
-    const back = this.pending.splice(0).join('\n')
+    const back = this.pending.splice(0).map((p) => p.text).join('\n')
     this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
     this.terminal.requestRender(true)
   }
@@ -1185,7 +1221,7 @@ export class App {
     const completion = this.completionLines(cols)
     const completionLines = completion.lines
     // Messages waiting behind the running turn, above the divider: three at most, then a count.
-    const waiting = this.view.kind === 'main' ? this.pending : []
+    const waiting = this.view.kind === 'main' ? this.pending.map((p) => p.text) : []
     const pendingRows = Math.min(waiting.length, 3) + (waiting.length > 3 ? 1 : 0)
     // The shortcuts open only with nothing else in the box's place: what is left after a row of transcript, the
     // waiting messages, the divider, the status line, the panel and the hint.
@@ -1313,7 +1349,8 @@ export class App {
       const first = editorFirst
       // The rows the box cannot show, counted in its border, as pi does.
       const above = first, below = Math.max(0, editor.rows.length - first - editorRows)
-      if (above > 0) { const tag = ` ${t().moreAbove(above)} `; screen.put(Math.max(2, cols - 2 - stringWidth(tag)), editorTop, tag, s(theme.muted)) }
+      // Only where the count leaves the border's corners.
+      if (above > 0) { const tag = ` ${t().moreAbove(above)} `; if (cols >= stringWidth(tag) + 6) screen.put(cols - 2 - stringWidth(tag), editorTop, tag, s(theme.muted)) }
       for (let r = 0; r < editorRows; r++) {
         const y = editorTop + 1 + r
         screen.put(0, y, '│', s(theme.border))
@@ -1322,9 +1359,9 @@ export class App {
         screen.put(4, y, editor.rows[first + r] ?? '', '', 2 + inner)
       }
       screen.put(0, editorTop + 1 + editorRows, `╰${'─'.repeat(Math.max(0, cols - 2))}╯`, s(theme.border))
-      if (below > 0) { const tag = ` ${t().moreBelow(below)} `; screen.put(Math.max(2, cols - 2 - stringWidth(tag)), editorTop + 1 + editorRows, tag, s(theme.muted)) }
-      // A placeholder in the empty box.
-      if (this.editor.text === '' && this.focus === 'editor' && this.view.kind === 'main') screen.put(4, editorTop + 1, t().placeholder, s(theme.dim), 2 + inner)
+      if (below > 0) { const tag = ` ${t().moreBelow(below)} `; if (cols >= stringWidth(tag) + 6) screen.put(cols - 2 - stringWidth(tag), editorTop + 1 + editorRows, tag, s(theme.muted)) }
+      // A placeholder in the empty box, when it is for a message: not a search's, not a question's answer.
+      if (this.editor.text === '' && this.focus === 'editor' && this.view.kind === 'main' && this.search === null && this.question === null) screen.put(4, editorTop + 1, t().placeholder, s(theme.dim), 2 + inner)
       screen.cursor = this.focus === 'editor' ? { x: 4 + editor.cursor.x, y: editorTop + 1 + (editor.cursor.y - first) } : null
     }
 

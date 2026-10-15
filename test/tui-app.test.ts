@@ -38,16 +38,18 @@ function setup({ cols = 80, rows = 30, env = { COLORTERM: 'truecolor' }, extra =
   const answers_ = []
   const copied = []
   let cancels = 0
-  let withdrawals = 0
+  const withdrawals = []
+  const sentIds = []
+  let withdrawOk = true
   let exited = null
   const app = new App({
     io: term.io, env, platform: 'darwin', clock,
     backend: {
-      send: (t) => sent.push(t), cancel: () => { cancels++ }, action: (id) => actions.push(id),
+      send: (t, id) => { sent.push(t); sentIds.push(id) }, cancel: () => { cancels++ }, action: (id) => actions.push(id),
       view: (...a) => views.push(['view', ...a]), agentSend: (...a) => views.push(['send', ...a]),
       agentInterrupt: (...a) => views.push(['interrupt', ...a]), jobKill: (...a) => views.push(['kill', ...a]),
       answer: (id, answers) => answers_.push({ id, answers }),
-      withdraw: () => { withdrawals++ },
+      withdraw: (ids) => { withdrawals.push(ids); return withdrawOk },
     },
     copy: (t) => { copied.push(t); return 'pbcopy' },
     onExit: (code) => { exited = code },
@@ -59,7 +61,8 @@ function setup({ cols = 80, rows = 30, env = { COLORTERM: 'truecolor' }, extra =
   return {
     app, term, clock, sent, actions, views, answers: answers_, copied,
     get cancels() { return cancels },
-    get withdrawals() { return withdrawals },
+    withdrawals, sentIds,
+    set withdrawOk(ok) { withdrawOk = ok },
     get exited() { return exited },
     key: (s) => term.type(s),
     frames: () => term.out.length,
@@ -1628,14 +1631,83 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.turnStarted()
   // Each message queued says "typing" too, as the gateway does.
   t.key('queued one\r'); t.app.turnStarted(); t.key('queued two\r'); t.app.turnStarted(); t.clock.advance(5000)
+  const queuedIds = t.sentIds.slice(-2)
+  const queuedRows = () => t.term.screen.text().split('\n').filter((l) => /^› queued (one|two)/.test(l)).length
   check('queue: the hint says how to take them back', /↑ edit queued/.test(t.term.screen.row(29)), t.term.screen.row(29))
   t.key('\x1b[A'); t.clock.advance(20)
-  check('queue: ↑ on an empty box takes the waiting messages back, from the gateway too, and the turn goes on', t.app.editor.text === 'queued one\nqueued two' && t.withdrawals === 1 && t.cancels === 0 && !t.term.screen.text().includes('queued two\n'), JSON.stringify({ text: t.app.editor.text, withdrawals: t.withdrawals, cancels: t.cancels }))
+  check('queue: ↑ asks the gateway for exactly the messages waiting here, and keeps them until it answers', JSON.stringify(t.withdrawals.at(-1)) === JSON.stringify(queuedIds) && queuedIds.every((id) => typeof id === 'string' && id !== '') && new Set(queuedIds).size === 2 && t.app.editor.text === '' && queuedRows() === 2, JSON.stringify({ asked: t.withdrawals.at(-1), queuedIds, text: t.app.editor.text, rows: queuedRows() }))
+  t.app.withdrawn(queuedIds); t.clock.advance(20)
+  check('queue: the gateway\'s answer brings them back to the box, the turn going on', t.app.editor.text === 'queued one\nqueued two' && t.cancels === 0 && queuedRows() === 0, JSON.stringify({ text: t.app.editor.text, rows: queuedRows() }))
   // The withdrawn turns end; the running one is still the same turn, its time going on.
   t.app.turnEnded(); t.app.turnEnded(); t.clock.advance(1000)
   const still = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
   check('queue: the ends of the turns taken back are not a new turn', /\(6s · esc to interrupt\)/.test(still), still)
-  t.app.turnEnded()
+  // Another terminal's message withdrawn: its end is not a turn here, and nothing of this terminal's comes back.
+  t.app.editor.set(''); t.key('mine\r'); t.app.turnStarted(); t.clock.advance(20)
+  t.app.turnStarted()   // the other terminal's message says "typing" here too
+  t.app.withdrawn(['other-terminal-1']); t.app.turnEnded(); t.clock.advance(1000)
+  const others = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('queue: another terminal\'s withdrawn message ends no turn here, and mine stays queued', /\(7s · esc to interrupt\)/.test(others) && /^› mine/m.test(t.term.screen.text()) && t.app.editor.text === '', `${others} | ${JSON.stringify(t.app.editor.text)}`)
+  // Not connected: nothing is taken back, and it says why.
+  t.withdrawOk = false
+  t.key('\x1b[A'); t.clock.advance(20)
+  check('queue: a withdraw that could not be sent leaves the queue, and says so', /^› mine/m.test(t.term.screen.text()) && t.app.editor.text === '' && t.term.screen.text().includes('not sent'), t.term.screen.text().split('\n').filter((l) => /mine|not sent/.test(l)).join(' | '))
+  t.withdrawOk = true
+  // A question's answer being typed: ↑ is the answer's, not the queue's.
+  const asked = t.withdrawals.length
+  t.app.ask('q-up', [{ id: 'q', question: 'which?', options: [{ label: 'a' }], multiSelect: false }]); t.clock.advance(20)
+  t.key('x'); t.key('\x7f'); t.key('\x1b[A'); t.clock.advance(20)
+  // (↑ there is the box's own: it recalls what was sent before.)
+  check('queue: ↑ while typing an answer does not take the queue into it', t.withdrawals.length === asked && /^› mine/m.test(t.term.screen.text()) && t.app.question !== null, JSON.stringify({ asked: t.withdrawals.length - asked, text: t.app.editor.text }))
+  // A backslash before Enter is a new line in an answer too.
+  t.app.editor.set('')
+  t.key('a\\'); t.key('\r'); t.clock.advance(20)
+  check('input: a backslash before Enter is a new line in an answer too', t.app.editor.text === 'a\n' && t.app.question !== null && !t.answers.some((a) => a.id === 'q-up'), JSON.stringify(t.app.editor.text))
+  t.key('\x1b'); t.key('\x1b'); t.clock.advance(60)
+  t.app.editor.set(''); t.app.turnEnded(); t.app.turnEnded(); t.clock.advance(20)
+}
+
+// 79b. What review found in 79. A paste's line breaks may be CR; a final newline is not a line; a chip is one
+// thing to the cursor and to deleting; the placeholder is for the empty message box only; and the border's count
+// keeps clear of a narrow box's corner.
+{
+  const t = setup({ cols: 80, rows: 30 })
+  const lines = Array.from({ length: 12 }, (_, i) => `cr ${i + 1}`)
+  t.key(`\x1b[200~${lines.join('\r')}\x1b[201~`); t.clock.advance(20)
+  check('paste: CR line breaks count, as a chip', /^\[paste #\d+ \+12 lines\]$/.test(t.app.editor.text), JSON.stringify(t.app.editor.text))
+  t.key('\r'); t.clock.advance(20)
+  check('paste: and it is sent with newlines, not CRs', t.sent.at(-1) === lines.join('\n'), JSON.stringify(t.sent.at(-1)?.slice(0, 20)))
+  t.key(`\x1b[200~${Array.from({ length: 10 }, (_, i) => `ten ${i + 1}`).join('\n')}\n\x1b[201~`); t.clock.advance(20)
+  check('paste: ten lines and a final newline are ten lines, not a chip', !t.app.editor.text.includes('[paste'), JSON.stringify(t.app.editor.text.slice(0, 20)))
+  t.app.editor.set('')
+  const twelve = Array.from({ length: 12 }, (_, i) => `p ${i + 1}`).join('\n')
+  t.key(`\x1b[200~${twelve}\x1b[201~`); t.clock.advance(20)
+  const chip = t.app.editor.text
+  t.key('\x7f'); t.clock.advance(20)
+  check('chip: backspace takes the whole chip', t.app.editor.text === '', JSON.stringify(t.app.editor.text))
+  t.key(`\x1b[200~${twelve}\x1b[201~`); t.key('\x1b[D'); t.key('x'); t.clock.advance(20)
+  const second = t.app.editor.text.slice(1)
+  check('chip: ← goes over it whole, so a key typed there lands before it', t.app.editor.text.startsWith('x[paste #') && /^\[paste #\d+ \+12 lines\]$/.test(second), JSON.stringify(t.app.editor.text))
+  t.key('\x1b[3~'); t.clock.advance(20)
+  check('chip: delete takes the whole chip after the cursor', t.app.editor.text === 'x', JSON.stringify(t.app.editor.text))
+  t.key(`\x1b[200~${twelve}\x1b[201~`); t.key('\x17'); t.clock.advance(20)
+  check('chip: ctrl+w takes the whole chip', t.app.editor.text === 'x', JSON.stringify(t.app.editor.text))
+  t.key(`\x1b[200~${twelve}\x1b[201~`); t.clock.advance(20)
+  const inside = t.term.screen.find('[paste #')
+  t.key(SGR(0, inside.col + 4, inside.row)); t.key(SGR(0, inside.col + 4, inside.row, true)); t.key('y'); t.clock.advance(20)
+  check('chip: a click inside it, then a key: the key goes after it, the chip whole', /^x\[paste #\d+ \+12 lines\]y$/.test(t.app.editor.text), JSON.stringify(t.app.editor.text))
+  t.key('\x7f'); t.key('\x17'); t.clock.advance(20)
+  t.key(`\x1b[200~${twelve}\x1b[201~`); t.key('\r'); t.clock.advance(20)
+  check('chip: sent, still the text it stands for', t.sent.at(-1) === `x${twelve}`, JSON.stringify(t.sent.at(-1)?.slice(0, 12)))
+  check('chip: chips not in the box or what was sent are let go', t.app.pasteChips <= 2, String(t.app.pasteChips))
+  t.key('\x12'); t.key('zzz'); t.clock.advance(20)
+  check('placeholder: not inside a history search', !t.term.screen.text().includes('Message deepseek-bot'))
+  t.key('\x1b'); t.clock.advance(60)
+  const narrow = setup({ cols: 12, rows: 20 })
+  for (let i = 1; i <= 8; i++) { narrow.key(`l${i}`); if (i < 8) narrow.key('\x1b\r') }
+  narrow.clock.advance(20)
+  const border = narrow.term.screen.text().split('\n').find((l) => l.startsWith('╭')) ?? '(none)'
+  check('overflow: on a box too narrow for the count, the corner stays', border.startsWith('╭─') && !border.includes('more'), border)
 }
 
 const failed = results.filter((r) => !r.ok)
