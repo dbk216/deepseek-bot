@@ -12,11 +12,12 @@ import './dist-fresh.ts'   // fails loudly on a stale dist
 
 import { App } from '../dist/tui/app.js'
 import { messages } from '../dist/messages.js'
+import { stringWidth } from '../dist/tui/render/width.js'
 import { RESTORE } from '../dist/tui/render/terminal.js'
 import { fakeClock, fakeTerminal } from './tui-fakes.ts'
 import { commandInfo, COMMANDS, help } from '../dist/tui/cli.js'
 import { appendHistory, loadHistory, HISTORY_KEEP } from '../dist/tui/history.js'
-import { fileFinder } from '../dist/tui/files.js'
+import { fileFinder, gitBranch } from '../dist/tui/files.js'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -66,15 +67,13 @@ const SGR = (b, x, y, release = false) => `\x1b[<${b};${x + 1};${y + 1}${release
 // ends in "7m", and a looser test passed on the banner's gradient alone.
 const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x1b[7m')
 
-// 1. First screen: banner, the info line, the input box, and the status line.
+// 1. First screen: the welcome box, the input box, and the status line.
 {
   const t = setup()
   const text = t.term.screen.text()
   check('start: fullscreen with mouse tracking', t.term.screen.state.altScreen && t.term.screen.state.mouse)
-  check('start: the block-letter banner is drawn', text.includes('██████╗'))
-  check('start: the info line names model, workspace and session', /deepseek-bot\s+deepseek-v4\.1 · ~\/dsh-agent · session tui-3f2a9c1e-aaaa/.test(text), text.split('\n').find((l) => l.includes('deepseek-bot  ')) ?? '')
-  check('start: the header names the project, deepseek-bot', text.split('\n')[0].trimStart().startsWith('deepseek-bot '), text.split('\n')[0])
-  check('start: the input box and the status line', text.includes('╭') && text.includes('╰') && text.includes('▸▸ effort medium'))
+  check('start: the welcome box says the project, the model, the workspace and the session', text.includes('deepseek-bot') && text.includes('deepseek-v4.1') && /~\/dsh-agent · session tui-3f2a/.test(text), text.split('\n').filter((l) => l.includes('│')).slice(0, 6).join(' | '))
+  check('start: the input box and the status line', text.includes('│ ›') && text.includes('▸▸ effort medium'))
 }
 
 // 1b. The workspace under the home directory is shown as ~, so a screen, or a recording of one, does
@@ -84,7 +83,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.app.setStatus({ workspace: '/Users/someone/dsh-agent' })
   t.clock.advance(20)
   let text = t.term.screen.text()
-  check('workspace: under HOME, the header and the info line show ~', text.split('\n')[0].includes('~/dsh-agent') && /deepseek-v4\.1 · ~\/dsh-agent · /.test(text) && !text.includes('/Users/someone'), text.split('\n')[0])
+  check('workspace: under HOME, the welcome box shows ~', /~\/dsh-agent · /.test(text) && !text.includes('/Users/someone'), text.split('\n').find((l) => l.includes('dsh-agent')) ?? '(none)')
   check('workspace: the status keeps the real path', t.app.status.workspace === '/Users/someone/dsh-agent')
   t.app.setStatus({ workspace: '/Users/someone2/agent' })
   t.clock.advance(20)
@@ -150,7 +149,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   const asking = t.term.screen.text()
   check('mid-turn: the approval request is its own message; the streamed text stays', asking.includes('build 폴더를 지울게.') && asking.includes('권한이 필요합니다'))
   check('choice: the request\'s first line, then its options numbered, one a row', /⚠ 권한이 필요합니다: rm -rf build/.test(asking) && /❯ 1\. 허용/.test(asking) && / {2}2\. 거부/.test(asking), asking.split('\n').slice(-6).join(' | '))
-  check('choice: and the input box gives way to it while nothing is typed, as in Claude Code', !asking.includes('╭') && !asking.includes('╰'), asking.split('\n').slice(-4).join(' | '))
+  check('choice: and the input box gives way to it while nothing is typed, as in Claude Code', !asking.includes('│ ›'), asking.split('\n').slice(-4).join(' | '))
   t.key('\x1b[C')
   t.key('\r')
   check('choice: → then Enter picks the second option', t.actions.length === 1 && t.actions[0] === 'approval:deny:k' && t.app.choice === null, JSON.stringify(t.actions))
@@ -179,7 +178,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.key('입력 중')
   t.app.offer('ts-4', [{ id: 'y', label: '허용' }])
   t.clock.advance(20)
-  check('choice: with text typed, the input box stays, with the text', t.term.screen.text().includes('╭') && t.term.screen.text().includes('입력 중'))
+  check('choice: with text typed, the input box stays, with the text', t.term.screen.text().includes('│ ›') && t.term.screen.text().includes('입력 중'))
   t.key('\r')
   check('choice: with text typed, Enter sends the text instead of picking', t.actions.length === 1 && t.sent.includes('입력 중'))
 }
@@ -325,7 +324,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.clock.advance(20)
   const asked = t.term.screen.text()
   check('question: the panel shows the question, its options and "type your own…"', /\? question \(1\/2\)/.test(asked) && asked.includes('배포 대상 환경은?') && /❯ staging/.test(asked) && asked.includes('production — 실서비스') && asked.includes('type your own…'))
-  check('question: the input box gives way to the options', !asked.includes('╭'), asked.split('\n').slice(-4).join(' | '))
+  check('question: the input box gives way to the options', !asked.includes('│ ›'), asked.split('\n').slice(-4).join(' | '))
   t.key('\x1b[B'); t.key('\r')
   check('question: ↓ Enter answers the first and moves to the second', /\(2\/2\)/.test(t.term.screen.text()) && t.term.screen.text().includes('? 배포 대상 환경은? → production'))
   t.key(' '); t.key('\x1b[B'); t.key('\x1b[B'); t.key(' ')
@@ -343,16 +342,16 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
 
   t.app.ask('q-own', [{ id: 'own', question: '직접 쓸래?', options: [{ label: 'a' }], multiSelect: false }])
   t.key('\x1b[B'); t.key('\r'); t.clock.advance(20)
-  check('question: "type your own…" chosen brings the input box back, empty, to type in', t.app.question?.typing === true && t.app.editor.text === '' && t.term.screen.text().includes('╭'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+  check('question: "type your own…" chosen brings the input box back, empty, to type in', t.app.question?.typing === true && t.app.editor.text === '' && t.term.screen.text().includes('│ ›'), t.term.screen.text().split('\n').slice(-4).join(' | '))
   t.app.closeQuestion('q-own'); t.clock.advance(20)
   // Pasted words are the person's own words too: the question switches to them, and Enter answers with them.
   t.app.ask('q-paste', [{ id: 'p', question: '붙여 넣을래?', options: [{ label: 'a' }], multiSelect: false }])
   t.key('\x1b[200~붙여 넣은 답\x1b[201~'); t.clock.advance(20)
-  check('question: a paste switches to typing, in the input box', t.app.question?.typing === true && t.app.editor.text === '붙여 넣은 답' && t.term.screen.text().includes('╭'))
+  check('question: a paste switches to typing, in the input box', t.app.question?.typing === true && t.app.editor.text === '붙여 넣은 답' && t.term.screen.text().includes('│ ›'))
   // A choice arriving while the question is being typed into leaves the box: the typing goes on.
   t.app.offer('ts-q', [{ id: 'z', label: '허용' }])
   t.key('\x15'); t.clock.advance(20)
-  check('question: typing an answer keeps the input box even with a choice pending', t.app.question?.typing === true && t.app.editor.text === '' && t.term.screen.text().includes('╭'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+  check('question: typing an answer keeps the input box even with a choice pending', t.app.question?.typing === true && t.app.editor.text === '' && t.term.screen.text().includes('│ ›'), t.term.screen.text().split('\n').slice(-4).join(' | '))
   t.key('붙여 넣은 답'); t.key('\r'); t.clock.advance(20)
   check('question: and Enter answers with the pasted words', t.answers.some((a) => a.id === 'q-paste' && a.answers[0]?.custom === '붙여 넣은 답'), JSON.stringify(t.answers.at(-1)))
   t.app.unpost('ts-q')
@@ -406,7 +405,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   const plain = setup({ env: { NO_COLOR: '1' } })
   check('colour: NO_COLOR writes no colour codes', !plain.term.out.join('').match(/\x1b\[[\d;]*(38|48);[25];/))
   const narrow = setup({ cols: 50 })
-  check('narrow: a 50-column terminal gets the wordmark, not broken block letters', narrow.term.screen.text().includes('◆ deepseek-bot') && !narrow.term.screen.text().includes('██████╗'))
+  check('narrow: a 50-column terminal gets the welcome words, not the mark cut', narrow.term.screen.text().includes('deepseek-bot') && !narrow.term.screen.text().includes('▄▄████▄▄'))
 }
 
 // 8b. Running state: counted across queued turns, synced on (re)connect, reset for another conversation.
@@ -875,9 +874,10 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
 {
   const steps = []
   const t = setup({ cols: 80, rows: 40, extra: { stepEffort: () => steps.push(1) } })
-  const box = () => t.term.screen.find('╭')?.row ?? -1
-  const info = t.term.screen.find('session tui-3f2a9c1e-aaaa')?.row ?? -1
-  check('layout: the input box keeps the last rows, and a short conversation sits right above it', box() === 40 - 4 && info >= 0 && box() - info <= 4, `info ${info}, box ${box()}`)
+  const box = () => { const prompt = t.term.screen.find('│ ›'); return prompt === null ? -1 : prompt.row - 1 }
+  const info = t.term.screen.find('session tui-3f2a')?.row ?? -1
+  const welcomeEnd = t.term.screen.find('╰')?.row ?? -1
+  check('layout: the input box keeps the last rows, and a short conversation sits right above it', box() === 40 - 4 && info >= 0 && welcomeEnd === box() - 3, `info ${info}, welcome ends ${welcomeEnd}, box ${box()}`)
   check('layout: the empty rows are above the conversation, under the header, not between it and the box', t.term.screen.row(3).trim() === '', t.term.screen.row(3))
   const status = t.term.screen.row(box() - 1)
   check('status: the effort, with the key that steps it, and no permission label', /▸▸ effort medium \(shift\+tab\)/.test(status) && !/\bask\b/.test(status), status)
@@ -960,7 +960,10 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.key(SGR(0, resume.col, resume.row)); t.key(SGR(0, resume.col, resume.row, true)); t.clock.advance(20)
   check('mouse: a click on a command that takes an argument puts it in', t.app.editor.text === '/resume ' && intercepted.length === 0, JSON.stringify(t.app.editor.text))
   t.key('\x15'); t.key('/he'); t.clock.advance(20)
-  const help_ = t.term.screen.find('/help')
+  // The completion row, the lowest /help on screen (the welcome box names it too).
+  const shownRows = t.term.screen.text().split('\n')
+  const helpRow = shownRows.findLastIndex((l) => l.includes('/help'))
+  const help_ = { row: helpRow, col: shownRows[helpRow].indexOf('/help') }
   t.key(SGR(0, help_.col, help_.row)); t.key(SGR(0, help_.col, help_.row, true)); t.clock.advance(20)
   check('mouse: a click on one that takes none runs it', JSON.stringify(intercepted) === '["/help"]', JSON.stringify(intercepted))
 }
@@ -1093,7 +1096,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const t = setup()
   t.app.offer('ts-r', [{ id: 'r', label: '허용' }])
   t.key('\x12'); t.clock.advance(20)
-  check('search: ctrl+r keeps the input box while a choice is pending', t.app.editor.text === '' && t.term.screen.text().includes('╭') && t.term.screen.text().includes('history search'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+  check('search: ctrl+r keeps the input box while a choice is pending', t.app.editor.text === '' && t.term.screen.text().includes('│ ›') && t.term.screen.text().includes('history search'), t.term.screen.text().split('\n').slice(-4).join(' | '))
 }
 
 // 76. The transcript after Claude Code and pi. A tool call reads `Name(what it was asked)`; its result sits under
@@ -1285,12 +1288,12 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.turnEnded()
   t.clock.advance(20)
 
-  check('hint: "? for shortcuts" while nothing is typed', t.term.screen.row(29).trim() === '? for shortcuts', t.term.screen.row(29))
+  check('hint: "? for shortcuts" while nothing is typed', /^ \? for shortcuts( {2,}~\/dsh-agent · tui-3f2a…)?\s*$/.test(t.term.screen.row(29)), t.term.screen.row(29))
   t.key('?'); t.clock.advance(20)
   const panel = t.term.screen.text()
-  check('shortcuts: ? on an empty box shows them, in the box\'s place', panel.includes('Shortcuts') && panel.includes('shift+tab effort') && panel.includes('ctrl+t expand/fold thinking') && !panel.includes('╭') && t.app.editor.text === '', panel.split('\n').slice(-8).join(' | '))
+  check('shortcuts: ? on an empty box shows them, in the box\'s place', panel.includes('Shortcuts') && panel.includes('shift+tab effort') && panel.includes('ctrl+t expand/fold thinking') && !panel.includes('│ ›') && t.app.editor.text === '', panel.split('\n').slice(-8).join(' | '))
   t.key('\x1b'); t.clock.advance(60)
-  check('shortcuts: esc closes them', !t.term.screen.text().includes('Shortcuts') && t.term.screen.text().includes('╭'))
+  check('shortcuts: esc closes them', !t.term.screen.text().includes('Shortcuts') && t.term.screen.text().includes('│ ›'))
   t.key('?'); t.key('a'); t.clock.advance(20)
   check('shortcuts: typing closes them and types', t.app.editor.text === 'a' && !t.term.screen.text().includes('Shortcuts'), JSON.stringify(t.app.editor.text))
   t.key('?'); t.clock.advance(20)
@@ -1310,7 +1313,9 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   // The last line that says so: the transcript has the message too, above.
   const title = t.term.screen.text().split('\n').filter((l) => l.includes('I need permission')).at(-1) ?? '(none)'
   check('approval: the adapter\'s own request, with one warning sign', /⚠ I need permission: rm -rf build/.test(title) && (title.match(/⚠/g) ?? []).length === 1, title)
-  check('approval: the status line does not offer esc for a stop while esc answers no', !t.term.screen.text().includes('esc to interrupt') && /esc deny/.test(t.term.screen.row(29)), t.term.screen.text().split('\n').find((l) => l.includes('✻')))
+  // The status line, not the screen: the welcome box names esc too.
+  const statusLine = () => t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('approval: the status line does not offer esc for a stop while esc answers no', !statusLine().includes('esc to interrupt') && /esc deny/.test(t.term.screen.row(29)), statusLine())
   check('approval: what the message tells the person is how it is answered here', /↑↓/.test(en.approvalHowTerminal) && !/←→/.test(en.approvalHowTerminal), en.approvalHowTerminal)
 
   // A question over it: the digit that starts an answer is the answer's.
@@ -1338,7 +1343,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('approval: "no" by its id alone', t.actions.at(-1) === 'approval:deny:b3', JSON.stringify(t.actions.at(-1)))
   // A choice with no "no": the hint does not promise one, and esc is the turn's stop, as the status line says.
   t.app.offer('ts-b', [{ id: 'pick:a', label: 'A' }, { id: 'pick:b', label: 'B' }]); t.clock.advance(20)
-  check('choice: with no "no" option the hint does not say esc denies', !/esc deny/.test(t.term.screen.row(29)) && t.term.screen.text().includes('esc to interrupt'), t.term.screen.row(29))
+  check('choice: with no "no" option the hint does not say esc denies', !/esc deny/.test(t.term.screen.row(29)) && statusLine().includes('esc to interrupt'), `${t.term.screen.row(29)} | ${statusLine()}`)
   // ↑ alone, from the first of three, goes to the last: back, not forward. Shift with ↓ is still ↓.
   t.app.offer('ts-b', [{ id: 'o:1', label: 'One' }, { id: 'o:2', label: 'Two' }, { id: 'o:3', label: 'Three' }]); t.clock.advance(20)
   t.key('\x1b[A')
@@ -1448,12 +1453,78 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   small.key('?'); small.clock.advance(20)
   const text = small.term.screen.text()
   check('shortcuts: on a small screen they stop above the hint, and say how many are not shown', /esc close/.test(small.term.screen.row(13)) && /\+\d+ more/.test(text) && text.includes('Shortcuts'), text.split('\n').slice(-8).join(' | '))
-  const tiny = setup({ cols: 40, rows: 6 })
+  // No header row in the main view: one more row for them than a pane with a header has.
+  const tiny = setup({ cols: 40, rows: 5 })
   tiny.key('?'); tiny.clock.advance(20)
-  const none = setup({ cols: 40, rows: 5 })
+  const none = setup({ cols: 40, rows: 4 })
   none.key('?'); none.clock.advance(20)
-  check('shortcuts: with no room, nothing, and the hint stays', /esc close/.test(none.term.screen.row(4)) && !none.term.screen.text().includes('Shortcuts'), none.term.screen.text().split('\n').join(' | '))
-  check('shortcuts: with room for one line, the title alone, and the hint stays', /esc close/.test(tiny.term.screen.row(5)) && tiny.term.screen.text().includes('Shortcuts'), tiny.term.screen.text().split('\n').join(' | '))
+  check('shortcuts: with no room, nothing, and the hint stays', /esc close/.test(none.term.screen.row(3)) && !none.term.screen.text().includes('Shortcuts'), none.term.screen.text().split('\n').join(' | '))
+  check('shortcuts: with room for one line, the title alone, and the hint stays', /esc close/.test(tiny.term.screen.row(4)) && tiny.term.screen.text().includes('Shortcuts') && !/\+\d+ more/.test(tiny.term.screen.text()), tiny.term.screen.text().split('\n').join(' | '))
+}
+
+// 78. The first screen and the footer after Claude Code and pi. No header row over the conversation: a welcome box
+// says what this is (the mark, the version), what it runs on, where, and the keys to start with. The context bar
+// turns yellow past 70% and red past 90%; tokens read as sent ↑ and received ↓.
+{
+  const t = setup({ cols: 100, rows: 30, extra: { version: '0.2.0' } })
+  const first = t.term.screen.text()
+  const rows = first.split('\n')
+  check('welcome: no header row over the conversation', !/^ deepseek-bot\s{4,}/.test(rows[0]) && !rows[0].includes('tui-3f2a9c1e'), rows[0])
+  check('welcome: a box with the mark, the name and version, the model, the workspace and where to start', first.includes('╭') && first.includes('▄▄████▄▄') && /deepseek-bot v0\.2\.0/.test(first) && first.includes('deepseek-v4.1') && first.includes('~/dsh-agent') && /\/help/.test(first) && /\? for shortcuts/.test(first), rows.filter((r) => r.trim() !== '').slice(0, 9).join(' | '))
+  check('welcome: no block-letter banner', !first.includes('██████╗'))
+  const narrow = setup({ cols: 50, rows: 24, extra: { version: '0.2.0' } })
+  const small = narrow.term.screen.text()
+  check('welcome: on a narrow screen, the words without the mark', /deepseek-bot v0\.2\.0/.test(small) && !small.includes('▄▄████▄▄') && small.split('\n').every((l) => stringWidth(l) <= 50), small.split('\n').filter((r) => r.trim() !== '').slice(0, 6).join(' | '))
+  const at = (needle) => { const p = t.term.screen.find(needle); return p === null ? '' : t.term.screen.grid[p.row * 100 + p.col].style }
+  t.app.setStatus({ contextPct: 50, tokensIn: 12000, tokensOut: 3400 })
+  t.clock.advance(20)
+  const calm = at('ctx ')
+  check('footer: tokens as sent and received', /↑12(\.0)?k ↓3\.4k/.test(t.term.screen.text()), t.term.screen.text().split('\n').find((l) => l.includes('ctx')) ?? '(none)')
+  t.app.setStatus({ contextPct: 75 })
+  t.clock.advance(20)
+  const warm = at('ctx ')
+  t.app.setStatus({ contextPct: 95 })
+  t.clock.advance(20)
+  const hot = at('ctx ')
+  check('footer: the context bar turns yellow past 70% and red past 90%', calm !== warm && warm !== hot && warm.includes('38;2;242;176;61') && hot.includes('38;2;240;90;90'), `${JSON.stringify(calm)} ${JSON.stringify(warm)} ${JSON.stringify(hot)}`)
+  t.app.setStatus({ contextPct: null })
+  t.app.setStatus({ tokensIn: 12000, tokensOut: 3400, tokensCached: 9000 }); t.clock.advance(20)
+  check('footer: the share of what was sent that the cache served', /↑12(\.0)?k ↓3\.4k · cache 75%/.test(t.term.screen.text()), t.term.screen.text().split('\n').find((l) => l.includes('↑12')) ?? '(none)')
+  t.app.setStatus({ tokensCached: null }); t.clock.advance(20)
+  check('footer: and nothing about the cache when the harness does not say', !t.term.screen.text().includes('cache'))
+  // Under the box, as pi has it: where the agent works, and the conversation; the branch when it is a repository.
+  check('footer: under the box, the workspace and the conversation', /\? for shortcuts {2,}.*~\/dsh-agent · tui-3f2a…\s*$/.test(t.term.screen.row(29)), t.term.screen.row(29))
+  const git = setup({ cols: 100, rows: 30, extra: { branchOf: (dir) => dir === '~/dsh-agent' ? 'main' : null } })
+  check('footer: with the branch when the workspace is a repository', /~\/dsh-agent \(main\) · tui-3f2a…\s*$/.test(git.term.screen.row(29)), git.term.screen.row(29))
+  const thin = setup({ cols: 40, rows: 20 })
+  check('footer: left out where it does not fit beside the hint', /\? for shortcuts\s*$/.test(thin.term.screen.row(19)), thin.term.screen.row(19))
+  // The status line's label: a tool step with no result to wait for is over once the answer streams.
+  t.app.turnStarted()
+  t.app.toolCall({ name: 'recall', title: '2 passages' })
+  t.app.delta('답을 씁니다'); t.clock.advance(20)
+  const label = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: once the answer streams, it says Working, not the last tool', /✻ Working…/.test(label) && !label.includes('Running recall'), label)
+  t.app.turnEnded()
+}
+
+// 78b. The branch is read from the workspace's own .git: a branch, a detached head, a worktree's gitdir, and none.
+{
+  const root = mkdtempSync(join(tmpdir(), 'dsh-git-'))
+  try {
+    mkdirSync(join(root, 'repo', '.git'), { recursive: true })
+    writeFileSync(join(root, 'repo', '.git', 'HEAD'), 'ref: refs/heads/feat/footer\n')
+    mkdirSync(join(root, 'detached', '.git'), { recursive: true })
+    writeFileSync(join(root, 'detached', '.git', 'HEAD'), '0123456789abcdef0123456789abcdef01234567\n')
+    mkdirSync(join(root, 'meta', 'worktrees', 'wt'), { recursive: true })
+    writeFileSync(join(root, 'meta', 'worktrees', 'wt', 'HEAD'), 'ref: refs/heads/wt-branch\n')
+    mkdirSync(join(root, 'wt'), { recursive: true })
+    writeFileSync(join(root, 'wt', '.git'), `gitdir: ${join(root, 'meta', 'worktrees', 'wt')}\n`)
+    mkdirSync(join(root, 'plain'), { recursive: true })
+    check('branch: a branch by its name', gitBranch(join(root, 'repo')) === 'feat/footer', String(gitBranch(join(root, 'repo'))))
+    check('branch: a detached head by its short hash', gitBranch(join(root, 'detached')) === '0123456', String(gitBranch(join(root, 'detached'))))
+    check('branch: a worktree, through its gitdir', gitBranch(join(root, 'wt')) === 'wt-branch', String(gitBranch(join(root, 'wt'))))
+    check('branch: none outside a repository, and none for a path that is not there', gitBranch(join(root, 'plain')) === null && gitBranch(join(root, 'absent')) === null)
+  } finally { rmSync(root, { recursive: true, force: true }) }
 }
 
 const failed = results.filter((r) => !r.ok)

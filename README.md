@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/banner.svg" width="720" alt="DEEPSEEK BOT, in the terminal's block letters">
+  <img src="docs/banner.svg" width="720" alt="DEEPSEEK BOT">
 </p>
 
 > **Sponsors**

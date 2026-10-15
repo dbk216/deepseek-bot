@@ -80,7 +80,7 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       return
     case 'panel':
       app.setPanel(frame.agents, frame.jobs)
-      app.setStatus({ tokens: frame.usage.tokens, contextPct: frame.usage.contextPct })
+      app.setStatus({ tokens: frame.usage.tokens, tokensIn: frame.usage.input ?? null, tokensOut: frame.usage.output ?? null, tokensCached: frame.usage.cached ?? null, contextPct: frame.usage.contextPct })
       return
     case 'question':
       app.ask(frame.id, frame.questions)

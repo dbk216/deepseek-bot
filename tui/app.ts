@@ -12,7 +12,7 @@
  * always next to where one types. A choice (a picker, a question's options, an approval) takes the box's
  * place while nothing is typed; the completion list opens just above the box.
  */
-import { answerBlock, bannerBlock, interruptedBlock, noticeBlock, spacerBlock, thinkingBlock, toolBlock, toolCallBlock, userBlock, type AnswerBlock, type Detail, type NoticeKind, type ThinkingBlock, type ToolCallBlock, type ToolStep } from './blocks.js'
+import { answerBlock, interruptedBlock, welcomeBlock, noticeBlock, spacerBlock, thinkingBlock, toolBlock, toolCallBlock, userBlock, type AnswerBlock, type Detail, type NoticeKind, type ThinkingBlock, type ToolCallBlock, type ToolStep } from './blocks.js'
 import { complete, type CommandInfo, type Completion } from './complete.js'
 import type { AgentItem, JobItem, ViewLine } from './bridge.js'
 import { formatTokens, panelCounts, panelRows, panelWindow, rowStatus, type PanelRow } from './panel.js'
@@ -70,6 +70,11 @@ export interface AppStatus {
   running: boolean
   startedAt: number
   tokens: number
+  /** Tokens sent and received, when the gateway says them apart; the total otherwise. */
+  tokensIn: number | null
+  tokensOut: number | null
+  /** Of the tokens sent, what the provider's cache served, when the harness says. */
+  tokensCached: number | null
   contextPct: number | null
 }
 
@@ -87,10 +92,11 @@ export interface AppOptions {
   onExit(code: number): void
   clock?: Clock
   copy?: (text: string) => CopyMethod
+  /** This client's version, for the welcome box. */
+  version?: string
   /** A typed line the app should not send (a /command): return true when it was handled. */
   intercept?: (text: string) => boolean
   /** The /commands to complete, with what they take. */
-  /** The /commands for completion. */
   commands?: readonly CommandInfo[] | (() => readonly CommandInfo[])
   /** The workspace's files matching a query, for @ completion. */
   files?: (query: string) => string[]
@@ -98,6 +104,8 @@ export interface AppOptions {
   remember?: (text: string) => void
   /** shift+tab, or a click on the effort: the conversation's next effort. */
   stepEffort?: () => void
+  /** The git branch of a directory, for the footer; null when it is not a repository's work tree. */
+  branchOf?: (dir: string) => string | null
 }
 
 const EDITOR_MAX_ROWS = 6
@@ -120,7 +128,7 @@ export class App {
   readonly terminal: Terminal
   readonly status: AppStatus = {
     connected: false, link: t().connecting, workspace: '', session: '', model: '', effort: null,
-    running: false, startedAt: 0, tokens: 0, contextPct: null,
+    running: false, startedAt: 0, tokens: 0, tokensIn: null, tokensOut: null, tokensCached: null, contextPct: null,
   }
   private readonly o: AppOptions
   private readonly clock: Clock
@@ -180,6 +188,8 @@ export class App {
   /** A Ctrl+R search: what is typed, how many older matches to skip, and the text it replaced. */
   private search: { query: string; skip: number; original: string; found: boolean } | null = null
   private toast: { text: string; until: number } | null = null
+  /** The workspace's git branch, for the footer. */
+  private branch: string | null = null
   private quitArmed = 0
   private spinTimer: unknown = null
   /** Turns the conversation has running or waiting: each sends typing on, then off. */
@@ -211,7 +221,7 @@ export class App {
       onEvent: (event) => this.onEvent(event),
       ...(options.clock ? { now: options.clock.now, setTimer: options.clock.setTimer, clearTimer: options.clock.clearTimer } : {}),
     })
-    this.banner = bannerBlock(() => this.infoLine(), this.mode)
+    this.banner = welcomeBlock(() => ({ version: this.o.version ?? '', model: this.status.model, workspace: this.shownWorkspace(), session: this.status.session ?? '' }), this.mode)
     this.transcript.push(this.banner)
   }
 
@@ -230,6 +240,8 @@ export class App {
 
   setStatus(patch: Partial<AppStatus>): void {
     Object.assign(this.status, patch)
+    // Read when the workspace is named: the footer says the branch the agent's work tree is on.
+    if ('workspace' in patch) this.branch = this.status.workspace === '' ? null : this.o.branchOf?.(this.status.workspace) ?? null
     if ('workspace' in patch || 'session' in patch || 'model' in patch) { this.banner.refresh(); this.transcript.touch() }
     this.terminal.requestRender()
   }
@@ -269,6 +281,8 @@ export class App {
   /** Streamed answer text. The block is created on the first delta. */
   delta(text: string): void {
     this.closeThinking()
+    // The answer is being written: whatever tool ran before has done its part.
+    this.runningTool = null
     if (this.answer === null) { this.answer = answerBlock(this.mode); this.step(this.answer); this.turnBlock = this.answer }
     this.answer.append(text)
     this.noteInterview(this.answer.text)
@@ -1138,7 +1152,10 @@ export class App {
     const pendingRows = Math.min(waiting.length, 3) + (waiting.length > 3 ? 1 : 0)
     // The shortcuts open only with nothing else in the box's place: what is left after a row of transcript, the
     // waiting messages, the divider, the status line, the panel and the hint.
-    const shortcutLines = this.shortcuts ? this.shortcutLines(cols, rows - (1 + stripRows) - 1 - (pendingRows + 1 + 1 + panelShown + 1)) : []
+    // A header row only where the pane looks elsewhere (a subagent, a shell): the main conversation has its
+    // welcome box, as Claude Code and pi have no header over theirs.
+    const headerRows = this.view.kind === 'main' ? 0 : 1
+    const shortcutLines = this.shortcuts ? this.shortcutLines(cols, rows - (headerRows + stripRows) - 1 - (pendingRows + 1 + 1 + panelShown + 1)) : []
     // A choice on screen (a picker, a question's options, an approval) takes the input box's place while
     // nothing is typed, as in Claude Code: one keystroke of text brings the box back.
     const boxHidden = this.editor.text === '' && this.search === null
@@ -1146,13 +1163,13 @@ export class App {
     const boxRows = boxHidden ? 0 : editorRows + 2
     const fixed = pendingRows + 1 /* divider */ + 1 /* status */ + panelShown + choiceRows + questionLines.length + completionLines.length + shortcutLines.length + boxRows + 1 /* hint */
     // The picker gets what is left after a row of transcript: on a small screen it shrinks; the hint line stays.
-    const pickerLines = this.question === null && this.picker !== null ? this.pickerLines(cols, rows - (1 + stripRows) - 1 - fixed) : []
+    const pickerLines = this.question === null && this.picker !== null ? this.pickerLines(cols, rows - (headerRows + stripRows) - 1 - fixed) : []
     const bottom = fixed + pickerLines.length
     // Every row left is the transcript's; one shorter than that is drawn at its foot, against the divider.
-    const area = Math.max(1, rows - (1 + stripRows) - bottom)
+    const area = Math.max(1, rows - (headerRows + stripRows) - bottom)
     const transcriptHeight = Math.max(1, Math.min(area, this.pane.layout(cols).length))
-    const transcriptTop = 1 + stripRows + (area - transcriptHeight)
-    if (stripRows > 0) this.drawInterview(screen, 1, cols)
+    const transcriptTop = headerRows + stripRows + (area - transcriptHeight)
+    if (stripRows > 0) this.drawInterview(screen, headerRows, cols)
     const pendingTop = transcriptTop + transcriptHeight
     const dividerRow = pendingTop + pendingRows
     const statusRow = dividerRow + 1
@@ -1200,11 +1217,13 @@ export class App {
     }
     if (panelTop >= 0) this.drawPanel(screen, panelTop, panel.rows, panel.first)
 
-    // Header, with where the pane is looking.
-    let hx = screen.put(1, 0, 'deepseek-bot', s(theme.brand))
-    if (this.view.kind !== 'main') hx = screen.put(hx, 0, ` · main › ${this.view.kind === 'agent' ? this.view.label : this.view.id}`, s(theme.accent))
-    const right = [this.status.session && `${this.status.session.slice(0, 12)}…`, this.shownWorkspace()].filter(Boolean).join(' · ')
-    if (right !== '') screen.put(Math.max(hx + 2, cols - 1 - stringWidth(right)), 0, right, s(theme.muted))
+    // Header, in a side view only: where the pane is looking.
+    if (this.view.kind !== 'main') {
+      let hx = screen.put(1, 0, 'deepseek-bot', s(theme.brand))
+      hx = screen.put(hx, 0, ` · main › ${this.view.kind === 'agent' ? this.view.label : this.view.id}`, s(theme.accent))
+      const right = [this.status.session && `${this.status.session.slice(0, 12)}…`, this.shownWorkspace()].filter(Boolean).join(' · ')
+      if (right !== '') screen.put(Math.max(hx + 2, cols - 1 - stringWidth(right)), 0, right, s(theme.muted))
+    }
 
     // The pane, with the selection drawn inverted.
     const pane = this.pane
@@ -1281,6 +1300,12 @@ export class App {
           : this.status.running ? t().hints.running
             : t().hints.idle(allRows.length > 0)
     screen.put(1, editorTop + boxRows, hint, s(theme.dim))
+    // At its right, as pi's footer has it: where the agent works (and on which branch), and the conversation.
+    if (this.status.workspace !== '') {
+      const where = `${this.shownWorkspace()}${this.branch !== null ? ` (${this.branch})` : ''}${this.status.session ? ` · ${this.status.session.slice(0, 8)}…` : ''}`
+      const x = cols - 1 - stringWidth(where)
+      if (x >= 1 + stringWidth(hint) + 2) screen.put(x, editorTop + boxRows, where, s(theme.muted))
+    }
   }
 
   /**
@@ -1468,16 +1493,20 @@ export class App {
       const filled = Math.round(Math.max(0, Math.min(100, this.status.contextPct)) / 12.5)
       parts.push(`ctx ${'▰'.repeat(filled)}${'▱'.repeat(8 - filled)} ${Math.round(this.status.contextPct)}%`)
     }
-    if (this.status.tokens > 0) parts.push(`${formatTokens(this.status.tokens)} tok`)
+    // Sent ↑ and received ↓, as pi shows them, when the gateway says them apart.
+    if (this.status.tokensIn !== null && this.status.tokensOut !== null) parts.push(`↑${formatTokens(this.status.tokensIn)} ↓${formatTokens(this.status.tokensOut)}`)
+    if (this.status.tokensCached !== null && this.status.tokensIn !== null && this.status.tokensIn > 0) parts.push(t().cacheShare(Math.round((this.status.tokensCached / this.status.tokensIn) * 100)))
+    else if (this.status.tokens > 0) parts.push(`${formatTokens(this.status.tokens)} tok`)
     // The model last, at the edge: what /model changed, next to where it was asked. On a narrow line
     // it is the first to go.
     const withModel = [...parts, ...(this.status.connected && this.status.model !== '' ? [this.status.model] : [])].join(' · ')
     const right = x + 2 + stringWidth(withModel) <= screen.cols - 1 ? withModel : parts.join(' · ')
-    if (right !== '') screen.put(Math.max(x + 2, screen.cols - 1 - stringWidth(right)), y, right, s(theme.status))
-  }
-
-  private infoLine(): string {
-    return [this.status.model, this.shownWorkspace(), this.status.session && `session ${this.status.session}`].filter(Boolean).join(' · ')
+    if (right === '') return
+    const at = Math.max(x + 2, screen.cols - 1 - stringWidth(right))
+    screen.put(at, y, right, s(theme.status))
+    // The context bar in yellow past 70% and red past 90%, as pi colours it: the turns left are few.
+    const pct = this.status.contextPct
+    if (pct !== null && pct > 70 && right.startsWith('ctx ')) screen.put(at, y, parts[0], s(pct > 90 ? theme.danger : theme.warn))
   }
 
   /** The workspace as shown: under the home directory as ~, so a screen, or a recording of one, does not

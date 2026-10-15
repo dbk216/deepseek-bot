@@ -35,6 +35,11 @@ export interface JobItem {
 /** What the conversation's own session has cost so far, and how full its context is. */
 export interface Usage {
   tokens: number
+  /** Sent (input, cached or not) and received (output), when the harness counts them apart. */
+  input?: number
+  output?: number
+  /** Of the input, what the provider's cache served. */
+  cached?: number
   /** Percent of the model's context window in use, or null when the harness does not say. */
   contextPct: number | null
 }
@@ -75,6 +80,13 @@ function tokensOf(usage: any): number {
   if (usage === null || typeof usage !== 'object') return 0
   return ['uncachedInputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'outputTokens']
     .reduce((sum, k) => sum + (Number.isFinite(usage[k]) ? Number(usage[k]) : 0), 0)
+}
+
+/** Sent and received apart: the input however it was cached, and the output. Nothing when there is no usage. */
+function splitOf(usage: any): { input?: number; output?: number; cached?: number } {
+  if (usage === null || typeof usage !== 'object') return {}
+  const n = (k: string) => (Number.isFinite(usage[k]) ? Number(usage[k]) : 0)
+  return { input: n('uncachedInputTokens') + n('cacheReadTokens') + n('cacheWriteTokens'), output: n('outputTokens'), cached: n('cacheReadTokens') }
 }
 
 export function createBridge(services: Services, log: (...parts: unknown[]) => void, words: Strings['gateway'] = t().gateway) {
@@ -169,6 +181,7 @@ export function createBridge(services: Services, log: (...parts: unknown[]) => v
         jobs: jobs(root, list.map((a) => a.id)),
         usage: {
           tokens: tokensOf(values.tokenUsage),
+          ...splitOf(values.tokenUsage),
           contextPct: Number.isFinite(window) && window > 0 && Number.isFinite(used) ? Math.round((used / window) * 1000) / 10 : null,
         },
       }

@@ -6,8 +6,8 @@
  * and VCS folders, and not through links; the listing is kept for a few seconds so typing stays
  * fast. It is synchronous, which the budget is there to make tolerable.
  */
-import { readdirSync, type Dirent } from 'node:fs'
-import { basename, join } from 'node:path'
+import { readdirSync, readFileSync, type Dirent } from 'node:fs'
+import { basename, isAbsolute, join, resolve } from 'node:path'
 
 const SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.omc', '.cache', '__pycache__', '.venv', '.next', '.dsh'])
 const MAX_ENTRIES = 5000
@@ -61,5 +61,31 @@ export function fileFinder(now: () => number = () => Date.now(), read: ReadDirec
       .filter((path) => path.toLowerCase().includes(q))
       .sort((a, b) => rank(a) - rank(b) || a.length - b.length || a.localeCompare(b))
       .slice(0, limit)
+  }
+}
+
+/**
+ * The branch a directory's work tree is on, read from its own `.git` (a worktree's `.git` file names
+ * its gitdir): the branch's name, a detached head's short hash, or null outside a repository. Only
+ * the directory itself is looked at, not its parents: the workspace is the agent's own.
+ */
+export function gitBranch(dir: string): string | null {
+  try {
+    let gitdir = join(dir, '.git')
+    let head: string
+    try {
+      head = readFileSync(join(gitdir, 'HEAD'), 'utf8')
+    } catch {
+      const pointer = /^gitdir:\s*(.+)$/m.exec(readFileSync(gitdir, 'utf8'))
+      if (pointer === null) return null
+      gitdir = isAbsolute(pointer[1].trim()) ? pointer[1].trim() : resolve(dir, pointer[1].trim())
+      head = readFileSync(join(gitdir, 'HEAD'), 'utf8')
+    }
+    const ref = /^ref:\s*refs\/heads\/(.+)$/m.exec(head)
+    if (ref !== null) return ref[1].trim()
+    const hash = /^([0-9a-f]{7,64})\s*$/.exec(head.trim())
+    return hash === null ? null : hash[1].slice(0, 7)
+  } catch {
+    return null
   }
 }

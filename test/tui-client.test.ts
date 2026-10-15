@@ -250,14 +250,14 @@ async function until(predicate, ms = 3000) {
   connection.start()
   check('connect: the screen shows the gateway as connected', await until(() => app.status.connected && !term.screen.text().includes('○')))
   const conversation = connection.conversation
-  check('connect: the gateway assigned a conversation, shown in the header', typeof conversation === 'string' && term.screen.text().includes(conversation.slice(0, 12)))
-  bind(app, { type: 'panel', agents: [], jobs: [], usage: { tokens: 8100, contextPct: 23.4 } })
+  check('connect: the gateway assigned a conversation, shown in the welcome box', typeof conversation === 'string' && term.screen.text().includes(conversation.slice(0, 8)))
+  bind(app, { type: 'panel', agents: [], jobs: [], usage: { tokens: 8100, contextPct: 23.4, input: 8000, output: 100, cached: 2000 } })
   bind(app, { type: 'ready', version: 1, conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
   bind(app, { type: 'ready', version: 1, language: 'zh', conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
   check('language: a gateway that names another language (an older one) leaves the terminal in English', words().hints.idle(false) === '? for shortcuts' && await until(() => term.screen.text().includes('? for shortcuts')) && !term.screen.text().includes('发送'))
-  await until(() => term.screen.text().includes('8.1k tok'))
-  check('usage: the conversation\'s tokens and context fill the status line', /ctx ▰▰▱▱▱▱▱▱ 23% · 8\.1k tok/.test(term.screen.text()), term.screen.text().split('\n').find((l) => l.includes('tok')))
-  check('model: the gateway\'s model is named in the info line', term.screen.text().includes('deepseek-v4.1 · /home/agent'))
+  await until(() => term.screen.text().includes('↑8.0k'))
+  check('usage: the conversation\'s tokens, sent and received, the cache\'s share and its context fill the status line', /ctx ▰▰▱▱▱▱▱▱ 23% · ↑8\.0k ↓100 · cache 25%/.test(term.screen.text()), term.screen.text().split('\n').find((l) => l.includes('ctx')))
+  check('model: the gateway\'s model and workspace are named in the welcome box', term.screen.text().includes('deepseek-v4.1') && term.screen.text().includes('/home/agent'))
 
   term.type('배포 일정\r')
   check('round trip: the message reached the gateway as this conversation', await until(() => received.length === 1) && received[0].target.threadTs === conversation && received[0].text === '배포 일정')
@@ -385,7 +385,7 @@ for (const platform of ['win32', 'darwin']) {
   check('/sessions: the command itself is not echoed as a message', !term.screen.text().includes('› /sessions'))
   const listRow = term.screen.find('2. 배포 일정 정리해줘')?.row ?? -1
   const hintRow = term.screen.text().split('\n').findIndex((l) => l.includes('↑↓ pick'))
-  check('/sessions: the list is at the bottom in the input box\'s place, right above the hint line', listRow >= 0 && term.screen.find('╭') === null && hintRow > listRow && hintRow - listRow <= 4, `list row ${listRow}, hint row ${hintRow}`)
+  check('/sessions: the list is at the bottom in the input box\'s place, right above the hint line', listRow >= 0 && !term.screen.text().includes('│ ›') && hintRow > listRow && hintRow - listRow <= 4, `list row ${listRow}, hint row ${hintRow}`)
   term.type('\x1b[B\r')
   check('/sessions: ↓ then ↵ resumes the second one', await until(() => connection.conversation === 'conv-a' && app.status.session === 'conv-a'))
   check('/resume: the earlier messages are shown', await until(() => term.screen.text().includes('earlier in this conversation') && term.screen.text().includes('staging 먼저.')))

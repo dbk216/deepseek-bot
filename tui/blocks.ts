@@ -5,11 +5,11 @@
  * what changed. The answer being streamed is the one mutable block: deltas append to it, a failed
  * attempt is dropped from it, and the end replaces it with the committed text.
  */
-import { banner } from './render/banner.js'
+import { mark, MARK_WIDTH } from './render/banner.js'
 import { t } from './strings.js'
 import { palette, sgr, theme, type ColorMode } from './render/style.js'
 import { blink, currentFrame, shimmer } from './render/motion.js'
-import { stringWidth } from './render/width.js'
+import { fit, stringWidth } from './render/width.js'
 import { layout, type Line, type Span } from './render/text.js'
 import { markdown, type MarkdownStyles } from './render/markdown.js'
 import { lineDiff } from './render/linediff.js'
@@ -316,18 +316,52 @@ export function noticeBlock(text: string, kind: NoticeKind, mode: ColorMode): Bl
   return { id: nextId('notice'), version: 0, lines: (width) => layout(text, width, style, { first: pad(mark, style), rest: pad('  ') }) }
 }
 
-/** The banner, and one line saying where this terminal is connected. */
-export function bannerBlock(info: () => string, mode: ColorMode): Block & { refresh(): void } {
+/** What the welcome box says. */
+export interface Welcome { version: string; model: string; workspace: string; session: string }
+
+/**
+ * The welcome box at the top of a conversation, as Claude Code opens with its own: the mark, the name and
+ * version, the model, where it works, and the keys to start with. A screen too narrow for the mark gets the
+ * words alone.
+ */
+export function welcomeBlock(info: () => Welcome, mode: ColorMode): Block & { refresh(): void } {
+  const border = sgr(theme.border, mode)
   const block = {
-    id: nextId('banner'),
+    id: nextId('welcome'),
     version: 0,
     refresh() { block.version++ },
     lines(width: number): Line[] {
+      const i = info()
+      const words: Array<{ text: string; style: string }> = [
+        { text: `deepseek-bot${i.version !== '' ? ` v${i.version}` : ''}`, style: sgr(theme.brand, mode) },
+        { text: i.model, style: sgr(theme.text, mode) },
+        { text: [i.workspace, i.session !== '' ? `session ${i.session.slice(0, 8)}…` : ''].filter(Boolean).join(' · '), style: sgr(theme.muted, mode) },
+        { text: '', style: '' },
+        { text: t().welcomeKeys, style: sgr(theme.muted, mode) },
+      ]
+      const box = Math.max(20, Math.min(width - 2, 84))
+      const inner = box - 4
+      const withMark = inner >= MARK_WIDTH + 4 + 24
+      const marks = withMark ? mark(mode) : []
+      const rows = withMark ? marks.length : words.length
+      const offset = withMark ? marks.length - words.length : 0
+      const content: Line[] = []
+      for (let r = 0; r < rows; r++) {
+        const left = withMark ? marks[r] : null
+        const word = words[r - offset]
+        const room = inner - (left !== null ? MARK_WIDTH + 4 : 0)
+        const said = word === undefined ? '' : fit(word.text, room)
+        const spans = [pad(' '), pad('│ ', border)]
+        if (left !== null) spans.push(pad(left.text, left.style), pad('    '))
+        if (said !== '') spans.push({ text: said, style: word!.style })
+        spans.push(pad(' '.repeat(Math.max(0, room - stringWidth(said)))), pad(' │', border))
+        content.push({ spans, soft: false })
+      }
       return [
         blank(),
-        ...banner(width, mode),
-        blank(),
-        { spans: [pad('  '), { text: 'deepseek-bot', style: sgr(theme.brand, mode) }, { text: `  ${info()}`, style: sgr(theme.muted, mode) }], soft: false },
+        { spans: [pad(' '), pad(`╭${'─'.repeat(box - 2)}╮`, border)], soft: false },
+        ...content,
+        { spans: [pad(' '), pad(`╰${'─'.repeat(box - 2)}╯`, border)], soft: false },
       ]
     },
   }

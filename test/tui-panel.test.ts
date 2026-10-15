@@ -120,6 +120,8 @@ function services(overrides = {}) {
   check('bridge: a non-resident child is read through a read-only lease, and the lease is released', two.status === 'done' && two.tokens === 50 && svc.calls.some((c) => c[0] === 'observe' && c[1] === 'child-2' && c[2] === 'all') && svc.calls.some((c) => c[0] === 'dispose' && c[1] === 'child-2'))
   check('bridge: jobs of the root and its children, each once', panel.jobs.map((j) => j.id).join(',') === 'bash-1,bash-0', panel.jobs.map((j) => j.id).join(','))
   check('bridge: the conversation\'s own usage and context, from its root session', panel.usage.tokens === 8100 && panel.usage.contextPct === 25, JSON.stringify(panel.usage))
+  check('bridge: and its tokens apart, sent and received', panel.usage.input === 8000 && panel.usage.output === 100, JSON.stringify(panel.usage))
+  check('bridge: and how much of what was sent the cache served', panel.usage.cached === 2000, JSON.stringify(panel.usage))
   check('bridge: the first sight of each shape is logged once', logs.filter((l) => l.includes('first subagent catalog entry')).length === 1)
 
   const lines = await bridge.transcript('child-1')

@@ -11,13 +11,13 @@
  * only the screen, so quitting loses nothing and `--resume` picks the conversation up again.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { constants } from 'node:os'
 import { App } from './app.js'
 import { Connection, discover, lookup } from './client.js'
 import { bind, commandInfo, createCommands, HARNESS_CLI, parseArgs, resumeHint, route, usage, type Commands } from './cli.js'
 import { t } from './strings.js'
-import { fileFinder } from './files.js'
+import { fileFinder, gitBranch } from './files.js'
 import { appendHistory, historyFile, loadHistory } from './history.js'
 import { processIO, restoreOnExit } from './render/terminal.js'
 import { gateway, processIO as gatewayIO } from '../service/gateway.js'
@@ -33,6 +33,11 @@ function forward(argv: string[]): never {
   const run = /\.[cm]?js$/i.test(bin) ? spawnSync(process.execPath, [bin, ...argv], { stdio: 'inherit' }) : spawnSync(bin, argv, { stdio: 'inherit' })
   if (run.error) { process.stderr.write(`dsh: ${run.error.message}\n`); process.exit(127) }
   process.exit(run.signal ? 128 + (constants.signals[run.signal] ?? 0) : (run.status ?? 1))
+}
+
+/** This checkout's version, from its package.json two levels above the build (dist/tui/main.js); none if unreadable. */
+function ownVersion(): string {
+  try { return String(JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version ?? '') } catch { return '' }
 }
 
 function main(): void {
@@ -64,11 +69,13 @@ function main(): void {
   const findFiles = fileFinder()
   const history = historyFile(process.env)
   const app = new App({
+    version: ownVersion(),
     intercept: (text) => commands?.intercept(text) ?? false,
     commands: commandInfo,
     files: (query) => findFiles(app.status.workspace, query),
     remember: (text) => appendHistory(history, text),
     stepEffort: () => commands?.stepEffort(),
+    branchOf: gitBranch,
     io: processIO(process.stdin, process.stdout),
     env: process.env,
     platform: process.platform,

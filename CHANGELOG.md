@@ -35,6 +35,13 @@ the caveat about version numbers is at the bottom.
   replaces the messenger there (the guided setup asks first); the old one's tokens stay, its channel
   ids give way to every channel and its people to the ones given. `--yes`, which guarded a `*` that
   opened several messengers at once, is gone.
+- **The terminal opens with a welcome box, and its footer says more.** In place of six rows of block
+  letters and a header row: a box with the mark (the README's whale), `deepseek-bot` and its version, the
+  model, the workspace and session, and where to start; a narrow screen gets the words alone, and a
+  header row shows only in a subagent's or a shell's view. The context bar turns yellow past 70% and red
+  past 90%; tokens read as sent `↑` and received `↓`, with the share the provider's cache served; and the
+  hint line under the box ends with the workspace, its git branch when it is a repository, and the
+  conversation. While the answer streams, the status line says `Working…`, not the last tool's name.
 - **The terminal's status line, approvals and hints as Claude Code has them.** A running turn is one
   indicator, `✻ Thinking… (12s · esc to interrupt)`, in place of a label and a second spinner with the
   elapsed time; an approval shows the request's first line and its options numbered, answered with

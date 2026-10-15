@@ -128,9 +128,11 @@ const en = {
   /** After the working label: how long, and how to stop it. */
   runningFor: (seconds: number, esc: boolean) => ` (${seconds}s${esc ? ' · esc to interrupt' : ''})`,
   effortNext: (effort: string) => `effort ${effort} from the next turn`,
+  cacheShare: (pct: number) => `cache ${pct}%`,
   choiceTitle: 'Choose one',
   moreKeys: (n: number) => `+${n} more · /help lists them all`,
   shortcutsTitle: 'Shortcuts',
+  welcomeKeys: '/help for help · ? for shortcuts · esc to interrupt',
   queued: 'queued',
   queuedCount: (n: number) => `${n} queued`,
   shells: (n: number) => `${n} shell${n === 1 ? '' : 's'}`,
