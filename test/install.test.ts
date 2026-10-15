@@ -87,7 +87,54 @@ check('a DSH_HOME elsewhere is refused before anything is written', withHelpers(
 // stale file, is a probe that does not match the checkout. Each installer is sourced from a copy of the
 // repository's layout, so "no build" is real and the copy lands in scratch directories.
 const script = readFileSync(INSTALL, 'utf8')
-const build = script.indexOf('npm run --silent build')
+const build = script.indexOf('build_checkout "$DEEPBOT_DIR"')
+// The build, with stand-ins for pnpm and npm. npm does not read pnpm-lock.yaml and wrote a package-lock.json
+// into the checkout; pnpm writes its errors and its prompts to stdout, which the installer threw away, so a
+// failed install ended in nothing; and the checkout's prepare script built it a second time.
+{
+  const bin = join(dir, 'fake-pm')
+  const checkout = join(dir, 'fake-checkout')
+  const calls = join(dir, 'pm-calls')
+  const build = (pnpm: string | null, npm: string) => {
+    rmSync(bin, { recursive: true, force: true }); mkdirSync(bin, { recursive: true })
+    rmSync(calls, { force: true }); rmSync(join(checkout, 'dist'), { recursive: true, force: true }); mkdirSync(checkout, { recursive: true })
+    const stub = (name, body) => { writeFileSync(join(bin, name), `#!/bin/bash\necho "${name} $*" >> '${calls}'\n${body}\n`); chmodSync(join(bin, name), 0o755) }
+    if (pnpm !== null) stub('pnpm', pnpm)
+    stub('npm', `if [ "$1" = run ]; then mkdir -p dist && touch dist/index.js; exit 0; fi\n${npm}`)
+    const r = withHelpers(`build_checkout '${checkout}' 2>&1`, { PATH: `${bin}:/usr/bin:/bin` })
+    return { ...r, calls: existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [] }
+  }
+  const pnpmWorks = build('exit 0', 'exit 0')
+  check('build: with pnpm, it installs from the lockfile, runs no install scripts, asks nothing, and builds once',
+    pnpmWorks.code === 0 && JSON.stringify(pnpmWorks.calls) === JSON.stringify(['pnpm install --frozen-lockfile --ignore-scripts --config.confirmModulesPurge=false', 'npm run --silent build']), JSON.stringify(pnpmWorks.calls))
+  const stale = build('echo " ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with frozen-lockfile"; exit 1', 'exit 0')
+  check('build: a pnpm that fails is shown, on stdout as pnpm writes it, and npm is tried',
+    stale.code === 0 && stale.out.includes('ERR_PNPM_OUTDATED_LOCKFILE') && stale.calls[1]?.startsWith('npm install --no-package-lock --ignore-scripts'), stale.out)
+  const npmOnly = build(null, 'exit 0')
+  check('build: without pnpm, npm installs with no package-lock.json and no install scripts, then builds once',
+    npmOnly.code === 0 && npmOnly.calls.length === 2 && npmOnly.calls[0].startsWith('npm install --no-package-lock --ignore-scripts') && npmOnly.calls[1] === 'npm run --silent build', JSON.stringify(npmOnly.calls))
+  const broken = build(null, 'echo "npm ERR! boom-4f5"; exit 1')
+  check('build: an npm that fails stops the install, and says what npm said', broken.code !== 0 && broken.out.includes('npm ERR! boom-4f5') && !broken.calls.includes('npm run --silent build'), broken.out)
+}
+// init.sh built again what install.sh had just built. A dry run of a copy of it, so nothing is written.
+{
+  const copy = join(dir, 'init-copy')
+  mkdirSync(join(copy, 'repo'), { recursive: true })
+  copyFileSync(join(dirname(INSTALL), 'init.sh'), join(copy, 'repo', 'init.sh'))
+  const dry = (installer: boolean, built: boolean) => {
+    rmSync(join(copy, 'repo', 'dist'), { recursive: true, force: true })
+    if (built) { mkdirSync(join(copy, 'repo', 'dist'), { recursive: true }); writeFileSync(join(copy, 'repo', 'dist', 'index.js'), '') }
+    try {
+      return execFileSync('/bin/bash', [join(copy, 'repo', 'init.sh'), '--dry-run', '--home', join(copy, 'home', 'agent'), '--profile', 'probe'],
+        { encoding: 'utf8', env: { ...process.env, HOME: join(copy, 'home'), DSH_HOME: join(copy, 'home', '.dsh'), ...(installer ? { DEEPBOT_INSTALLER: '1' } : {}) }, stdio: 'pipe' })
+    } catch (e) { return String(e.stdout ?? '') }
+  }
+  check('init.sh: called by the installer after its build, it does not build again', dry(true, true).includes('built   dist/ (by the installer)'))
+  // It reached its build step and took the build branch (a crash would print neither line).
+  const builds = (out: string) => !out.includes('(by the installer)') && /install dev dependencies|would run/.test(out)
+  check('init.sh: with no build yet, or run on its own, it builds', builds(dry(true, false)) && builds(dry(false, true)))
+  check('install.sh calls it as the installer', /DEEPBOT_INSTALLER=1 [^\n]*init\.sh/.test(script))
+}
 check('install.sh builds before the installers copy from the build',
   build !== -1 && build < script.indexOf('/service/install-health.sh"') && build < script.indexOf('/watch/install-watch.sh"'))
 const repo = join(dir, 'repo')
@@ -182,8 +229,8 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   check('provider: DeepSeek\'s own route writes nothing', ds.code === 0 && ds.out === '', JSON.stringify(ds))
   const bad = (args) => withHelpers(`valid_endpoint ${args}`).code !== 0
   check('provider: what goes into the YAML is checked — a URL with a quote, a model with a space, a bad key name, a window that is not a number',
-    bad(`"https://x.example/v1'; rm" model KEY 1000`) && bad(`https://x.example/v1 'bad model' KEY 1000`) && bad(`https://x.example/v1 model 1KEY 1000`)
-    && bad(`https://x.example/v1 model KEY lots`) && bad(`ftp://x.example model KEY 1000`)
+    bad(`"https://x.example/v1'; rm" model ACME_API_KEY 1000`) && bad(`https://x.example/v1 'bad model' ACME_API_KEY 1000`) && bad(`https://x.example/v1 model 1KEY 1000`)
+    && bad(`https://x.example/v1 model ACME_API_KEY lots`) && bad(`ftp://x.example model ACME_API_KEY 1000`)
     && withHelpers(`valid_endpoint https://llm.example.com/v1 vendor/model-x:free MY_KEY 128000`).code === 0)
   check('provider: a custom key name is one of its own — not a name the deployment uses, not a YAML word, and ends in _KEY',
     bad(`https://x.example/v1 model SLACK_BOT_TOKEN 1000`) && bad(`https://x.example/v1 model DEEPSEEK_API_KEY 1000`) && bad(`https://x.example/v1 model OG_API_KEY 1000`)
@@ -191,10 +238,48 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   check('provider: plain http only to this machine — a key would cross the network in clear text',
     bad(`http://llm.example.com/v1 model ACME_API_KEY 1000`) && withHelpers('valid_endpoint http://localhost:8080/v1 model ACME_API_KEY 1000').code === 0 && withHelpers('valid_endpoint http://127.0.0.1:8080/v1 model ACME_API_KEY 1000').code === 0)
   check('provider: the context window is written as a number, leading zeros dropped', /^ {12}contextWindow: 128000$/m.test(withHelpers(`provider_rows custom ACME_API_KEY 'https://x.example/v1' m 0128000 no`).out))
+  // Shell arithmetic wraps at 2^64: 18446744073709551716 was taken and written as 100, a 20-digit window as another
+  // number. A window is refused past nine digits, below any value that could wrap; leading zeros still count as none.
+  check('provider: a context window too large for shell arithmetic is refused, not written as another number',
+    bad(`https://x.example/v1 model ACME_API_KEY 18446744073709551716`) && bad(`https://x.example/v1 model ACME_API_KEY 99999999999999999999`)
+    && bad(`https://x.example/v1 model ACME_API_KEY 1000000000`) && bad(`https://x.example/v1 model ACME_API_KEY 0`)
+    && withHelpers('valid_endpoint https://x.example/v1 model ACME_API_KEY 999999999').code === 0
+    && withHelpers('valid_endpoint https://x.example/v1 model ACME_API_KEY 000000000000128000').code === 0
+    && /^ {6}valid_window "\$window" \|\| die "context window: [^"]*\(got: \$window\)"$/m.test(readFileSync(INSTALL, 'utf8')))
   // A rerun reads the key of the route the default model names, whatever the comments, the indent, or other routes.
   writeFileSync(join(dir, 'two-routes.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      speech:\n        apiKeyEnv: OPENAI_API_KEY\n      og:\n          apiKeyEnv: OG_API_KEY   # the gateway\n\n- id: agent-default-model\n  config:\n    provider: og\n    model: x\n`)
   check('provider: a route key that is not a variable name is not asked for or written', withHelpers('usable_key_name "!!js process.env.X"').code !== 0 && withHelpers('usable_key_name OG_API_KEY').code === 0)
   check('provider: a rerun reads the key of the default model\'s route, past comments, indents and other routes', withHelpers(`profile_key "${join(dir, 'two-routes.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'two-routes.yml')}"`).out)
+  // A route key written in quotes, and a row right after the default model that is not an `- id:` row (an
+  // `- insert:` with a provider of its own): both used to fall back to DEEPSEEK_API_KEY or another route's key.
+  writeFileSync(join(dir, 'quoted.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      'og':\n        apiKeyEnv: OG_API_KEY\n- id: agent-default-model\n  config:\n    provider: "og"\n`)
+  check('provider: a quoted route key and a quoted provider are read', withHelpers(`profile_key "${join(dir, 'quoted.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'quoted.yml')}"`).out)
+  // Only `- id:` reset the route search: a `- name:` row with routes of its own between them gave its key.
+  // (llm-pi-ai's own og route names no key here, so the first key found cannot be its own by accident.)
+  writeFileSync(join(dir, 'name-between.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        baseUrl: x\n- name: tts\n  config:\n    providers:\n      og:\n        apiKeyEnv: TTS_KEY\n- id: agent-default-model\n  config:\n    provider: og\n`)
+  check('provider: routes in a row that is not llm-pi-ai are not its routes', withHelpers(`profile_key "${join(dir, 'name-between.yml')}"`).out === 'DEEPSEEK_API_KEY', withHelpers(`profile_key "${join(dir, 'name-between.yml')}"`).out)
+  // A route with no key followed by one written with an anchor: the anchored one's key was taken for it.
+  writeFileSync(join(dir, 'anchor.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        baseUrl: x\n      og2: &o2\n        apiKeyEnv: OG2_KEY\n- id: agent-default-model\n  config:\n    provider: og\n`)
+  check('provider: another route\'s key is not taken for a route with none', withHelpers(`profile_key "${join(dir, 'anchor.yml')}"`).out === 'DEEPSEEK_API_KEY', withHelpers(`profile_key "${join(dir, 'anchor.yml')}"`).out)
+  // A provider nested deeper in the default model's config was taken for the model's own.
+  writeFileSync(join(dir, 'nested.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n      og2:\n        apiKeyEnv: OG2_KEY\n- id: agent-default-model\n  config:\n    provider: og\n    fallback:\n      provider: og2\n`)
+  check('provider: a provider nested in the default model\'s config is not the model\'s', withHelpers(`profile_key "${join(dir, 'nested.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'nested.yml')}"`).out)
+  // The harness keeps the last row of an id (a config block replaces the whole config): the last default model,
+  // and the last llm-pi-ai's routes.
+  writeFileSync(join(dir, 'two-rows.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n      custom:\n        apiKeyEnv: CUSTOM_API_KEY\n- id: agent-default-model\n  config:\n    provider: og\n- id: agent-default-model\n  config:\n    provider: custom\n`)
+  check('provider: of two default-model rows, the last is the model', withHelpers(`profile_key "${join(dir, 'two-rows.yml')}"`).out === 'CUSTOM_API_KEY', withHelpers(`profile_key "${join(dir, 'two-rows.yml')}"`).out)
+  writeFileSync(join(dir, 'two-routes-rows.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_NEW_KEY\n- id: agent-default-model\n  config:\n    provider: og\n`)
+  check('provider: of two llm-pi-ai rows, the last one\'s routes count', withHelpers(`profile_key "${join(dir, 'two-routes-rows.yml')}"`).out === 'OG_NEW_KEY', withHelpers(`profile_key "${join(dir, 'two-routes-rows.yml')}"`).out)
+  // And a route the last row no longer has is gone, not kept from the row before.
+  writeFileSync(join(dir, 'route-gone.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n- id: llm-pi-ai\n  config:\n    providers:\n      other:\n        apiKeyEnv: OTHER_KEY\n- id: agent-default-model\n  config:\n    provider: og\n`)
+  check('provider: a route the last llm-pi-ai row dropped is not read from the row before', withHelpers(`profile_key "${join(dir, 'route-gone.yml')}"`).out === 'DEEPSEEK_API_KEY', withHelpers(`profile_key "${join(dir, 'route-gone.yml')}"`).out)
+  // Only the route's own key: one deeper (a model entry's) is not it.
+  writeFileSync(join(dir, 'inner-key.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n        models:\n          - id: m\n            apiKeyEnv: INNER_KEY\n- id: agent-default-model\n  config:\n    provider: og\n`)
+  check('provider: a key nested under the route is not the route\'s', withHelpers(`profile_key "${join(dir, 'inner-key.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'inner-key.yml')}"`).out)
+  writeFileSync(join(dir, 'quoted-id.yml'), `- id: 'llm-pi-ai'\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n- id: "agent-default-model"\n  config:\n    provider: og\n`)
+  check('provider: quoted ids are read', withHelpers(`profile_key "${join(dir, 'quoted-id.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'quoted-id.yml')}"`).out)
+  writeFileSync(join(dir, 'insert-after.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      og:\n        apiKeyEnv: OG_API_KEY\n      speech:\n        apiKeyEnv: OPENAI_API_KEY\n- id: agent-default-model\n  config:\n    provider: og\n- insert:\n    - id: tts\n      config:\n        provider: speech\n`)
+  check('provider: a provider in a row after the default model is not taken for its own', withHelpers(`profile_key "${join(dir, 'insert-after.yml')}"`).out === 'OG_API_KEY', withHelpers(`profile_key "${join(dir, 'insert-after.yml')}"`).out)
   writeFileSync(join(dir, 'with-og.yml'), `- id: deepbot\n  config:\n    platform: slack\n${og.out}\n`)
   check('provider: a rerun reads back the key the profile names, and DeepSeek\'s when it names none',
     withHelpers(`profile_key "${join(dir, 'with-og.yml')}"`).out === 'OG_API_KEY' && withHelpers(`profile_key "${join(dir, 'missing.yml')}"`).out === 'DEEPSEEK_API_KEY')

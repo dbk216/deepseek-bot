@@ -43,7 +43,8 @@ export type ClientFrame =
   | { type: 'effort'; step: 1 | -1 }
 
 export type ServerFrame =
-  | { type: 'ready'; version: number; language?: string; conversation: string; workspace: string; tenant: string | null; model: string; effort?: string | null; busy: number }
+  /** `stop` and `instant`: the words the core answers at once, without a turn (the stop words, and the usage word). */
+  | { type: 'ready'; version: number; language?: string; conversation: string; workspace: string; tenant: string | null; model: string; effort?: string | null; busy: number; stop?: string[]; instant?: string[] }
   | { type: 'models'; current: ModelChoice; items: ModelItem[] }
   /** What a conversation runs on now, to every terminal on it; `cause: 'effort'` when only the effort was stepped. */
   | { type: 'model'; current: ModelChoice; cause?: 'effort' }

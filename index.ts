@@ -59,7 +59,7 @@ import { createCompositeTransport } from './transports/composite.js'
 import { createProgressTracker } from './progress.js'
 import { languageOf } from './i18n.js'
 import { defaultWords, messages } from './messages.js'
-import { writeInside } from './safeWrite.js'
+import { markInstructionRoot, mkdirInside, resolvesInside, writeInside } from './safeWrite.js'
 import { createUsageTracker, emptyUsageStore } from './usage.js'
 import { createRecallContext, recallIndexPath } from './recallContext.js'
 import { analyzeNotes } from './notes.js'
@@ -70,7 +70,7 @@ import type { Origin, TurnOutcome, TurnSummary } from './types/core.js'
 import type {
   AgentDefaultModelService, AgentsService, LlmService, AgentPresetsService, AttachmentsService,
   CredentialsService, FileSystemService, PermissionPresetsService, SessionProjectionsService,
-  SessionQueryService, SessionsService, WorkspaceRegistryService,
+  SessionQueryService, SessionsService, SettingsService, WorkspaceRegistryService,
 } from './types/dsh.js'
 
 export const name = 'deepbot'
@@ -389,7 +389,7 @@ export function apply(ctx, config) {
   }
   let saveTimer = null
   function loadState() {
-    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, usage: emptyUsageStore() }
+    if (!existsSync(STATE)) return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, routes: {}, usage: emptyUsageStore() }
     try {
       const raw = JSON.parse(readFileSync(STATE, 'utf8'))
       return {
@@ -407,6 +407,8 @@ export function apply(ctx, config) {
         tenantOf: raw.tenantOf ?? {},
         // A conversation's own model, from /model.
         models: raw.models ?? {},
+        // The route each conversation last ran on, so a change of model is told to the model.
+        routes: raw.routes ?? {},
         usage: raw.usage ?? emptyUsageStore(),
         // Conversations with a turn accepted and not yet answered, so a restart can say what it lost.
         // This process's own start empty: what the previous one left is set aside below.
@@ -416,7 +418,7 @@ export function apply(ctx, config) {
         // this process's running turns for lost ones; and a new turn never finds an old record in its way.
         restartLost: { ...(raw.restartLost ?? {}), ...(raw.inflight ?? {}) },
       }
-    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, usage: emptyUsageStore() } }
+    } catch { return { sessions: {}, seen: {}, standing: {}, history: {}, touched: {}, tenantOf: {}, models: {}, routes: {}, usage: emptyUsageStore() } }
   }
   /**
    * Drop what has gone quiet.
@@ -446,6 +448,7 @@ export function apply(ctx, config) {
       delete state.history[key]
       if (state.tenantOf) delete state.tenantOf[key]
       if (state.models) delete state.models[key]
+      if (state.routes) delete state.routes[key]
       if (state.touched) delete state.touched[key]
       delete conversations[key]
       dropped++
@@ -594,7 +597,8 @@ export function apply(ctx, config) {
       .sort((a, b) => b.lastAt - a.lastAt)
       .slice(0, limit)
     const titles = new Map<string, string>()
-    const workspaces = new Set(await Promise.all(items.map((i) => cwdFor(i.key))))
+    // A tenant refused its directory has no titles to give, and must not take the rest of the list with it.
+    const workspaces = new Set((await Promise.all(items.map((i) => cwdFor(i.key).catch(() => null)))).filter((w): w is string => w !== null))
     for (const workspace of workspaces) {
       const file = recallIndexPath(workspace)
       if (!existsSync(file)) continue
@@ -644,23 +648,48 @@ export function apply(ctx, config) {
     return rows
   }
 
+  /**
+   * The harness reads AGENTS.md and CLAUDE.md from a session's directory up to the nearest `.git`. A
+   * directory is kept the root, every turn since the agent can remove it, only when one above it has a
+   * `.git`: with none, the loader stops there already, and a `.git` would be one more place to climb to
+   * (and turns on .gitignore rules for the grep tool). False when it is needed and could not be kept; a
+   * failure is said once until it recovers.
+   */
+  const rootFailures = new Set<string>()
+  function rootAbove(dir: string): boolean {
+    let at = dirname(resolve(dir))
+    for (;;) {
+      try { statSync(join(at, '.git')); return true } catch { /* none here */ }
+      const up = dirname(at)
+      if (up === at) return false
+      at = up
+    }
+  }
+  function keepInstructionRoot(guard: string, dir: string, strict = false): boolean {
+    if (!rootAbove(dir)) return true
+    try { markInstructionRoot(guard, dir, strict); rootFailures.delete(dir); return true } catch (e) {
+      if (!rootFailures.has(dir)) { rootFailures.add(dir); log(`instructions: could not keep ${dir} the instruction root — ${String((e as Error)?.message ?? e)}`) }
+      return false
+    }
+  }
+
   /** The directory a conversation works in: its tenant's, or the shared home. */
   async function cwdFor(key: string | null): Promise<string> {
     const tenant = tenantOf(key)
-    if (tenant === null) return await sessionCwd()
+    if (tenant === null) { const home = await sessionCwd(); keepInstructionRoot(home, home); return home }
     const root = typeof cfg.tenantRoot === 'string' && cfg.tenantRoot !== ''
       ? cfg.tenantRoot
       : join(await sessionCwd(), 'tenants')
     const dir = join(root, tenant)
     if (!isTenantName(tenant) || dirname(resolve(dir)) !== resolve(root)) throw new Error(`deepbot: invalid tenant name ${JSON.stringify(tenant)}`)
     // The default root is in the agent's home, which the agent can replace with a link: these writes
-    // run unconfined, so they are held to the home (or to the configured root) and never follow one.
-    const guard = typeof cfg.tenantRoot === 'string' && cfg.tenantRoot !== '' ? cfg.tenantRoot : await sessionCwd()
+    // run unconfined, so they are held to the home and never follow one. A configured root is the guard
+    // only when it is outside the home; inside it, the agent could replace it with a link as well.
+    const homeDir = await sessionCwd()
+    const configured = typeof cfg.tenantRoot === 'string' && cfg.tenantRoot !== '' ? cfg.tenantRoot : null
+    const guard = configured !== null && !resolve(configured).startsWith(resolve(homeDir) + sep) ? configured : homeDir
     if (!existsSync(dir)) {
-      // The marker stops the instruction loader climbing out of the tenant directory —
-      // without it a tenant inherits whatever AGENTS.md is above it, which is exactly the
-      // crossing this feature exists to prevent.
-      writeInside(guard, join(dir, '.deepbot-root'), `deepbot tenant ${tenant}\n`)
+      mkdirInside(guard, dir)
       const policy = tenantPolicy(tenant)
       const template = typeof policy.persona === 'string' && policy.persona !== '' ? policy.persona : cfg.tenantTemplateDir
       if (typeof template === 'string' && template !== '' && existsSync(template)) {
@@ -671,6 +700,13 @@ export function apply(ctx, config) {
         log(`tenant ${tenant} seeded from ${template}`)
       }
       log(`tenant ${tenant} created at ${dir}`)
+    }
+    // A tenant runs in its own directory, never one a link moved elsewhere, and is never handed the home's
+    // AGENTS.md or anything above it: refused, rather than run under them.
+    if (!resolvesInside(guard, dir) || !keepInstructionRoot(guard, dir, true)) {
+      const why = `tenant ${tenant}: refused — its directory ${dir} is not its own, or cannot be kept the instruction root, and the home's instructions would reach it`
+      log(why)
+      throw new Error(`deepbot: ${why}`)
     }
     return dir
   }
@@ -1383,7 +1419,9 @@ export function apply(ctx, config) {
       const nonce = randomUUID().replace(/-/g, '').slice(0, 8)
       const asked = await transport.post(target, [
         say.approvalNeeded(reason),
-        withButtons ? say.approvalHowButtons : say.approvalHowWords,
+        // The terminal: its buttons only. A word typed there waits behind the running turn, since the terminal
+        // cannot know an approval is pending.
+        target.channel === LOCAL_CHANNEL ? say.approvalHowTerminal : withButtons ? say.approvalHowButtons : say.approvalHowWords,
         say.approvalTimeout(Math.round(cfg.approvalTimeoutMs / 60000)),
       ].join('\n'), withButtons
         ? { buttons: [
@@ -2017,7 +2055,14 @@ export function apply(ctx, config) {
       // its own, before the marker: the recall indexer keeps only what follows the last
       // `[user message]`, so a marker carrying the name would index the whole preamble as speech.
       const speaker = typeof origin?.user === 'string' && origin.user !== '' ? `[speaker] <@${origin.user}>\n` : ''
-      const body = preamble === '' && speaker === '' ? prompt : `${preamble}${speaker}[user message]\n${prompt}`
+      // The model this conversation last ran on, told when it changed (by /model, a tenant's or the deployment's
+      // setting): the harness's own notice of a switch belongs to its model selection, which a plugin cannot
+      // install, and the model took the turns above for its own. Provider and model; an effort is not a model.
+      // Only on a session that had turns before this one: a fresh session has no turns above to speak of.
+      const route = `${agentOptions.provider}/${agentOptions.model}`
+      const ranOn = sessionKey === null || existingSessionId === undefined ? undefined : state.routes?.[sessionKey]
+      const switched = ranOn !== undefined && ranOn !== route ? `[model changed] The turns above were answered by ${defuse(ranOn)}; this one is answered by ${defuse(route)}.\n` : ''
+      const body = preamble === '' && speaker === '' && switched === '' ? prompt : `${switched}${preamble}${speaker}[user message]\n${prompt}`
       const refs = await admitImages(images)
       agent.followup(userMessage(refs.length === 0
         ? body
@@ -2051,6 +2096,9 @@ export function apply(ctx, config) {
         }
       } catch (e) { log(`token readout failed: ${String(e?.message ?? e)}`) }
       const outcome = summarize(agent.session, firstSeq)
+      // Recorded once the turn has answered: one the provider refused ended without throwing, with an error
+      // reason, and is not named later as having answered.
+      if (sessionKey !== null && (outcome.reason?.kind === 'completed' || outcome.text !== '')) state.routes = { ...(state.routes ?? {}), [sessionKey]: route }
       // The harness records a cancelled turn with no reason of its own, so the
       // adapter — which is the party that asked for the stop — supplies it. Without
       // this a stopped turn reached the user as "the turn did not complete
@@ -2157,14 +2205,53 @@ export function apply(ctx, config) {
   const llm = () => ctx.get('llm') as LlmService | undefined
   const providerId = (p: { id?: string; provider?: string }) => String(p.id ?? p.provider ?? '')
 
-  /** Every model the registered providers advertise, provider by provider. One that fails to list is left out, and logged. */
-  async function listModels(): Promise<Array<{ provider: string; id: string; name: string; description?: string }>> {
+  /**
+   * The providers whose key is not set, each with the key's name: a model on one fails every turn. Read as the
+   * harness's own Models page reads it — a provider's settings name its key (`apiKeyEnv`), and the credentials
+   * service, which looks where the harness looks, says whether it is set. A provider that names no key is not
+   * one, and the DeepSeek account, which signs in, is skipped by name as the harness skips it; with either
+   * service missing, none is. A key put in ~/.dsh/.env counts from the gateway's next start: the harness reads
+   * that file once, at launch.
+   */
+  const keylessLogged = new Set<string>()
+  async function keylessProviders(): Promise<Map<string, string>> {
+    const out = new Map<string, string>()
+    const service = llm()
+    const settings = ctx.get('settings') as SettingsService | undefined
+    const credentials = ctx.get('credentials') as CredentialsService | undefined
+    if (typeof service?.listConfigurableProviders !== 'function' || typeof settings?.describe !== 'function' || typeof credentials?.describe !== 'function') return out
+    try {
+      const namespaces = await settings.describe({ redactSecrets: true })
+      for (const p of service.listConfigurableProviders()) {
+        if (p.provider === 'deepseek-account') continue
+        let value: unknown = namespaces.find((n) => n.ns === p.settingsNs)?.value
+        for (const step of p.settingsPath ?? []) value = typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[step] : undefined
+        const ref = typeof value === 'object' && value !== null ? (value as Record<string, unknown>).apiKeyEnv : undefined
+        if (typeof ref !== 'string' || ref === '') continue
+        const info = await Promise.resolve().then(() => credentials.describe?.(ref)).catch((e) => {
+          // Kept in the list: a key that cannot be read is not known to be missing.
+          if (!keylessLogged.has(`${p.provider}?`)) { keylessLogged.add(`${p.provider}?`); log(`models: could not read whether ${p.provider}'s key (${ref}) is set — kept in /model: ${String((e as Error)?.message ?? e).slice(0, 120)}`) }
+          return undefined
+        })
+        if (info?.configured !== false) continue
+        out.set(p.provider, ref)
+        if (!keylessLogged.has(`${p.provider}:${ref}`)) { keylessLogged.add(`${p.provider}:${ref}`); log(`models: ${p.provider} has no key (${ref} is not set) — left out of /model`) }
+      }
+    } catch (e) {
+      if (!keylessLogged.has('')) { keylessLogged.add(''); log(`models: could not read which providers have a key: ${String((e as Error)?.message ?? e).slice(0, 160)}`) }
+    }
+    return out
+  }
+
+  /** Every model the registered providers advertise, provider by provider, but for those with no key. One that fails to list is left out, and logged. */
+  async function listModels(keyless?: Map<string, string>): Promise<Array<{ provider: string; id: string; name: string; description?: string }>> {
     const service = llm()
     if (service === undefined) return []
+    keyless ??= await keylessProviders()
     const out = []
     for (const p of service.listProviders()) {
       const id = providerId(p)
-      if (id === '') continue
+      if (id === '' || keyless.has(id)) continue
       try { out.push(...await service.listModels(id)) } catch (e) { log(`models: ${id} could not list: ${String((e as Error)?.message ?? e).slice(0, 160)}`) }
     }
     return out
@@ -2211,9 +2298,12 @@ export function apply(ctx, config) {
    * A conversation's own model, from the terminal's /model: only one the providers list, with an
    * effort that model takes. The next turn runs on it; a running one keeps its own. null clears it.
    */
-  async function setModel(key: string, choice: { provider: string; model: string; effort?: string | null } | null): Promise<null | { code: 'unknown-model' } | { code: 'effort'; efforts: string[] }> {
+  async function setModel(key: string, choice: { provider: string; model: string; effort?: string | null } | null): Promise<null | { code: 'unknown-model' } | { code: 'no-key'; ref: string } | { code: 'effort'; efforts: string[] }> {
     if (choice === null) { if (state.models) delete state.models[key]; saveStateNow(); return null }
-    const known = await listModels()
+    const keyless = await keylessProviders()
+    const ref = keyless.get(choice.provider)
+    if (ref !== undefined) return { code: 'no-key', ref }
+    const known = await listModels(keyless)
     if (!known.some((m) => m.provider === choice.provider && m.id === choice.model)) return { code: 'unknown-model' }
     const { efforts, defaultEffort } = await modelInfo(choice.provider, choice.model)
     if (choice.effort != null && !efforts.includes(choice.effort)) return { code: 'effort', efforts }

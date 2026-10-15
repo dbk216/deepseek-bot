@@ -42,13 +42,17 @@ env_language() {
 # OpenAI-compatible endpoint go through llm-pi-ai, whose route has to be written out in full: a
 # profile row's `config` replaces the bundle's, and the image input is read from `input` only.
 
+# A window of at most nine digits after any leading zeros: shell arithmetic wraps at 2^64, and a longer
+# number was written into the profile as another one (18446744073709551716 as 100).
+valid_window() { [[ $1 =~ ^0*[1-9][0-9]{0,8}$ ]]; }
+
 # A custom endpoint's answers go into the profile's YAML: nothing that could leave a quoted value, or
 # start a new key, gets through.
 valid_endpoint() {   # valid_endpoint <baseURL> <model> <keyRef> <contextWindow>
   local url_re='^https://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$' model_re='^[A-Za-z0-9._:/@+-]+$' ref_re='^[A-Z][A-Z0-9_]*_KEY$'
   # Plain http only to this machine: anywhere else the key would cross the network in clear text.
   local here_re='^http://(localhost|127\.0\.0\.1)(:[0-9]+)?(/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]*)?$'
-  { [[ $1 =~ $url_re ]] || [[ $1 =~ $here_re ]]; } && [[ $2 =~ $model_re ]] && [[ $3 =~ $ref_re ]] && [[ $4 =~ ^[0-9]+$ ]] && [ "$((10#$4))" -gt 0 ] || return 1
+  { [[ $1 =~ $url_re ]] || [[ $1 =~ $here_re ]]; } && [[ $2 =~ $model_re ]] && [[ $3 =~ $ref_re ]] && valid_window "$4" || return 1
   # A key of its own: one the deployment reads for something else would be sent to this endpoint.
   case "$3" in DEEPSEEK_API_KEY|OG_API_KEY|SLACK_*|TELEGRAM_*|DISCORD_*) return 1 ;; esac
 }
@@ -146,17 +150,55 @@ profile_key() {
   found="$(awk '
     function bare(s) { sub(/[[:space:]]*#.*$/, "", s); gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); gsub(/^["\047]|["\047]$/, "", s); return s }
     function indent(s) { match(s, /^[[:space:]]*/); return RLENGTH }
+    function row(s, name) { return s ~ ("^- id:[[:space:]]*[\"\047]?" name "[\"\047]?[[:space:]]*(#.*)?$") }
+    /^[[:space:]]*(#.*)?$/ { next }
     FNR == NR {
-      if ($0 ~ /^- id: /) dm = ($0 ~ /^- id: agent-default-model[[:space:]]*(#.*)?$/)
-      else if (dm && $0 ~ /^[[:space:]]+provider:/) { v = $0; sub(/^[[:space:]]+provider:/, "", v); want = bare(v) }
+      # Every top-level "- " starts another row. The last default-model row is the model (a config block
+      # replaces the whole config), and only its own provider counts, not one nested deeper.
+      if ($0 ~ /^- /) { dm = row($0, "agent-default-model"); cfg = -1; if (dm) { want = ""; taken = 0 } }
+      else if (dm && cfg < 0 && $0 ~ /^[[:space:]]+config:[[:space:]]*(#.*)?$/) cfg = indent($0)
+      else if (dm && cfg >= 0 && !taken && indent($0) == cfg + 2 && $0 ~ /^[[:space:]]+provider:/) { v = $0; sub(/^[[:space:]]+provider:/, "", v); want = bare(v); taken = 1 }
       next
     }
-    /^- id: / { pi = ($0 ~ /^- id: llm-pi-ai[[:space:]]*(#.*)?$/); prov = -1; route = ""; next }
+    # The last llm-pi-ai row'"'"'s routes, likewise.
+    /^- / { pi = row($0, "llm-pi-ai"); prov = -1; route = ""; if (pi) key = ""; next }
     pi && /^[[:space:]]+providers:[[:space:]]*(#.*)?$/ { prov = indent($0); next }
-    pi && prov >= 0 && indent($0) == prov + 2 && $0 ~ /^[[:space:]]+[A-Za-z0-9_.-]+:[[:space:]]*(#.*)?$/ { route = bare($0); sub(/:$/, "", route); next }
-    pi && route != "" && route == want && $0 ~ /^[[:space:]]+apiKeyEnv:/ { v = $0; sub(/^[[:space:]]+apiKeyEnv:/, "", v); print bare(v); exit }
+    # A line at the routes'"'"' indent names the next route, or, if it is not a plain key, ends the one before.
+    pi && prov >= 0 && indent($0) == prov + 2 {
+      if ($0 ~ /^[[:space:]]+["\047]?[A-Za-z0-9_.-]+["\047]?:[[:space:]]*(#.*)?$/) { r = $0; sub(/:[[:space:]]*(#.*)?$/, "", r); route = bare(r) } else route = ""
+      child = -1
+      next
+    }
+    # The route'"'"'s own key: at the indent of its first line, not one nested deeper (a model entry'"'"'s).
+    pi && route != "" && indent($0) > prov + 2 && child < 0 { child = indent($0) }
+    pi && route != "" && route == want && indent($0) == child && $0 ~ /^[[:space:]]+apiKeyEnv:/ { v = $0; sub(/^[[:space:]]+apiKeyEnv:/, "", v); key = bare(v); next }
+    END { print key }
   ' "$1" "$1" 2>/dev/null || true)"
   printf '%s\n' "${found:-DEEPSEEK_API_KEY}"
+}
+
+# Install the checkout's dependencies and build it. pnpm when it is there, from the lockfile the checkout
+# pins (npm does not read it); npm otherwise, without writing a package-lock.json of its own. Neither runs
+# install scripts: the checkout's own prepare would build it a second time. pnpm writes its errors, and its
+# prompts, to stdout: its output is kept and shown when it fails (it is told not to ask before removing a
+# node_modules from another pnpm), and npm is tried after it.
+build_checkout() {   # build_checkout <checkout>
+  local log
+  log="$(mktemp)"
+  if command -v pnpm >/dev/null; then
+    if (cd "$1" && pnpm install --frozen-lockfile --ignore-scripts --config.confirmModulesPurge=false) >"$log" 2>&1; then
+      (cd "$1" && npm run --silent build) >"$log" 2>&1 || { sed 's/^/      /' "$log" | tail -n 30 >&2; rm -f "$log"; die "the build failed (its output above)"; }
+      rm -f "$log"
+      return 0
+    fi
+    note "pnpm could not install; trying npm. pnpm said:"
+    tail -n 20 "$log" | sed 's/^/      /'
+  fi
+  if ! (cd "$1" && npm install --no-package-lock --ignore-scripts --no-audit --no-fund --loglevel=error) >"$log" 2>&1; then
+    sed 's/^/      /' "$log" | tail -n 30 >&2; rm -f "$log"; die "npm could not install the dependencies (its output above)"
+  fi
+  (cd "$1" && npm run --silent build) >"$log" 2>&1 || { sed 's/^/      /' "$log" | tail -n 30 >&2; rm -f "$log"; die "the build failed (its output above)"; }
+  rm -f "$log"
 }
 
 set_profile_language() {   # set_profile_language <patch> <en|ko|zh>
@@ -281,7 +323,7 @@ else
 fi
 
 step "building"
-( cd "$DEEPBOT_DIR" && npm install --no-audit --no-fund --loglevel=error >/dev/null && npm run --silent build )
+build_checkout "$DEEPBOT_DIR"
 [ -f "$DEEPBOT_DIR/dist/index.js" ] || die "the build produced no dist/index.js"
 note "dist/ ready"
 
@@ -302,8 +344,9 @@ if [ "$new_profile" -eq 1 ]; then
       ask key_ref "the name to keep its API key under?" CUSTOM_API_KEY
       ask window "the model's context window, in tokens?" 128000
       ask images "does the model read images (yes / no)?" no
+      valid_window "$window" || die "context window: a whole number of tokens from 1 to 999999999 (got: $window)"
       valid_endpoint "$base_url" "$model_id" "$key_ref" "$window" \
-        || die "the endpoint, model id, key name or context window has a character a profile cannot hold"
+        || die "the endpoint, model id or key name has a character a profile cannot hold"
       case "$images" in yes|no) ;; *) die "images: yes or no (got: $images)" ;; esac ;;
     *) die "unknown provider: $provider (deepseek, opengateway or custom)" ;;
   esac

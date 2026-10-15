@@ -16,7 +16,7 @@
 import './dist-fresh.ts'   // fails loudly on a stale dist
 import './scratch-dsh-home.ts'   // the recall index must not land in the real ~/.dsh
 
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, realpathSync } from 'node:fs'
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, realpathSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, basename } from 'node:path'
 import { apply } from '../dist/index.js'
@@ -575,7 +575,9 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   t.transport.deliver(t.transport.message({ text: '안녕' }))
   await sleep(400)
   check('the tenant directory exists after a message', existsSync(join(tenants, 'acme')), join(tenants, 'acme'))
-  check('it carries the marker that stops the instruction loader climbing out', existsSync(join(tenants, 'acme', '.deepbot-root')))
+  // The harness's loader climbs to the nearest .git: one in the tenant directory is where it stops.
+  // Nothing above it has a .git, so the instruction loader stops at the tenant's directory already (block 43).
+  check('no marker is made where none is needed', !existsSync(join(tenants, 'acme', '.git')) && !existsSync(join(tenants, 'acme', '.deepbot-root')))
   check('the template persona is seeded', existsSync(join(tenants, 'acme', 'SOUL.md')), readFileSync(join(tenants, 'acme', 'SOUL.md'), 'utf8').trim())
   check('non-markdown template files are not copied', !existsSync(join(tenants, 'acme', 'notes.txt')))
   check('creation and seeding are logged', t.logs.some((l) => /tenant acme created at/.test(l)) && t.logs.some((l) => /tenant acme seeded from/.test(l)))
@@ -1243,6 +1245,98 @@ for (const remove of [false, true]) {
   check('platform: two messengers are refused, named, with the command that switches to one', /platform: .*slack.*telegram/.test(two) && two.includes('dsh gateway setup'), two.split('\n')[1] ?? '(started)')
   check('platform: a platform listed twice is refused (it would connect twice)', /platform: .*twice/.test(refusal(['slack', 'slack'])) && /platform: .*twice/.test(refusal(['slack', 'local', 'local'])), refusal(['slack', 'slack']).split('\n')[1] ?? '(started)')
   check('platform: the four it knows, alone or with the terminal, start', refusal('slack') === '' && refusal('telegram') === '' && refusal('discord') === '' && refusal(['slack', 'local']) === '' && refusal('local') === '', [refusal('telegram'), refusal(['slack', 'local'])].join(' | ').slice(0, 160))
+}
+
+// 43. The harness reads AGENTS.md and CLAUDE.md from a session's directory up to the nearest .git. A home
+// under a directory with one (a dotfiles home) was handed that directory's files, and a tenant under a home
+// with one was handed the home's; the .deepbot-root marker meant to stop that was never read. A directory is
+// kept the root (an empty .git) only when one above it has a .git: with none above, the loader stops there
+// already, and a .git where none was needed would be a place for a tenant to climb to, and turns on .gitignore
+// rules for the grep tool. A tenant whose directory cannot be kept the root is refused its turn.
+{
+  const isRoot = (dir) => { try { return statSync(join(dir, '.git')).isDirectory() } catch { return false } }
+  const turn = async (t, channel, thread, text) => { const before = t.created.length; t.transport.deliver(t.transport.message({ text, target: { channel, threadTs: thread } })); await sleep(450); return t.created.length > before }
+  const config = { targetChannels: ['*'], tenantIsolation: true, tenantChannels: { C_ALLOWED: 'acme' } }
+
+  // Nothing above: no marker anywhere, and the turns run.
+  const bare = mkdtempSync(join(tmpdir(), 'home-'))
+  const a = boot({ home: bare, agent: 'answer', answer: { text: '응' }, config })
+  await sleep(80)
+  const homeRan = await turn(a, 'C_HOME', 'h1', '하나')
+  const tenantRan = await turn(a, 'C_ALLOWED', 'a1', '둘')
+  check('root: with no .git above, no marker is made, in the home or a tenant', homeRan && tenantRan && !isRoot(bare) && !isRoot(join(bare, 'tenants', 'acme')))
+  a.done()
+
+  // A .git above the home: the home and the tenant are kept roots, and stay so.
+  const above = mkdtempSync(join(tmpdir(), 'above-'))
+  mkdirSync(join(above, '.git'))
+  const home = join(above, 'home')
+  mkdirSync(home)
+  const t = boot({ home, agent: 'answer', answer: { text: '응' }, config })
+  await sleep(80)
+  await turn(t, 'C_HOME', 'h1', '하나')
+  await turn(t, 'C_ALLOWED', 'a1', '둘')
+  check('root: with a .git above, the home is kept the root', isRoot(home))
+  check('root: and so is a tenant directory', isRoot(join(home, 'tenants', 'acme')))
+  rmSync(join(home, '.git'), { recursive: true, force: true })
+  rmSync(join(home, 'tenants', 'acme', '.git'), { recursive: true, force: true })
+  symlinkSync(join(home, 'nowhere'), join(home, 'tenants', 'acme', '.git'))
+  await turn(t, 'C_HOME', 'h1', '셋')
+  await turn(t, 'C_ALLOWED', 'a1', '넷')
+  check('root: a removed one is back on the next turn', isRoot(home))
+  check('root: a link to nothing is replaced by one', isRoot(join(home, 'tenants', 'acme')) && !lstatSync(join(home, 'tenants', 'acme', '.git')).isSymbolicLink())
+  // A tenant's .git must be the directory itself: a file or a link it planted is a root to the loader but
+  // not one the sandbox keeps in place, so it is replaced. (A tenant is never a worktree.)
+  rmSync(join(home, 'tenants', 'acme', '.git'), { recursive: true, force: true })
+  writeFileSync(join(home, 'tenants', 'acme', '.git'), 'gitdir: /nowhere\n')
+  await turn(t, 'C_ALLOWED', 'a1', '다섯')
+  check('root: a .git file a tenant planted is replaced by the marker', isRoot(join(home, 'tenants', 'acme')) && !lstatSync(join(home, 'tenants', 'acme', '.git')).isFile())
+  rmSync(join(home, 'tenants', 'acme', '.git'), { recursive: true, force: true })
+  mkdirSync(join(above, 'decoy'))
+  symlinkSync(join(above, 'decoy'), join(home, 'tenants', 'acme', '.git'))
+  await turn(t, 'C_ALLOWED', 'a1', '여섯')
+  check('root: and so is a link to a directory', isRoot(join(home, 'tenants', 'acme')) && !lstatSync(join(home, 'tenants', 'acme', '.git')).isSymbolicLink())
+  // The tenant made its directory unwritable and removed its marker: its turn is refused, not run under the home's instructions.
+  rmSync(join(home, 'tenants', 'acme', '.git'), { recursive: true, force: true })
+  chmodSync(join(home, 'tenants', 'acme'), 0o555)
+  const refusedRan = await turn(t, 'C_ALLOWED', 'a1', '다섯')
+  chmodSync(join(home, 'tenants', 'acme'), 0o755)
+  check('root: a tenant that cannot be kept the root is refused its turn, and that is said', !refusedRan && t.logs.some((l) => /tenant acme: refused/.test(l) && /home's instructions/.test(l)), t.logs.filter((l) => /acme/.test(l)).slice(-1)[0])
+  t.done()
+
+  // A tenant directory that is a link outside (the home agent can make one): refused, nothing made there.
+  const outside = mkdtempSync(join(tmpdir(), 'outside-'))
+  mkdirSync(join(outside, '.git'))
+  const linkedHome = join(above, 'linked-home')
+  mkdirSync(join(linkedHome, 'tenants'), { recursive: true })
+  symlinkSync(outside, join(linkedHome, 'tenants', 'acme'))
+  const l = boot({ home: linkedHome, agent: 'answer', answer: { text: '응' }, config })
+  await sleep(80)
+  const linkedRan = await turn(l, 'C_ALLOWED', 'a1', '하나')
+  check('root: a tenant directory that is a link outside is refused, even with a .git there', !linkedRan && readdirSync(outside).join() === '.git' && l.logs.some((x) => /tenant acme: refused/.test(x)), readdirSync(outside).join())
+  l.done()
+
+  // A configured tenant root inside the home that the agent replaced with a link: nothing is made at its target.
+  const clientsHome = join(above, 'clients-home')
+  const elsewhere = mkdtempSync(join(tmpdir(), 'elsewhere-'))
+  mkdirSync(clientsHome)
+  symlinkSync(elsewhere, join(clientsHome, 'clients'))
+  const c = boot({ home: clientsHome, agent: 'answer', answer: { text: '응' }, config: { ...config, tenantRoot: join(clientsHome, 'clients') } })
+  await sleep(80)
+  const clientsRan = await turn(c, 'C_ALLOWED', 'a1', '하나')
+  check('root: a configured tenant root inside the home, linked elsewhere, gets nothing made there', !clientsRan && readdirSync(elsewhere).length === 0, readdirSync(elsewhere).join())
+  c.done()
+  rmSync(elsewhere, { recursive: true, force: true })
+
+  // A .git already there is a root as it is: a worktree's gitlink file is left alone, and the turn runs.
+  const repo = mkdtempSync(join(tmpdir(), 'home-'))
+  writeFileSync(join(repo, '.git'), 'gitdir: /elsewhere/.git/worktrees/x\n')
+  const r = boot({ home: repo, agent: 'answer', answer: { text: '응' }, config: { targetChannels: ['*'] } })
+  await sleep(80)
+  const repoRan = await turn(r, 'C_ALLOWED', 't1', '하나')
+  check('root: a worktree\'s .git file is left as it is, and the turn runs', repoRan && readFileSync(join(repo, '.git'), 'utf8') === 'gitdir: /elsewhere/.git/worktrees/x\n')
+  r.done()
+  for (const dir of [bare, above, outside, repo]) rmSync(dir, { recursive: true, force: true })
 }
 
 const failed = results.filter((r) => !r.ok)

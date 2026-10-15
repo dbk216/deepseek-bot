@@ -91,6 +91,7 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       commands?.ready()
       app.setBusy(frame.busy)
       app.setStatus({ connected: true, workspace: frame.workspace, session: frame.conversation, model: frame.model, effort: frame.effort ?? null })
+      app.setAnsweredAtOnce(frame.stop ?? [], frame.instant ?? [])
       if (frame.tenant !== null) app.notice(t().tenantTalking(frame.tenant), 'info')
       return
     case 'typing':

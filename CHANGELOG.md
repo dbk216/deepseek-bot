@@ -49,6 +49,36 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **`/model` listed routes with no key.** Every model a registered provider advertises was listed, and a
+  conversation moved to a route whose key is set nowhere the harness looks failed every turn. Such a
+  route is now left out, read the way the harness's own Models page reads it, and one asked for by name
+  is refused with the key it lacks. The DeepSeek account, which signs in, stays.
+- **A custom endpoint's context window could be written as another number.** Shell arithmetic wraps at
+  2^64, so the installer took `18446744073709551716` and wrote `contextWindow: 100`. A window is now a
+  whole number from 1 to 999999999, and one outside that is refused with what was typed.
+- **One rare Chinese word was recalled unprompted.** A Chinese word is matched by its overlapping
+  pairs of characters, and all of them matched a passage that has it, so one word counted as the two
+  distinctive words unprompted recall needs. A span of pairs the passage has side by side now counts
+  once (a word said twice is still one, a common pair inside does not split it), a span with four
+  rare pairs or more as two, and pairs matched apart still count apart. Known limit: one word of five
+  characters or more (a place name) also counts as two; without word segmentation it cannot be told
+  from a phrase.
+- **In the terminal, a stop or the usage word waited behind the running turn.** The core answers them
+  at once, without a turn; queued above the input, the usage word was shown as the next turn's message,
+  and the next real message's turn started under it. The gateway now names those words in `ready`, the
+  terminal says them at once, and a typed stop puts what waited back in the box, as esc does. (An
+  approval's yes or no is answered with its buttons in the terminal.)
+- **A model moved to another route was not told.** After `/model` (or a tenant's or the deployment's
+  model changing), the model took the turns above for its own. The first turn on another route now
+  opens with a `[model changed]` line naming both; an effort step is not a change of model.
+- **The instruction root is kept where the agent works.** The harness reads `AGENTS.md` and
+  `CLAUDE.md` from a session's directory up to the nearest `.git`. The `.deepbot-root` marker the
+  setup and tenant code wrote was never read by it, so a tenant under a home with a `.git` got the
+  home's files, and a home under a repository got that repository's. When a directory above has a
+  `.git`, the adapter now keeps an empty one in the home and each tenant directory, on every turn (git
+  passes over it); with none above it makes none. The sandbox runner refuses removing or moving the
+  workspace's `.git`, and a tenant whose directory is not its own, or cannot be kept the root, is
+  refused its turn.
 - **A gateway serving only the terminal is connected once it has started.** Only a messenger set the
   health file's `connected`, so a terminal-only gateway read as down, and the health probe restarted
   it every five minutes. `install-service.sh` likewise looked for Slack's "Socket Mode connected" in

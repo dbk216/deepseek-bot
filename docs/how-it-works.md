@@ -564,12 +564,19 @@ What appears besides the conversation:
   takes, and the last row goes back to the configured model. Picking one, `/model <n>` or
   `/model <provider>/<model> [effort]` puts this conversation on it from its next turn — the
   same session, resumed on the new route — and `/model default` gives it the deployment's back. Every
-  terminal on the conversation is told. `shift+tab` steps the effort of the model it is on, round, and
+  terminal on the conversation is told, and so is the model: the first turn on another route opens with a
+  `[model changed]` line naming both (the harness's own notice belongs to its model selection, which a
+  plugin cannot install). `shift+tab` steps the effort of the model it is on, round, and
   keeps it as the conversation's own choice, as `/model` does. A
   model no provider lists, or an effort the model does not take, is refused. The choice is kept per
-  conversation in the state file; Slack and the other conversations keep theirs. The list is every
-  model a registered route advertises, including a route whose key is in neither `~/.dsh/.env` nor the app's store (`~/.dsh/.credentials.yaml`) — a conversation
-  moved to one fails its turns until `/model default`. Reminders the harness delivers on its own
+  conversation in the state file; Slack and the other conversations keep theirs. The list leaves out a
+  route whose key is not set — the key its settings name (`apiKeyEnv`) is in none of the places the
+  harness reads keys from — and one asked for by name is refused with that key's name; the harness's own
+  Models page reads keys the same way. A key put in `~/.dsh/.env` counts once the gateway restarts (the
+  harness reads that file at launch); one entered in the app counts at once. A route that names no key is
+  listed as it is, and the DeepSeek account, which signs in, lists its models once signed in. A
+  conversation already on a route whose key is gone (chosen before, or the key removed since) fails its
+  turns until the key is set or another model is chosen. Reminders the harness delivers on its own
   schedule are not known to follow a conversation's choice (unverified). The deployment's own
   reasoning effort (`agent-default-model`) now reaches a turn too; it was dropped before. The status
   line shows the effort at its left, in sky blue, and the model at its right.
@@ -668,11 +675,25 @@ one config away:
 ```
 
 A tenant's directory is created on its **first message** — provisioning belongs to the message,
-not to a turn that happened to succeed — with a `.deepbot-root` marker so the instruction loader
-cannot climb out and hand it the home's `AGENTS.md`, and seeded from the template if one is
+not to a turn that happened to succeed — and seeded from the template if one is
 configured (markdown only). Without a template a tenant simply has no persona, which is the honest
 default. The read scope follows the speaker, so one tenant reading another's notes is refused and
 the refusal names what it *is* allowed to read.
+
+**The instruction root.** The harness reads `AGENTS.md` and `CLAUDE.md` from a session's directory up
+to the nearest `.git`, and every file on the way. When a directory above the home or a tenant directory
+has a `.git` (a home under a dotfiles repository, a home the agent ran `git init` in), the adapter keeps
+an empty `.git` in that directory, checked on every turn because the agent can remove it, so neither is
+handed the files above it. With none above, it makes none: the loader stops there already, and a `.git`
+would be one more place to climb to, and would turn on `.gitignore` rules for the grep tool. In a
+tenant's directory only a `.git` directory counts; a file or a link it planted is replaced. When a
+directory above has a `.git`, the sandbox runner refuses a command that removes or moves the
+workspace's `.git` or changes the workspace's own entry — its mode, an ACL, its flags (what is in them stays writable), and a tenant
+whose directory is not its own, or cannot be kept the root, is refused its turn. One cost of that rule:
+`rsync -a` into the workspace's top directory exits 23 after writing every file (it sets the
+directory's mode even when unchanged); `rsync -rt` does not. git passes
+over an empty `.git`; one already there (a repository, a worktree's gitlink) is left as it is. The
+`.deepbot-root` file older setups wrote was never read by the harness and can be deleted.
 
 `test/scenarios/tenant.json` (6 steps, needs a model) has one tenant write a file and the other
 fail to read it by name, fail to find it in its own directory, and fail to reach it by walking up

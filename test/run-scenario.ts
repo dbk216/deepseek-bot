@@ -88,10 +88,6 @@ console.log()
 // A test home mirrors the live one where it matters — the instruction file is
 // what tells the agent that a recall index exists at all.
 mkdirSync(TEST_HOME, { recursive: true })
-// Marks the instruction-search root. Without it dsh-agent-instructions
-// climbs toward the filesystem boundary and picks up instruction files that
-// belong to somebody else — measured: a bare temp home picked up ~/AGENTS.md.
-writeFileSync(join(TEST_HOME, '.deepbot-root'), '')
 
 // A scenario may need a file to exist before the plugin boots — a large MEMORY.md, for instance,
 // which a fresh home never has. Without this the note-hygiene path could not be exercised at all,

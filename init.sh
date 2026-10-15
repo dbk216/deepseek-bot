@@ -43,9 +43,6 @@ echo "  agent home : $HOME_DIR"
 echo
 echo "1) agent home"
 run mkdir -p "$HOME_DIR/memory" "$HOME_DIR/state"
-# Marks this directory as the instruction-search root. Without it the loader climbs
-# to the filesystem boundary and can pick up instruction files that are not yours.
-run touch "$HOME_DIR/.deepbot-root"
 for file in SOUL.md AGENTS.md USER.md MEMORY.md; do
   if [ -e "$HOME_DIR/$file" ]; then
     echo "   keep    $file (already there)"
@@ -87,7 +84,10 @@ if [ -z "$NODE_BIN" ]; then
     [ -n "$candidate" ] && [ -x "$candidate" ] && { NODE_BIN="$candidate"; break; }
   done
 fi
-if [ -f "$REPO_DIR/node_modules/typescript/lib/tsc.js" ] && [ -n "$NODE_BIN" ]; then
+if [ "${DEEPBOT_INSTALLER:-}" = 1 ] && [ -f "$REPO_DIR/dist/index.js" ]; then
+  # install.sh built it a moment ago; a second build only doubled the wait.
+  echo "   built   dist/ (by the installer)"
+elif [ -f "$REPO_DIR/node_modules/typescript/lib/tsc.js" ] && [ -n "$NODE_BIN" ]; then
   if run "$NODE_BIN" "$REPO_DIR/node_modules/typescript/lib/tsc.js" -p "$REPO_DIR/tsconfig.json"; then
     echo "   built   dist/ (the profile loads dist/index.js)"
   else

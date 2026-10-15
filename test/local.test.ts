@@ -454,6 +454,52 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
 }
 
 {
+  // A route whose key is not set fails every turn, so /model leaves it out. Read as the harness's own Models page
+  // reads it: a provider's settings name its key (`apiKeyEnv`), the credentials service says whether it is set.
+  // The DeepSeek account signs in and names no key: it lists models only once signed in, and stays. Two routes
+  // under llm-pi-ai's `providers` (as the installer writes them), one with its key and one without, so the key is
+  // read at the provider's own path; and one whose key cannot be read is listed, as before.
+  const llm = {
+    listProviders: () => [{ id: 'deepseek-official' }, { id: 'og' }, { id: 'custom' }, { id: 'flaky' }, { id: 'deepseek-account' }],
+    listModels: async (p) => [{ provider: p, id: ({ 'deepseek-official': 'deepseek-v4-flash', og: 'm', custom: 'c', flaky: 'f' })[p] ?? 'acct', name: 'N' }],
+    resolveModelInfo: async () => ({}),
+    listConfigurableProviders: () => [
+      { provider: 'deepseek-official', displayName: 'DeepSeek', settingsNs: 'llm-deepseek-api-key', settingsPath: [] },
+      { provider: 'og', displayName: 'OpenGateway', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'og'] },
+      { provider: 'flaky', displayName: 'Flaky', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'flaky'] },
+      { provider: 'custom', displayName: 'Custom endpoint', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'custom'] },
+      { provider: 'deepseek-account', displayName: 'DeepSeek Account', settingsNs: 'llm-deepseek-account', settingsPath: [] },
+    ],
+  }
+  const settings = { describe: () => [
+    { ns: 'llm-deepseek-api-key', value: { apiKeyEnv: 'DEEPSEEK_API_KEY' } },
+    { ns: 'llm-pi-ai', value: { providers: { og: { apiKeyEnv: 'OG_API_KEY' }, custom: { apiKeyEnv: 'CUSTOM_API_KEY' }, flaky: { apiKeyEnv: 'FLAKY_API_KEY' } } } },
+    // The account names no key today; were it to name one, it would still be skipped, as the harness skips it.
+    { ns: 'llm-deepseek-account', value: { apiKeyEnv: 'DEEPSEEK_ACCOUNT_KEY' } },
+  ] }
+  // Thrown before any promise, for the flaky route: the check goes on to the next provider.
+  const credentials = { describe: (ref) => { if (ref === 'FLAKY_API_KEY') throw new Error('store unreadable'); return Promise.resolve({ configured: ref === 'OG_API_KEY', writable: true }) }, resolve: async () => undefined }
+  const t = boot({ services: { llm, settings, credentials, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm' }) } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  const ready = await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'models' })
+  const listed = await c.waitFor((f) => f.type === 'models')
+  const ids = (listed?.items ?? []).map((m) => `${m.provider}/${m.id}`).join()
+  check('model: a route with no key is left out of /model; one with a key, one whose key cannot be read, and the account that signs in, stay', ids === 'og/m,flaky/f,deepseek-account/acct', ids)
+  c.send({ type: 'model', provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  const refused = await c.waitFor((f) => f.type === 'error' && f.code === 'model')
+  check('model: one asked for by name on a route with no key is refused, naming the route and the key, and that ~/.dsh/.env needs a restart', refused !== null && /^deepseek-official has no key/.test(refused.message) && /DEEPSEEK_API_KEY/.test(refused.message) && /restart/.test(refused.message), JSON.stringify(refused))
+  check('model: and not kept', JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`] === undefined)
+  check('model: the route left out is logged, once', t.logs.filter((l) => /deepseek-official.*DEEPSEEK_API_KEY/.test(l)).length === 1, JSON.stringify(t.logs.filter((l) => /models:/.test(l))))
+  check('model: a key that cannot be read keeps its route, and says so once', t.logs.filter((l) => /could not read whether flaky's key \(FLAKY_API_KEY\)/.test(l)).length === 1, JSON.stringify(t.logs.filter((l) => /models:/.test(l))))
+  await c.close()
+  await t.done()
+}
+
+{
   // shift+tab: the next effort the conversation's model takes, worked out by the gateway, and every terminal on
   // the conversation told. A /model switch used to reach only the terminal that made it.
   let resolves = 0
@@ -507,6 +553,80 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   check('protocol: an unknown frame type is refused with its own code, which a terminal can explain', unknown !== null && /no-such-frame/.test(unknown.message), JSON.stringify(unknown))
   await a.close()
   await b.close()
+  await t.done()
+}
+
+{
+  // A conversation moved to another model is told, on the turn that runs on it: the harness's own notice of a
+  // switch belongs to its model selection, which this adapter cannot use, and the model went on believing the
+  // turns above were its own.
+  const llm = {
+    listProviders: () => [{ id: 'og' }, { id: 'ds' }],
+    listModels: async (p) => p === 'og' ? [{ provider: p, id: 'm1', name: 'M1' }] : [{ provider: p, id: 'm2', name: 'M2' }],
+    resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }),
+  }
+  // Turns after the first resume the session: an agent that can be resumed, and keeps what it was told.
+  // A turn answers, as the harness records one; one whose message says FAILTURN ends as a refused model call
+  // does: no answer, a turn/end with an error reason, and whenIdle returning normally.
+  const told = []
+  const agent = (o) => {
+    const events = []
+    const session = { header: { id: o?.sessionId ?? o?.resumeSessionId ?? 's1' }, get seq() { return events.length }, eventAt: (i) => events[i] }
+    return { agent: { session,
+      followup: (m) => {
+        const text = (m?.content ?? []).map((b) => b?.text ?? '').join('')
+        told.push(text)
+        events.push({ type: 'turn/start' })
+        if (/FAILTURN/.test(text)) events.push({ type: 'turn/end', data: { reason: { kind: 'error', message: 'fake: the provider refused' } } })
+        else { events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '응' }] } } }); events.push({ type: 'turn/end', data: { reason: { kind: 'completed' } } }) }
+      },
+      whenIdle: async () => {}, cancel: () => {} }, dispose: async () => {} }
+  }
+  const agents = { create: async (o) => agent(o), resume: async (o) => agent(o) }
+  // A route recorded for this conversation with no session behind it yet (a first turn that died): no line.
+  const t = boot({ state: { routes: { 'tui:conv-note': 'zz/old' } }, services: { llm, agents, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm1' }) } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-note' })
+  await c.waitFor((f) => f.type === 'ready')
+  // The prompt that carries this message, or '' when none came: the checks below cannot pass on an older one.
+  const turn = async (text) => { c.send({ type: 'message', text }); for (let i = 0; i < 400 && !told.some((p) => p.includes(text)); i++) await sleep(10); await sleep(80); return told.find((p) => p.includes(text)) ?? '' }
+  const switchTo = async (provider, model) => { const n = c.frames.filter((f) => f.type === 'model').length; c.send({ type: 'model', provider, model }); for (let i = 0; i < 100 && c.frames.filter((f) => f.type === 'model').length === n; i++) await sleep(10) }
+  const first = await turn('하나')
+  check('model note: none on a conversation\'s first turn, even with a route recorded and no session', first.includes('하나') && !first.includes('[model changed'), first.slice(0, 80))
+  const same = await turn('둘')
+  check('model note: none while the model stays', same.includes('둘') && !same.includes('[model changed'))
+  await switchTo('ds', 'm2')
+  const moved = await turn('셋')
+  check('model note: the turn after a switch names both, before the [user message] marker', /\[model changed\][^\n]*og\/m1[^\n]*ds\/m2/.test(moved) && moved.indexOf('[model changed]') < moved.lastIndexOf('[user message]'), moved.split('\n').find((l) => l.includes('model changed')) ?? '(none)')
+  const after = await turn('넷')
+  check('model note: once, not on every turn after', after.includes('넷') && !after.includes('[model changed'))
+  c.send({ type: 'effort', step: 1 })
+  await c.waitFor((f) => f.type === 'model' && f.cause === 'effort')
+  const stepped = await turn('다섯')
+  check('model note: an effort step is not a change of model', stepped.includes('다섯') && !stepped.includes('[model changed'))
+  // A turn on another route that dies answered nothing: going back, the line does not name it.
+  await switchTo('og', 'm1')
+  await turn('FAILTURN 여섯')
+  await sleep(300)
+  await switchTo('ds', 'm2')
+  const back = await turn('일곱')
+  check('model note: a route whose turn died is not named as having answered', back.includes('일곱') && !/answered by og\/m1/.test(back), back.split('\n').find((l) => l.includes('model changed')) ?? '(none)')
+  await c.close()
+  await t.done()
+}
+
+{
+  // The words the core answers without a turn reach the terminal, so it does not queue them behind one.
+  const t = boot({ config: { cancelWords: ['그만', 'stop'], usageWords: ['사용량'], approveWords: ['허용'], denyWords: ['거부'] } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  const ready = await c.waitFor((f) => f.type === 'ready')
+  check('instant: ready names the stop words and the other words answered without a turn', JSON.stringify(ready?.stop) === JSON.stringify(['그만', 'stop']) && JSON.stringify(ready?.instant) === JSON.stringify(['사용량']) && ready?.approval === undefined, JSON.stringify([ready?.stop, ready?.instant, ready?.approval]))
+  await c.close()
   await t.done()
 }
 
@@ -616,6 +736,9 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   const tuiAsk = t.askApproval('tui-aaaa')
   const tuiFrame = await c.waitFor((f) => f.type === 'post' && f.buttons?.length === 2)
   check('approval: the terminal is asked with buttons, for this request', tuiFrame !== null && /^approval:allow:tui:conv-1#[0-9a-f]{8}$/.test(tuiFrame.buttons[0].id), JSON.stringify(tuiFrame?.buttons))
+  // Only the buttons: a word typed in the terminal waits behind the running turn, as the terminal cannot
+  // know an approval is pending, and the request used to invite one.
+  check('approval: the terminal\'s request points at its buttons, not at a word to type', !/\*allow\*|reply/i.test(tuiFrame?.text ?? '') && /above the input box/.test(tuiFrame?.text ?? ''), tuiFrame?.text)
   c.send({ type: 'action', id: tuiFrame.buttons[1].id })
   // Bounded: a press the gate refused leaves the request pending, which must fail here, not hang the suite.
   check('approval: pressing a button decides it', (await Promise.race([tuiAsk, sleep(2000).then(() => 'still pending')])) === 'rejected')

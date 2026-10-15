@@ -113,6 +113,8 @@ export interface CredentialsService {
    * `r?.value` in the caller, which was right and the declaration was wrong.
    */
   resolve(ref: string): Promise<{ value: string } | undefined>
+  /** Whether a reference is set, and where from — never the value. An empty value counts as not set. */
+  describe?(ref: string): Promise<{ configured: boolean; source?: string; writable: boolean }>
 }
 
 export interface WorkspaceEntity {
@@ -156,6 +158,13 @@ export interface LlmService {
   listModels(provider: string): Promise<Array<{ provider: string; id: string; name: string; description?: string }>>
   /** One exact model's metadata, with the reasoning efforts it takes when it has any. */
   resolveModelInfo(provider: string, model: string): Promise<{ reasoning?: { efforts: Array<{ id: string; name: string }>; defaultEffort?: string } }>
+  /** Every provider a configuration can address, with where its settings sit: `settingsPath` inside namespace `settingsNs`. */
+  listConfigurableProviders?(): Array<{ provider: string; displayName: string; settingsNs: string; settingsPath: string[] }>
+}
+
+/** The settings service, read only: each namespace's resolved configuration, secrets redacted. */
+export interface SettingsService {
+  describe(options: { redactSecrets: boolean }): Array<{ ns: string; value: unknown }>
 }
 
 /** Query surface over the durable session log; used loosely for reporting. */

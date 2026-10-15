@@ -19,7 +19,7 @@ if (process.platform !== 'darwin') {
   process.exit(0)
 }
 import { fileURLToPath } from 'node:url'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -248,6 +248,56 @@ for (const resolved of [false, true]) {
   mkdirSync(quoted)
   check('a workspace whose name has a quote in it still runs commands', inWs(quoted, ['/bin/echo', 'ran-8c9']).includes('ran-8c9'), inWs(quoted, ['/bin/echo', 'ran-8c9']).slice(0, 100))
   rmSync(fakeHome, { recursive: true, force: true })
+}
+
+// The workspace's .git, when the adapter keeps one as the instruction root: a command could remove it, and
+// the harness's loader, which looks for it again on every step, would climb to the home's instructions.
+{
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'runner-root-')))
+  // A .git above the workspaces: the case where the adapter keeps one in the workspace as the root.
+  mkdirSync(join(base, '.git'))
+  const env = { ...process.env, HOME: base }
+  const inWs = (ws, cmd) => { try { execFileSync(RUNNER, ['--ro-bind', '/', '/', '--die-with-parent', '--bind', ws, ws, '--', '/bin/sh', '-c', cmd], { env, stdio: 'pipe' }); return true } catch { return false } }
+  const marked = join(base, 'marked')
+  mkdirSync(join(marked, '.git'), { recursive: true })
+  inWs(marked, `rmdir '${join(marked, '.git')}'`)
+  check('a command cannot remove the workspace\'s .git', existsSync(join(marked, '.git')))
+  inWs(marked, `mv '${join(marked, '.git')}' '${join(marked, 'moved')}'`)
+  check('nor move it aside', existsSync(join(marked, '.git')) && !existsSync(join(marked, 'moved')))
+  check('while what is in it can be written (git init works there)', inWs(marked, `echo ref > '${join(marked, '.git', 'HEAD')}'`) && existsSync(join(marked, '.git', 'HEAD')))
+  const plain = join(base, 'plain')
+  mkdirSync(plain)
+  check('a workspace with no .git can make one', inWs(plain, `mkdir '${join(plain, '.git')}'`) && existsSync(join(plain, '.git')))
+  check('nor can it make its own directory unreadable to the adapter', !inWs(marked, `chmod 000 '${marked}'`) || (() => { const ok = (statSync(marked).mode & 0o777) !== 0; chmodSync(marked, 0o755); return ok })())
+  // An ACL does it as well as a mode, and the harness's skill discovery takes an unreadable .git for none.
+  const acl = inWs(marked, `chmod +a "everyone deny search,list" '${marked}'`)
+  if (acl) execFileSync('/bin/chmod', ['-N', marked])
+  check('nor give it an ACL that denies reading it', !acl)
+  check('while files in it are still written', inWs(marked, `echo x > '${join(marked, 'note.md')}'`) && existsSync(join(marked, 'note.md')))
+  // Its time is not its readability: tar -C and rsync -a set it, and reported a failure after writing every file.
+  check('and its time can be set (tar -C, rsync -a)', inWs(marked, `touch '${marked}'`))
+  // Given by a link that sits under the .git, its target elsewhere: the loader climbs the name it was given,
+  // and Seatbelt matches the target, so the rule goes on both names.
+  const target = realpathSync(mkdtempSync(join(tmpdir(), 'runner-target-')))
+  mkdirSync(join(target, '.git'))
+  const linked = join(base, 'ws-link')
+  symlinkSync(target, linked)
+  inWs(linked, `rmdir '${join(linked, '.git')}'`)
+  check('a workspace given by a link under the .git keeps its own', existsSync(join(target, '.git')))
+  rmSync(target, { recursive: true, force: true })
+  // A workspace given as a relative name: the walk up from it never reached "/" and every command hung.
+  // (From a directory with no .git: from one with a .git, the walk stopped there at once.)
+  const bare = realpathSync(mkdtempSync(join(tmpdir(), 'runner-bare-')))
+  mkdirSync(join(bare, 'w2', '.git'), { recursive: true })
+  const relative = (() => { try { return execFileSync(RUNNER, ['--ro-bind', '/', '/', '--bind', 'w2', 'w2', '--', '/bin/echo', 'relative-3e4'], { encoding: 'utf8', env, cwd: bare, stdio: 'pipe', timeout: 10000 }) } catch (e) { return `failed: ${e.code ?? e.status}` } })()
+  rmSync(bare, { recursive: true, force: true })
+  check('a workspace given by a relative name does not hang the runner', relative.includes('relative-3e4'), relative.slice(0, 60))
+  rmSync(base, { recursive: true, force: true })
+  // With no .git above, the workspace's own .git is not a marker: a home that is a repository can remove it.
+  const solo = realpathSync(mkdtempSync(join(tmpdir(), 'runner-solo-')))
+  mkdirSync(join(solo, '.git', 'objects'), { recursive: true })
+  check('with no .git above, a repository workspace can remove its .git', inWs(solo, `rm -rf '${join(solo, '.git')}'`) && !existsSync(join(solo, '.git')))
+  rmSync(solo, { recursive: true, force: true })
 }
 
 // A harness home that is itself a link (~/.dsh -> elsewhere). The deny on the link's name blocked reading

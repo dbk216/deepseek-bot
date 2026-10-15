@@ -85,6 +85,12 @@ export function words(text: string): string[] {
   return out
 }
 
+/** Each run of Han characters in `text`, as its overlapping pairs in order. */
+export function hanRuns(text: string): string[][] {
+  return (text.toLowerCase().match(/[\u3400-\u9fff]{2,}/gu) ?? []).map((run) => Array.from({ length: run.length - 1 }, (_, i) => run.slice(i, i + 2)))
+}
+const isHanPair = (w: string) => /^[\u3400-\u9fff]{2}$/u.test(w)
+
 // Korean particles, longest first. A query word carries its particle ("롤백을") and a passage may not
 // ("롤백"), so the query side is stripped; matching is by substring, so the passage side need not be.
 const PARTICLES = ['으로부터', '에서부터', '이라고', '에게서', '한테서', '라고', '으로', '에서', '에게', '한테', '까지',
@@ -140,6 +146,7 @@ export function createRecallContext(options: RecallOptions) {
       try {
         const query = [...new Set(words(prompt).map(stem))]
         if (query.length === 0) return ''
+        const runs = hanRuns(prompt)
         const channel = options.channel ?? null
         const own = options.sessionId ?? null
         const rows = load()
@@ -157,7 +164,27 @@ export function createRecallContext(options: RecallOptions) {
         const ranked = rows
           .map((row, i) => {
             const matched = query.filter((w) => texts[i].includes(w))
-            return { row, score: matched.reduce((n, w) => n + idf(w), 0), distinctive: matched.filter((w) => (df.get(w) ?? 0) <= rare).length }
+            const here = new Set(matched)
+            const isRare = (w: string) => (df.get(w) ?? 0) <= rare
+            // A Chinese word is one word. Its pairs all match a passage that has it, and one rare word counted as
+            // several and was recalled unprompted. So a span of pairs the passage has side by side counts once,
+            // if it holds a rare pair not counted already (a word said twice is one); a common pair inside does
+            // not split it; and a span with four rare pairs or more is taken for two words (its common pairs do not
+            // make it long). One word of five characters or more is taken for two as well: without word
+            // segmentation it cannot be told from a phrase.
+            let spans = 0
+            const counted = new Set<string>()
+            for (const run of runs) {
+              let span: string[] = []
+              const close = () => {
+                if (span.some((p) => isRare(p) && !counted.has(p))) { spans += span.filter(isRare).length >= 4 ? 2 : 1; for (const p of span) counted.add(p) }
+                span = []
+              }
+              for (const pair of run) { if (here.has(pair)) span.push(pair); else close() }
+              close()
+            }
+            const others = matched.filter((w) => !isHanPair(w) && isRare(w)).length
+            return { row, score: matched.reduce((n, w) => n + idf(w), 0), distinctive: others + spans }
           })
           .filter((hit) => hit.score > 0)
           .sort((a, b) => b.score - a.score || Number(b.row.ts ?? 0) - Number(a.row.ts ?? 0))
