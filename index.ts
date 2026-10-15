@@ -48,7 +48,7 @@ import { execFile, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { appendFileSync, closeSync, constants as fsConstants, createReadStream, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { createSlackTransport } from './transports/slack.js'
@@ -1667,8 +1667,10 @@ export function apply(ctx, config) {
    * longer than this follows is null: refused rather than let through (the kernel follows 32).
    */
   function landsOn(target: string, base: string): string | null {
-    let current = target.startsWith('/') ? '/' : base
-    let rest = target.split('/').filter((name) => name !== '')
+    // Windows takes either slash and roots a path at a drive (C:\); a POSIX name may contain "\".
+    const names = (p: string) => p.slice(parse(p).root.length).split(sep === '\\' ? /[\\/]/ : '/').filter((name) => name !== '')
+    let current = parse(target).root || base
+    let rest = names(target)
     let links = 0
     while (rest.length > 0) {
       const name = rest.shift() as string
@@ -1679,8 +1681,8 @@ export function apply(ctx, config) {
       try { if (lstatSync(next).isSymbolicLink()) link = readlinkSync(next) } catch { /* not there yet */ }
       if (link === null) { current = next; continue }
       if (++links > 40) return null
-      rest = [...link.split('/').filter((part) => part !== ''), ...rest]
-      if (link.startsWith('/')) current = '/'
+      rest = [...names(link), ...rest]
+      if (parse(link).root !== '') current = parse(link).root
     }
     return current
   }
@@ -1725,7 +1727,7 @@ export function apply(ctx, config) {
     const candidates: string[] = [args.file_path, args.path, args.dir]
       .filter((value: unknown): value is string => typeof value === 'string' && value !== '')
     // glob and grep default to the workspace; an absolute pattern is the way out of it.
-    if (typeof args.pattern === 'string' && args.pattern.startsWith('/')) candidates.push(args.pattern)
+    if (typeof args.pattern === 'string' && isAbsolute(args.pattern)) candidates.push(args.pattern)
     if (candidates.length === 0) return null
     // With isolation on, the readable roots are the *speaking conversation's* directory:
     // one tenant's turn must not read another's files, and the shared home would allow it.
@@ -2819,8 +2821,9 @@ export function apply(ctx, config) {
     // the home, and "data.csv" in one answer uploaded the other's dm/data.csv (found by review).
     const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const named = (path: string) => {
-      const relative = path.slice(home.length + 1)
-      return [relative, `./${relative}`, path].some((form) => new RegExp(`(^|[^\\w./-])${escape(form)}(?![\\w-])`).test(answer))
+      // On Windows the walk gives out\report.docx; the answer usually writes out/report.docx.
+      const relative = path.slice(home.length + 1).split(sep).join('/')
+      return [relative, `./${relative}`, path, path.slice(home.length + 1)].some((form) => new RegExp(`(^|[^\\w./-])${escape(form)}(?![\\w-])`).test(answer))
     }
     const found: string[] = []
     const walk = (dir: string, depth: number) => {
@@ -2983,10 +2986,10 @@ export function apply(ctx, config) {
    */
   async function textForStep(path) {
     const cwd = await sessionCwd()
-    const candidates = path.startsWith('/') ? [path] : [join(cwd, path), join(PROJECT_ROOT, path)]
+    const candidates = isAbsolute(path) ? [path] : [join(cwd, path), join(PROJECT_ROOT, path)]
     const abs = candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]
     const content = readFileSync(abs, 'utf8')
-    const name = abs.split('/').pop() ?? 'attachment.txt'
+    const name = basename(abs) || 'attachment.txt'
     const bytes = Buffer.byteLength(content)
     log(`  step text attachment: ${name} (${bytes} bytes)`)
     return [
@@ -3002,7 +3005,7 @@ export function apply(ctx, config) {
     const cwd = await sessionCwd()
     // Absolute, then the session directory, then this repository — so a fixture can
     // live in the repo and the scenario stays portable.
-    const candidates = path.startsWith('/')
+    const candidates = isAbsolute(path)
       ? [path]
       : [join(cwd, path), join(PROJECT_ROOT, path)]
     const abs = candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]
@@ -3010,7 +3013,7 @@ export function apply(ctx, config) {
     const ext = abs.toLowerCase().split('.').pop() ?? ''
     const mediaType = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }[ext]
       ?? 'application/octet-stream'
-    const name = abs.split('/').pop()
+    const name = basename(abs)
     log(`  step attachment: ${name} (${mediaType}, ${bytes.length} bytes)`)
     return { name, mediaType, bytes }
   }
@@ -3074,7 +3077,7 @@ export function apply(ctx, config) {
       }
       if (step.expectMissingFile !== undefined) {
         const cwd = await sessionCwd()
-        const abs = step.expectMissingFile.startsWith('/') ? step.expectMissingFile : join(cwd, step.expectMissingFile)
+        const abs = isAbsolute(step.expectMissingFile) ? step.expectMissingFile : join(cwd, step.expectMissingFile)
         const absent = !existsSync(abs)
         if (!absent) failed++
         results.push({ step: n, kind: 'expectMissingFile', path: step.expectMissingFile, ok: absent })
@@ -3089,7 +3092,7 @@ export function apply(ctx, config) {
         // than a text file with a .docx name.
         const spec = step.expectFile
         const cwd = await sessionCwd()
-        const abs = spec.path.startsWith('/') ? spec.path : join(cwd, spec.path)
+        const abs = isAbsolute(spec.path) ? spec.path : join(cwd, spec.path)
         try {
           const stat = statSync(abs)
           const bytes = readFileSync(abs)

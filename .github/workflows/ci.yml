@@ -67,16 +67,18 @@ jobs:
       - run: pnpm run build
       - run: pnpm run typecheck
       # Only the suites that pass on Windows. Left out, and why:
-      #   core, edges, safe-write, recall-context, watch: link and path checks written for a POSIX
-      #     filesystem; whether those checks hold on Windows is not yet verified.
+      #   watch: commands run under /bin/sh, and an agent's watch under the sandbox runner.
       #   gateway, install, launcher, profile, tui-app: launchd, bash, file modes and the macOS
       #     harness app, which a Windows port has to replace rather than pass.
       #   confined-runner: the Seatbelt sandbox, which has no Windows counterpart yet.
       #   update: dsh update runs install.sh with bash, and the installer is macOS-only.
       - run: node test/reconnect.test.ts
+      - run: node test/core.test.ts
       - run: node test/recall.test.ts
+      - run: node test/recall-context.test.ts
       - run: node test/notes.test.ts
       - run: node test/slack.test.ts
+      - run: node test/edges.test.ts
       - run: node test/failures.test.ts
       - run: node test/resources.test.ts
       - run: node test/injection.test.ts
@@ -88,6 +90,7 @@ jobs:
       - run: node test/history.test.ts
       - run: node test/attachments.test.ts
       - run: node test/persona-check.test.ts
+      - run: node test/safe-write.test.ts
       - run: node test/health.test.ts
       - run: node test/local.test.ts
       - run: node test/tui-client.test.ts

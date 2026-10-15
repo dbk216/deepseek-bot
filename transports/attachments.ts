@@ -9,7 +9,7 @@
  */
 import { mkdirSync } from 'node:fs'
 import { writeInside } from '../safeWrite.js'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 export interface AttachmentSource {
   name?: string
@@ -59,7 +59,7 @@ export async function writeAttachments(sources: AttachmentSource[], options: Att
     const where = join(options.dir, `${options.stamp}-${name}`)
     // Label relative to the session directory when it is under it, so the agent gets
     // something it can open with its own file tools.
-    const relative = where.startsWith(options.cwd + '/') ? where.slice(options.cwd.length + 1) : where
+    const relative = where.startsWith(options.cwd + sep) ? where.slice(options.cwd.length + 1) : where
     const size = Number(source.size ?? 0)
     if (size > options.maxBytes) {
       lines.push(`- ${name} (${source.mimetype ?? '?'}, ${size} bytes) — too large to download, ask the user about it`)
@@ -69,7 +69,7 @@ export async function writeAttachments(sources: AttachmentSource[], options: Att
       const bytes = await source.fetchBytes()
       // The name is the uploader's and the directory is in the agent's home: never through a link the
       // agent left there. Held to the session directory, or to the configured attachments directory.
-      writeInside(where.startsWith(options.cwd + '/') ? options.cwd : options.dir, where, bytes)
+      writeInside(where.startsWith(options.cwd + sep) ? options.cwd : options.dir, where, bytes)
       let line = `- ${name} (${source.mimetype ?? '?'}, ${bytes.length} bytes) → ${relative}`
       const mimetype = String(source.mimetype ?? '')
       if (mimetype.startsWith('text/') || mimetype === 'application/json' || mimetype === 'application/x-yaml') {

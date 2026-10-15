@@ -158,19 +158,20 @@ async function until(predicate, ms = 3000) {
 
   // End to end: the arguments reach the harness CLI unchanged, and its exit status comes back.
   const bin = mkdtempSync(join(tmpdir(), 'deepbot-dshbin-'))
-  const fake = join(bin, 'dsh'), seen = join(bin, 'seen')
-  writeFileSync(fake, `#!/bin/sh\nprintf '%s\\n' "$@" > '${seen}'\nexit 3\n`)
+  const seen = join(bin, 'seen')
+  // Windows cannot exec a #!/bin/sh script; there the harness is npm's bin.js, run under node.
+  const fake = join(bin, process.platform === 'win32' ? 'dsh.js' : 'dsh')
+  writeFileSync(fake, process.platform === 'win32'
+    ? `require('node:fs').writeFileSync(${JSON.stringify(seen)}, process.argv.slice(2).map((a) => a + '\\n').join(''))\nprocess.exit(3)\n`
+    : `#!/bin/sh\nprintf '%s\\n' "$@" > '${seen}'\nexit 3\n`)
   chmodSync(fake, 0o755)
   const main = fileURLToPath(new URL('../dist/tui/main.js', import.meta.url))
-  const forwarded = spawnSync(process.execPath, [main, '--profile', 'agent', '--port', '19500'], { encoding: 'utf8', env: { ...process.env, DSH_BIN: fake } })
+  // An argument a shell would split or act on: it must arrive as one, untouched.
+  const forwarded = spawnSync(process.execPath, [main, '--profile', 'agent', '--port', '19500', 'x & "y"'], { encoding: 'utf8', env: { ...process.env, DSH_BIN: fake } })
   let got = ''
   try { got = readFileSync(seen, 'utf8') } catch { /* not run */ }
-  // The fake is a #!/bin/sh script, which Windows cannot exec; forwarding to dsh there is not done yet.
-  if (process.platform === 'win32') console.log('  TODO  forward: unverified on Windows (the harness CLI is a .cmd shim spawnSync cannot run without a shell)')
-  else {
-    check('forward: the harness CLI gets the arguments as they were given', got === '--profile\nagent\n--port\n19500\n', JSON.stringify(got))
-    check('forward: and its exit status is dsh\'s', forwarded.status === 3, `status ${forwarded.status} ${forwarded.stderr.trim()}`)
-  }
+  check('forward: the harness CLI gets the arguments as they were given', got === '--profile\nagent\n--port\n19500\nx & "y"\n', JSON.stringify(got))
+  check('forward: and its exit status is dsh\'s', forwarded.status === 3, `status ${forwarded.status} ${forwarded.stderr.trim()}`)
   const missing = spawnSync(process.execPath, [main, 'gateway'], { encoding: 'utf8', env: { ...process.env, DSH_BIN: join(bin, 'nothing-here') } })
   check('forward: a harness CLI that is not there is said, with how to point at it', missing.status === 127 && missing.stderr.includes('DSH_BIN'), `status ${missing.status} ${missing.stderr.trim()}`)
   rmSync(bin, { recursive: true, force: true })

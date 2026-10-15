@@ -30,7 +30,8 @@ function forward(argv: string[]): never {
   if (!existsSync(bin)) { process.stderr.write(t().noHarness(bin)); process.exit(127) }
   // A DSH_BIN that is this command would call itself forever.
   if (realpathSync(bin) === realpathSync(process.argv[1])) { process.stderr.write(t().selfHarness); process.exit(127) }
-  const run = spawnSync(bin, argv, { stdio: 'inherit' })
+  // A script entry (Windows' npm install, where the .cmd shim needs a shell) runs under this node, no shell.
+  const run = /\.[cm]?js$/i.test(bin) ? spawnSync(process.execPath, [bin, ...argv], { stdio: 'inherit' }) : spawnSync(bin, argv, { stdio: 'inherit' })
   if (run.error) { process.stderr.write(`dsh: ${run.error.message}\n`); process.exit(127) }
   process.exit(run.signal ? 128 + (constants.signals[run.signal] ?? 0) : (run.status ?? 1))
 }

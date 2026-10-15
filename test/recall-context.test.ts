@@ -9,7 +9,7 @@
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { createRecallContext, recallIndexPath } from '../dist/recallContext.js'
 
 const results = []
@@ -118,7 +118,8 @@ check('an untriggered block is empty', ctx.block('이거 요약해줘') === '')
 // 7. The index lives outside the agent's home, where its tools and commands cannot read it.
 {
   const path = recallIndexPath('/Users/someone/dsh-agent', '/Users/someone/.dsh')
-  check('the index path is under the harness home, not the agent home', path.startsWith('/Users/someone/.dsh/recall/') && !path.startsWith('/Users/someone/dsh-agent'), path)
+  // join, so the expected prefix uses the platform's separator as the path does.
+  check('the index path is under the harness home, not the agent home', path.startsWith(join('/Users/someone/.dsh', 'recall') + sep) && !path.startsWith(join('/Users/someone/dsh-agent')), path)
   check('and two homes get two indexes', recallIndexPath('/a/home-1', '/d') !== recallIndexPath('/a/home-2', '/d'))
   // Even homes whose names read alike once flattened: /a/b-c and /a/b/c both became "a-b-c", and so did
   // "dsh agent" and "dsh-agent" — one index for two homes, each recalling the other's conversations.

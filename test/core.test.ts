@@ -18,7 +18,7 @@ import './scratch-dsh-home.ts'   // the recall index must not land in the real ~
 
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, realpathSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, basename } from 'node:path'
+import { dirname, join, basename, sep } from 'node:path'
 import { apply } from '../dist/index.js'
 import { recallIndexPath } from '../dist/recallContext.js'
 import { createFakeTransport, type FakeTransportOptions } from './fake-transport.ts'
@@ -999,7 +999,7 @@ for (const remove of [false, true]) {
   await sleep(80)
   t.transport.deliver(t.transport.message({ text: '보고서 만들어줘' }))
   await sleep(500)
-  const sent = t.transport.uploads.map((u) => u.filePath.slice(home.length + 1))
+  const sent = t.transport.uploads.map((u) => u.filePath.slice(home.length + 1).split(sep).join('/'))
   check('the document the answer names is uploaded', sent.includes('out/report.docx'), JSON.stringify(sent))
   check('into the conversation it was made in', t.transport.uploads[0]?.target?.channel === 'C_ALLOWED' && t.transport.uploads[0]?.target?.threadTs === 't1')
   // The bytes are read by the core from the file it checked — one descriptor, no follow — and handed
@@ -1034,7 +1034,7 @@ for (const remove of [false, true]) {
   utimesSync(join(home, 'leak.csv'), later, later)
   t.transport.deliver(t.transport.message({ text: '만들어줘' }))
   await sleep(500)
-  const sent = t.transport.uploads.map((u) => u.filePath.slice(home.length + 1)).sort()
+  const sent = t.transport.uploads.map((u) => u.filePath.slice(home.length + 1).split(sep).join('/')).sort()
   check('only the file whose path the answer names is uploaded', JSON.stringify(sent) === '["data.csv"]', JSON.stringify(sent))
   rmSync(home, { recursive: true, force: true })
   rmSync(elsewhere, { recursive: true, force: true })
@@ -1071,7 +1071,7 @@ for (const remove of [false, true]) {
   await sleep(80)
   t.transport.deliver(t.transport.message({ text: '만들어줘' }))
   await sleep(500)
-  const sent = t.transport.uploads.map((u) => u.filePath.slice(home.length + 1))
+  const sent = t.transport.uploads.map((u) => u.filePath.slice(home.length + 1).split(sep).join('/'))
   check('a document stamped just before the turn began is still this turn\'s', sent.includes('report.pdf'), JSON.stringify(sent))
   check('one from ten seconds earlier is not', !sent.includes('earlier.pdf'), JSON.stringify(sent))
   rmSync(home, { recursive: true, force: true })
@@ -1298,10 +1298,14 @@ for (const remove of [false, true]) {
   check('root: and so is a link to a directory', isRoot(join(home, 'tenants', 'acme')) && !lstatSync(join(home, 'tenants', 'acme', '.git')).isSymbolicLink())
   // The tenant made its directory unwritable and removed its marker: its turn is refused, not run under the home's instructions.
   rmSync(join(home, 'tenants', 'acme', '.git'), { recursive: true, force: true })
-  chmodSync(join(home, 'tenants', 'acme'), 0o555)
-  const refusedRan = await turn(t, 'C_ALLOWED', 'a1', '다섯')
-  chmodSync(join(home, 'tenants', 'acme'), 0o755)
-  check('root: a tenant that cannot be kept the root is refused its turn, and that is said', !refusedRan && t.logs.some((l) => /tenant acme: refused/.test(l) && /home's instructions/.test(l)), t.logs.filter((l) => /acme/.test(l)).slice(-1)[0])
+  // chmod cannot make a Windows directory unwritable, so this fixture cannot be built there.
+  if (process.platform === 'win32') console.log('  TODO  root: an unwritable tenant directory is unverified on Windows (chmod 0555 does not apply)')
+  else {
+    chmodSync(join(home, 'tenants', 'acme'), 0o555)
+    const refusedRan = await turn(t, 'C_ALLOWED', 'a1', '다섯')
+    chmodSync(join(home, 'tenants', 'acme'), 0o755)
+    check('root: a tenant that cannot be kept the root is refused its turn, and that is said', !refusedRan && t.logs.some((l) => /tenant acme: refused/.test(l) && /home's instructions/.test(l)), t.logs.filter((l) => /acme/.test(l)).slice(-1)[0])
+  }
   t.done()
 
   // A tenant directory that is a link outside (the home agent can make one): refused, nothing made there.

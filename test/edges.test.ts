@@ -194,9 +194,11 @@ function boot({ state = {}, config = {} }: { state?: Record<string, unknown>; co
   const root = mkdtempSync(join(tmpdir(), 'deepbot-links-'))
   writeFileSync(join(root, 'notes.md'), 'local notes\n')
   let linked = ''
+  // A system file that exists, so the link is not dangling: Windows keeps hosts under SystemRoot.
+  const etc = process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'drivers', 'etc') : '/etc'
   try {
-    symlinkSync('/etc/hosts', join(root, 'escape'))
-    symlinkSync('/etc', join(root, 'etc-link'))
+    symlinkSync(join(etc, 'hosts'), join(root, 'escape'))
+    symlinkSync(etc, join(root, 'etc-link'), 'dir')
   } catch (e) { linked = String(e?.message ?? e) }
 
   const t = boot({ config: { targetChannels: ['*'], readScopeRoots: [root] } })
@@ -213,6 +215,9 @@ function boot({ state = {}, config = {} }: { state?: Record<string, unknown>; co
     check('a link to a directory does not let its contents through', throughDir?.kind === 'deny', JSON.stringify(throughDir))
     const listing = gate('glob', { pattern: '*.md', path: join(root, 'etc-link') })
     check('and neither does a glob rooted there', listing?.kind === 'deny', JSON.stringify(listing))
+    // An absolute pattern is the way out of the workspace; on Windows it starts with a drive, not "/".
+    const absolutePattern = gate('glob', { pattern: join(etc, '*') })
+    check('an absolute glob pattern outside is refused', absolutePattern?.kind === 'deny', JSON.stringify(absolutePattern))
   } else {
     check('symlinks could be created for this check', false, linked)
   }

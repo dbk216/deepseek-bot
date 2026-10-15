@@ -49,8 +49,13 @@ export function route(argv: string[]): 'tui' | 'gateway' | 'update' | 'harness' 
   return argv[0] === 'gateway' && GATEWAY_COMMANDS.has(argv[1]) ? 'gateway' : 'harness'
 }
 
-/** The harness CLI inside the app — the same default the gateway's launcher uses. */
-export const HARNESS_CLI = '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
+/**
+ * The harness CLI inside the app — the same default the gateway's launcher uses. On Windows there is no
+ * app: `npm i -g @deepseek-ai/dsh` puts a .cmd shim on PATH that runs this script with node.
+ */
+export const HARNESS_CLI = process.platform === 'win32'
+  ? `${process.env.APPDATA ?? ''}\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js`
+  : '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
 
 /** What is printed on the way out, so the conversation can be picked up again. */
 export const resumeHint = (conversation: string): string => t().resumeHint(conversation)
