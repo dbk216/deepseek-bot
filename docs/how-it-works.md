@@ -24,17 +24,17 @@ Discord's and Telegram's "typing…" — so the answer is the only notification.
 
 `language` in the deepbot row — `en` (the default), `ko` or `zh` — sets what the bot itself says:
 approval requests and their buttons, stop and failure notices, the working message and Slack's
-status, the usage report, and everything `dsh` draws. `dsh` starts in its environment's language
-(`LC_ALL`, `LC_MESSAGES`, `LANG`, the first one set) and switches to the gateway's once connected.
-Any other value is a config error, not a quiet English. It does not set the language of the
+status, the usage report. `dsh`'s own interface — hints, labels, pickers, the status line, what the
+gateway answers it — is English whatever the setting, as Claude Code's and pi's are; the bot's notices
+in it follow the setting. Any other value is a config error, not a quiet English. It does not set the language of the
 answers: the model follows the persona in `SOUL.md` and the person it is talking to.
 
 The words people type are understood in all three whatever it is set to — stop, usage, allow and
 deny above — and a one-word message may end in `.`, `!`, `?`, `~`, `。`, `！` or `？`. Recall reads
 Chinese, which has no spaces, by overlapping pairs of characters, and the check for text that tries
 to give orders knows the three languages' shapes. The installer asks for the language, offering the
-environment's. The catalogs are `messages.ts` (the bot) and `tui/strings.ts` (the terminal);
-`test/i18n.test.ts` fails when a language misses a key or is a copy of another.
+environment's. The catalog is `messages.ts`; `test/i18n.test.ts` fails when a language misses a key or
+is a copy of another. The terminal's own words, `tui/strings.ts`, are English only.
 
 ## What it is
 
@@ -553,11 +553,13 @@ What appears besides the conversation:
   tool registry), an edit's changed lines, and the result under it — a few lines, all on `ctrl+o`.
 - **Thinking** is shown apart from the answer and folded once the answer starts, when the model
   streams its reasoning (`reasoning-delta`); the route this deployment uses sends none.
-- **The input box follows the conversation.** On a short one it sits right under the last line, and
-  it stays at the bottom once the screen is full, so what a command shows is where the eye already is.
-- **Approvals** are buttons above the input box; **a turn's questions** (`ask_user_question`, a plan
-  review) open there too — arrows and Enter, Space on multi-select, or type your own answer.
-- **`/model` and `/sessions` open a picker** above the input box: `↑↓` or the wheel to move, a digit to
+- **The input box keeps the bottom rows.** The conversation sits right above it, a short one with the
+  empty rows over it, so what is new and what a command shows are where one types. A choice — `/model`'s
+  or `/sessions`' list, a question's options, an approval — takes the box's place while nothing is typed,
+  as in Claude Code; a keystroke of text brings the box back, and so does "type your own…".
+- **Approvals** and **a turn's questions** (`ask_user_question`, a plan review) open in the input box's
+  place — arrows and Enter, Space on multi-select, or type (or paste) your own answer.
+- **`/model` and `/sessions` open a picker** in the input box's place: `↑↓` or the wheel to move, a digit to
   jump, `↵` or a click to pick, `esc` to close; typing closes it and goes to the input box. `/resume <n>`
   still works typed.
 - **The agent panel** lists the turn's subagents (running ones first, with their time and tokens)

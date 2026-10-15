@@ -8,9 +8,9 @@
  * Run: node test/i18n.test.ts
  */
 import './dist-fresh.ts'
-import { envLanguage, languageOf, LANGUAGES } from '../dist/i18n.js'
+import { languageOf, LANGUAGES } from '../dist/i18n.js'
 import { defaultWords, messages } from '../dist/messages.js'
-import { setLanguage, stringsFor, t } from '../dist/tui/strings.js'
+import { t } from '../dist/tui/strings.js'
 
 const results = []
 function check(name, ok, detail = '') {
@@ -27,15 +27,6 @@ function check(name, ok, detail = '') {
   const wrong = Object.entries(cases).filter(([input, want]) => languageOf(input) !== want).map(([input, want]) => `${input}→${languageOf(input)} (want ${want})`)
   check('languageOf reads settings and locales, and nothing that only starts like one', wrong.length === 0, wrong.join(', '))
   check('languageOf of nothing is English', languageOf(undefined) === 'en' && languageOf(3) === 'en')
-}
-
-// 2. The environment, in POSIX order.
-{
-  check('LANG alone decides', envLanguage({ LANG: 'ko_KR.UTF-8' }) === 'ko')
-  check('LC_ALL wins over LANG', envLanguage({ LC_ALL: 'en_US.UTF-8', LANG: 'zh_CN.UTF-8' }) === 'en')
-  check('LC_MESSAGES wins over LANG', envLanguage({ LC_MESSAGES: 'zh_TW.UTF-8', LANG: 'en_US.UTF-8' }) === 'zh')
-  check('C and POSIX are skipped, not read as English', envLanguage({ LC_ALL: 'C', LANG: 'ko_KR.UTF-8' }) === 'ko' && envLanguage({ LC_ALL: 'POSIX', LANG: 'zh_CN' }) === 'zh')
-  check('an empty environment is English', envLanguage({}) === 'en')
 }
 
 /** Every leaf of a catalog, by path: a string, a list, or what a function returns for sample arguments. */
@@ -79,14 +70,10 @@ function catalogChecks(label: string, of: (l: string) => unknown) {
 
 // 3. The adapter's words, and the terminal's.
 catalogChecks('adapter', (l) => messages(l))
-catalogChecks('terminal', (l) => stringsFor(l))
 
-// 4. The terminal switches language when told; it starts in English.
+// 4. The terminal's own words are English, whatever the deployment's language: it is not the bot speaking.
 {
-  check('the terminal starts in English', t().connecting === 'connecting…')
-  setLanguage('zh')
-  check('and speaks Chinese once set', t().connecting === '连接中…' && t().hints.idle(false).startsWith('↵ 发送'))
-  setLanguage('en')
+  check('the terminal speaks English', t().connecting === 'connecting…' && t().hints.idle(false).startsWith('↵ send'))
 }
 
 // 5. The words people type are understood in every language at once, English first.

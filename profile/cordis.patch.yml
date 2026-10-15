@@ -173,8 +173,8 @@
 # terminal alone; `dsh gateway setup` puts a messenger, its channels and its people here.
 #   targetChannels: ['*'] answers in every channel the bot is invited to; a list of ids narrows it.
 #   replyMode: mention answers @-mentions in channels; DMs are always answered.
-#   language: what the bot itself says (approvals, stops, failures) and the terminal: en, ko or zh. The
-#   model's own answers follow the persona in SOUL.md, not this.
+#   language: what the bot itself says (approvals, stops, failures): en, ko or zh. The terminal's own
+#   interface is English; the model's own answers follow the persona in SOUL.md, not this.
 - id: deepbot
   config:
     platform: slack

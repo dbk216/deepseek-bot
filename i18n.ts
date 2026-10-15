@@ -20,15 +20,3 @@ export function languageOf(value: unknown): Language {
   if (/^(zh|chi|zho|chinese|中文)(?:$|[-_.@])/.test(v)) return 'zh'
   return 'en'
 }
-
-/**
- * The language of an environment, by the POSIX order: LC_ALL, then LC_MESSAGES, then LANG. The
- * first one set decides, even when it names a language this has no words for (then English).
- */
-export function envLanguage(env: Record<string, string | undefined>): Language {
-  for (const key of ['LC_ALL', 'LC_MESSAGES', 'LANG']) {
-    const v = env[key]
-    if (v !== undefined && v !== '' && v !== 'C' && v !== 'POSIX') return languageOf(v)
-  }
-  return 'en'
-}

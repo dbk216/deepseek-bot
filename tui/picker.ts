@@ -1,5 +1,5 @@
 /**
- * A list to pick one row from, shown just above the input box: /model's models, /sessions'
+ * A list to pick one row from, shown in the input box's place: /model's models, /sessions'
  * conversations. Pure, so its rules are tested without a screen.
  *
  * ↑↓ (and the wheel) move, a digit jumps to that row, ↵ (or a click) picks, esc closes. A row that

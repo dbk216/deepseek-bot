@@ -7,9 +7,10 @@
  * be tested against a fake terminal and a fake backend.
  *
  * Layout, top to bottom: a header, the transcript, a divider, the status line, the input box,
- * and a hint line. Nothing frames the whole screen. As in Claude Code, the input box follows a short
- * conversation, right under its last line, and stays at the last rows once the screen is full; what
- * a /command shows (a picker, a question, the completion list) opens just above the box.
+ * and a hint line. Nothing frames the whole screen. The input box keeps the last rows and the
+ * transcript sits right above the divider, a short one with the empty rows over it, so what is new is
+ * always next to where one types. A choice (a picker, a question's options, an approval) takes the box's
+ * place while nothing is typed; the completion list opens just above the box.
  */
 import { answerBlock, bannerBlock, noticeBlock, ruleBlock, spacerBlock, thinkingBlock, toolBlock, toolCallBlock, userBlock, type AnswerBlock, type Detail, type NoticeKind, type ThinkingBlock, type ToolCallBlock, type ToolStep } from './blocks.js'
 import { complete, type CommandInfo, type Completion } from './complete.js'
@@ -89,7 +90,7 @@ export interface AppOptions {
   /** A typed line the app should not send (a /command): return true when it was handled. */
   intercept?: (text: string) => boolean
   /** The /commands to complete, with what they take. */
-  /** The /commands for completion; a function is read each time, so a change of language shows. */
+  /** The /commands for completion. */
   commands?: readonly CommandInfo[] | (() => readonly CommandInfo[])
   /** The workspace's files matching a query, for @ completion. */
   files?: (query: string) => string[]
@@ -124,7 +125,7 @@ export class App {
   private readonly posted = new Map<string, AnswerBlock>()
   /** The last answer block this turn streamed into: where the turn's reply belongs. */
   private turnBlock: AnswerBlock | null = null
-  /** An open choice (an approval), shown above the input box. */
+  /** An open choice (an approval), in the input box's place while nothing is typed. */
   choice: Choice | null = null
   /** The turn's subagents and background jobs, as the gateway last reported them. */
   private panel: { agents: AgentItem[]; jobs: JobItem[] } = { agents: [], jobs: [] }
@@ -137,9 +138,9 @@ export class App {
   view: View = { kind: 'main' }
   /** The lines of the subagent or job being looked at. */
   private readonly side = new Transcript()
-  /** Questions the turn is waiting on, answered in the panel above the input box. */
+  /** Questions the turn is waiting on, answered in the input box's place. */
   question: QuestionFlow | null = null
-  /** A list a /command opened (/model, /sessions), above the input box until a row is picked or it closes. */
+  /** A list a /command opened (/model, /sessions), in the input box's place until a row is picked or it closes. */
   picker: Picker | null = null
   /** A deep interview in progress: its topic and the model's latest report on it. */
   interview: { topic: string; state: InterviewState | null } | null = null
@@ -475,7 +476,7 @@ export class App {
     this.notice(t().questionClosed, 'info')
   }
 
-  /** A /command's list, just above the input box: the keys are its until a row is picked or it closes. */
+  /** A /command's list, in the input box's place: the keys are its until a row is picked or it closes. */
   openPicker(spec: PickerSpec): void {
     if (this.question !== null) return
     if (this.search !== null) { this.editor.set(this.search.original); this.search = null }
@@ -554,7 +555,7 @@ export class App {
     this.terminal.requestRender()
   }
 
-  /** Buttons on a message: shown as a choice above the input box until picked or withdrawn. */
+  /** Buttons on a message: shown as a choice in the input box's place until picked or withdrawn. */
   offer(ts: string, options: Choice['options']): void {
     this.choice = options.length === 0 ? null : { ts, options, index: 0 }
     this.terminal.requestRender(true)
@@ -660,6 +661,8 @@ export class App {
       const text = event.text.length > MAX_PASTE_CHARS ? event.text.slice(0, MAX_PASTE_CHARS) : event.text
       if (text !== event.text) this.showToast(t().pasteCut(MAX_PASTE_CHARS.toLocaleString('en-US')))
       this.search = null
+      // Pasted into an open question, as typed into it: the person's own words.
+      if (this.question !== null && !this.question.typing) { this.question.cursor = this.question.rows().length - 1; this.question.typing = true }
       this.editor.insert(text)
       this.refreshCompletion()
       this.terminal.requestRender(true)
@@ -1070,13 +1073,19 @@ export class App {
     // Messages waiting behind the running turn, above the divider: three at most, then a count.
     const waiting = this.view.kind === 'main' ? this.pending : []
     const pendingRows = Math.min(waiting.length, 3) + (waiting.length > 3 ? 1 : 0)
-    const fixed = pendingRows + 1 /* divider */ + 1 /* status */ + panelShown + choiceRows + questionLines.length + completionLines.length + editorRows + 2 /* box */ + 1 /* hint */
-    // The picker gets what is left after a row of transcript: on a small screen it shrinks, the box stays.
+    // A choice on screen (a picker, a question's options, an approval) takes the input box's place while
+    // nothing is typed, as in Claude Code: one keystroke of text brings the box back.
+    const boxHidden = this.editor.text === '' && this.search === null
+      && ((this.picker !== null && this.question === null) || (this.question !== null && !this.question.typing) || (this.choice !== null && this.question === null))
+    const boxRows = boxHidden ? 0 : editorRows + 2
+    const fixed = pendingRows + 1 /* divider */ + 1 /* status */ + panelShown + choiceRows + questionLines.length + completionLines.length + boxRows + 1 /* hint */
+    // The picker gets what is left after a row of transcript: on a small screen it shrinks; the hint line stays.
     const pickerLines = this.question === null && this.picker !== null ? this.pickerLines(cols, rows - (1 + stripRows) - 1 - fixed) : []
     const bottom = fixed + pickerLines.length
-    const transcriptTop = 1 + stripRows
-    // As tall as what it shows, up to every row left: the input box follows a short conversation.
-    const transcriptHeight = Math.max(1, Math.min(rows - transcriptTop - bottom, this.pane.layout(cols).length))
+    // Every row left is the transcript's; one shorter than that is drawn at its foot, against the divider.
+    const area = Math.max(1, rows - (1 + stripRows) - bottom)
+    const transcriptHeight = Math.max(1, Math.min(area, this.pane.layout(cols).length))
+    const transcriptTop = 1 + stripRows + (area - transcriptHeight)
     if (stripRows > 0) this.drawInterview(screen, 1, cols)
     const pendingTop = transcriptTop + transcriptHeight
     const dividerRow = pendingTop + pendingRows
@@ -1120,7 +1129,7 @@ export class App {
       transcriptTop, transcriptHeight, dividerRow, editorTop, choiceRow, choiceSpans, panelTop, panelFirst: panel.first, panelShown, questionTop, questionRowsAt,
       pickerTop, pickerMap: pickerLines.map((line) => line.row),
       completionTop: completionLines.length === 0 ? -1 : completionTop, completionFirst: completion.first, completionShown: completionLines.length,
-      editorRows, editorFirst, statusRow, effortSpan: null,
+      editorRows: boxHidden ? 0 : editorRows, editorFirst, statusRow, effortSpan: null,
     }
     if (panelTop >= 0) this.drawPanel(screen, panelTop, panel.rows, panel.first)
 
@@ -1173,19 +1182,22 @@ export class App {
     // Status line.
     this.drawStatus(screen, statusRow)
 
-    // Input box.
-    const inner = cols - 4
-    screen.put(0, editorTop, `╭${'─'.repeat(Math.max(0, cols - 2))}╮`, s(theme.border))
-    const first = editorFirst
-    for (let r = 0; r < editorRows; r++) {
-      const y = editorTop + 1 + r
-      screen.put(0, y, '│', s(theme.border))
-      screen.put(cols - 1, y, '│', s(theme.border))
-      if (first + r === 0) screen.put(2, y, '› ', s(theme.accent))
-      screen.put(4, y, editor.rows[first + r] ?? '', '', 2 + inner)
+    // Input box, unless a choice has its place.
+    if (boxHidden) screen.cursor = null
+    else {
+      const inner = cols - 4
+      screen.put(0, editorTop, `╭${'─'.repeat(Math.max(0, cols - 2))}╮`, s(theme.border))
+      const first = editorFirst
+      for (let r = 0; r < editorRows; r++) {
+        const y = editorTop + 1 + r
+        screen.put(0, y, '│', s(theme.border))
+        screen.put(cols - 1, y, '│', s(theme.border))
+        if (first + r === 0) screen.put(2, y, '› ', s(theme.accent))
+        screen.put(4, y, editor.rows[first + r] ?? '', '', 2 + inner)
+      }
+      screen.put(0, editorTop + 1 + editorRows, `╰${'─'.repeat(Math.max(0, cols - 2))}╯`, s(theme.border))
+      screen.cursor = this.focus === 'editor' ? { x: 4 + editor.cursor.x, y: editorTop + 1 + (editor.cursor.y - first) } : null
     }
-    screen.put(0, editorTop + 1 + editorRows, `╰${'─'.repeat(Math.max(0, cols - 2))}╯`, s(theme.border))
-    screen.cursor = this.focus === 'editor' ? { x: 4 + editor.cursor.x, y: editorTop + 1 + (editor.cursor.y - first) } : null
 
     // Hint line: what the keys do here.
     const search = this.search
@@ -1199,7 +1211,7 @@ export class App {
         : this.view.kind === 'job' ? t().hints.job
           : this.status.running ? t().hints.running
             : t().hints.idle(allRows.length > 0)
-    screen.put(1, editorTop + 2 + editorRows, hint, s(theme.dim))
+    screen.put(1, editorTop + boxRows, hint, s(theme.dim))
   }
 
   /** The completion list, a window of rows around the picked candidate. */

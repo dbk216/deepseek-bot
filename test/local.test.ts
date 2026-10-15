@@ -1600,7 +1600,11 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await c.waitFor((f) => f.type === 'ready')
   check('default tenant: a terminal that asks for none is in the configured default, Korean name and all', ready?.tenant === '한국어 팀' && ready.workspace.endsWith(join(sep, 'tenants', '한국어 팀')), JSON.stringify(ready))
-  check('language: ready names the deployment\'s language, for the terminal to speak', ready?.language === 'ko', String(ready?.language))
+  // The terminal is English whatever the deployment speaks: ready names no language, and what the gateway says to it is English.
+  check('language: ready names no language for a Korean deployment: the terminal stays English', ready?.language === undefined, String(ready?.language))
+  c.send({ type: 'models' })
+  const noModels = await c.waitFor((f) => f.type === 'error' && f.code === 'models-unavailable')
+  check('language: and the gateway refuses the terminal in English', noModels?.message === 'this deployment lists no models', JSON.stringify(noModels))
   c.send({ type: 'message', text: '안녕' })
   for (let i = 0; i < 100 && created.length === 0; i++) await sleep(10)
   check('default tenant: its turn runs there', String(created[0]?.meta?.cwd ?? '').endsWith(join(sep, 'tenants', '한국어 팀')), String(created[0]?.meta?.cwd))

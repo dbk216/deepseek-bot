@@ -8,8 +8,7 @@ import { interviewPrompt } from './interview.js'
 import type { CommandInfo } from './complete.js'
 import type { PickerSpec } from './picker.js'
 import { stringWidth } from './render/width.js'
-import { languageOf } from '../i18n.js'
-import { setLanguage, t } from './strings.js'
+import { t } from './strings.js'
 import { GATEWAY_COMMANDS } from '../service/gateway.js'
 
 export interface Args { name?: string; socket?: string; tenant?: string; resume?: string; help: boolean }
@@ -29,7 +28,7 @@ export function parseArgs(argv: string[]): Args | { error: string } {
   return args
 }
 
-/** The usage text, in the terminal's language. */
+/** The usage text. */
 export function usage(): string {
   return t().usage
 }
@@ -88,8 +87,6 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       else app.jobOutput(frame.id, frame.text, frame.append, frame.status)
       return
     case 'ready':
-      // The gateway's language wins over the environment's, so the terminal speaks as the bot does.
-      if (frame.language !== undefined) setLanguage(languageOf(frame.language))
       commands?.ready()
       app.setBusy(frame.busy)
       app.setStatus({ connected: true, workspace: frame.workspace, session: frame.conversation, model: frame.model, effort: frame.effort ?? null })
@@ -136,7 +133,7 @@ export function parseCommand(text: string): { name: CommandName; args: string } 
 /** Which commands take an argument. */
 const TAKES_ARGS: Record<CommandName, boolean> = { new: false, sessions: false, resume: true, tenant: true, interview: true, usage: false, clear: false, help: false, quit: false, exit: false, model: true }
 
-/** What each command takes and does, in the terminal's language: the source of /help and of the completion list. */
+/** What each command takes and does: the source of /help and of the completion list. */
 export function commandInfo(): Array<CommandInfo & { name: CommandName }> {
   const words = t().commands
   return COMMANDS.map((name) => {

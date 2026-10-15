@@ -149,6 +149,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   const asking = t.term.screen.text()
   check('mid-turn: the approval request is its own message; the streamed text stays', asking.includes('build 폴더를 지울게.') && asking.includes('권한이 필요합니다'))
   check('choice: offered above the input box', /⚠ +허용 +거부/.test(asking) || (asking.includes('⚠') && asking.includes(' 허용 ') && asking.includes(' 거부 ')))
+  check('choice: and the input box gives way to it while nothing is typed, as in Claude Code', !asking.includes('╭') && !asking.includes('╰'), asking.split('\n').slice(-4).join(' | '))
   t.key('\x1b[C')
   t.key('\r')
   check('choice: → then Enter picks the second option', t.actions.length === 1 && t.actions[0] === 'approval:deny:k' && t.app.choice === null, JSON.stringify(t.actions))
@@ -176,6 +177,8 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   check('choice: withdrawn with the message that offered it', t.app.choice === null)
   t.key('입력 중')
   t.app.offer('ts-4', [{ id: 'y', label: '허용' }])
+  t.clock.advance(20)
+  check('choice: with text typed, the input box stays, with the text', t.term.screen.text().includes('╭') && t.term.screen.text().includes('입력 중'))
   t.key('\r')
   check('choice: with text typed, Enter sends the text instead of picking', t.actions.length === 1 && t.sent.includes('입력 중'))
 }
@@ -321,6 +324,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.clock.advance(20)
   const asked = t.term.screen.text()
   check('question: the panel shows the question, its options and "type your own…"', /\? question \(1\/2\)/.test(asked) && asked.includes('배포 대상 환경은?') && /❯ staging/.test(asked) && asked.includes('production — 실서비스') && asked.includes('type your own…'))
+  check('question: the input box gives way to the options', !asked.includes('╭'), asked.split('\n').slice(-4).join(' | '))
   t.key('\x1b[B'); t.key('\r')
   check('question: ↓ Enter answers the first and moves to the second', /\(2\/2\)/.test(t.term.screen.text()) && t.term.screen.text().includes('? 배포 대상 환경은? → production'))
   t.key(' '); t.key('\x1b[B'); t.key('\x1b[B'); t.key(' ')
@@ -336,15 +340,31 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.key('\r')
   check('question: Enter sends those words as the answer', JSON.stringify(t.answers[1]) === JSON.stringify({ id: 'q-2', answers: [{ id: 'name', selected: [], custom: '아리' }] }) && t.app.editor.text === '')
 
+  t.app.ask('q-own', [{ id: 'own', question: '직접 쓸래?', options: [{ label: 'a' }], multiSelect: false }])
+  t.key('\x1b[B'); t.key('\r'); t.clock.advance(20)
+  check('question: "type your own…" chosen brings the input box back, empty, to type in', t.app.question?.typing === true && t.app.editor.text === '' && t.term.screen.text().includes('╭'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+  t.app.closeQuestion('q-own'); t.clock.advance(20)
+  // Pasted words are the person's own words too: the question switches to them, and Enter answers with them.
+  t.app.ask('q-paste', [{ id: 'p', question: '붙여 넣을래?', options: [{ label: 'a' }], multiSelect: false }])
+  t.key('\x1b[200~붙여 넣은 답\x1b[201~'); t.clock.advance(20)
+  check('question: a paste switches to typing, in the input box', t.app.question?.typing === true && t.app.editor.text === '붙여 넣은 답' && t.term.screen.text().includes('╭'))
+  // A choice arriving while the question is being typed into leaves the box: the typing goes on.
+  t.app.offer('ts-q', [{ id: 'z', label: '허용' }])
+  t.key('\x15'); t.clock.advance(20)
+  check('question: typing an answer keeps the input box even with a choice pending', t.app.question?.typing === true && t.app.editor.text === '' && t.term.screen.text().includes('╭'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+  t.key('붙여 넣은 답'); t.key('\r'); t.clock.advance(20)
+  check('question: and Enter answers with the pasted words', t.answers.some((a) => a.id === 'q-paste' && a.answers[0]?.custom === '붙여 넣은 답'), JSON.stringify(t.answers.at(-1)))
+  t.app.unpost('ts-q')
+
   t.app.ask('q-3', [{ id: 'skip-me', question: '건너뛸 질문', options: [{ label: 'a' }], multiSelect: false }])
   t.key('\x1b'); t.clock.advance(40)
-  check('question: esc skips it, and the turn is not cancelled', JSON.stringify(t.answers[2]) === JSON.stringify({ id: 'q-3', answers: [{ id: 'skip-me', selected: [] }] }) && t.cancels === 0)
+  check('question: esc skips it, and the turn is not cancelled', JSON.stringify(t.answers[3]) === JSON.stringify({ id: 'q-3', answers: [{ id: 'skip-me', selected: [] }] }) && t.cancels === 0)
 
   t.app.ask('q-4', [{ id: 'click', question: '클릭으로 고르기', options: [{ label: '첫째' }, { label: '둘째' }], multiSelect: false }])
   t.clock.advance(20)
   const second = t.term.screen.find('둘째')
   t.key(SGR(0, second.col, second.row)); t.key(SGR(0, second.col, second.row, true))
-  check('question: a click on an option answers it', JSON.stringify(t.answers[3]?.answers) === JSON.stringify([{ id: 'click', selected: ['둘째'] }]))
+  check('question: a click on an option answers it', JSON.stringify(t.answers[4]?.answers) === JSON.stringify([{ id: 'click', selected: ['둘째'] }]))
 
   t.app.ask('q-5', [{ id: 'plan', question: '이 계획으로 진행할까?', options: [{ label: 'Revise' }, { label: 'Approve' }], multiSelect: false, detail: '1. 렌더러\n2. transport', intent: { kind: 'plan-review', approve: 'Approve' } }])
   t.clock.advance(20)
@@ -846,16 +866,18 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.turnEnded()
 }
 
-// 70. The bottom of the screen, as in Claude Code. A short conversation has the input box right under it
-// (it used to wait at the last rows, with /model's list at the top of an empty screen); /model and
-// /sessions are pickers just above the box; shift+tab steps the effort, shown where a permission label
-// the gateway never sent ("▸▸ ask") used to be; and the mouse works on what the keys work on.
+// 70. The bottom of the screen. The input box keeps the last rows and a short conversation sits right above
+// it, so nothing opens in the middle of an empty screen (it once followed the conversation down from the
+// top, with the rest of the screen empty under it); /model and /sessions are pickers in the box's place;
+// shift+tab steps the effort, shown where a permission label the gateway never sent ("▸▸ ask") used to
+// be; and the mouse works on what the keys work on.
 {
   const steps = []
   const t = setup({ cols: 80, rows: 40, extra: { stepEffort: () => steps.push(1) } })
   const box = () => t.term.screen.find('╭')?.row ?? -1
   const info = t.term.screen.find('session tui-3f2a9c1e-aaaa')?.row ?? -1
-  check('layout: a short conversation has the input box right under it, not at the last rows', info >= 0 && box() > info && box() - info <= 4 && box() < 40 - 5, `info ${info}, box ${box()}`)
+  check('layout: the input box keeps the last rows, and a short conversation sits right above it', box() === 40 - 4 && info >= 0 && box() - info <= 4, `info ${info}, box ${box()}`)
+  check('layout: the empty rows are above the conversation, under the header, not between it and the box', t.term.screen.row(3).trim() === '', t.term.screen.row(3))
   const status = t.term.screen.row(box() - 1)
   check('status: the effort, with the key that steps it, and no permission label', /▸▸ effort medium \(shift\+tab\)/.test(status) && !/\bask\b/.test(status), status)
   check('status: the model it runs on, at the right', /deepseek-v4\.1\s*$/.test(status), status)
@@ -879,7 +901,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const open = () => { t.app.openPicker({ title: 'Model', rows, onPick: (i, e) => picked.push([i, e]) }); t.clock.advance(20) }
   open()
   const first = t.term.screen.find('1. og/m1')
-  check('picker: numbered rows, the current one marked and highlighted, just above the input box', first !== null && box() > first.row && box() - first.row <= 8 && /❯ 1\. og\/m1 +M one +✓/.test(t.term.screen.row(first.row)), t.term.screen.row(first?.row ?? 0))
+  check('picker: numbered rows, the current one marked and highlighted, at the bottom in the input box\'s place', first !== null && box() === -1 && first.row > 30 && /❯ 1\. og\/m1 +M one +✓/.test(t.term.screen.row(first.row)), `${t.term.screen.row(first?.row ?? 0)} @${first?.row} box ${box()}`)
   check('picker: the highlighted model\'s effort, and what it takes', /effort ◂ medium ▸ +low · medium · high/.test(t.term.screen.text()), t.term.screen.text().split('\n').find((l) => l.includes('effort ◂')))
   check('picker: the hint line says the keys', /↑↓ .*←→ effort.*↵ .*esc /.test(t.term.screen.row(39)) || /↑↓ .*←→ effort.*↵ .*esc /.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => l.includes('↑↓')).join(' | '))
   t.key('\x1b[C'); t.clock.advance(20)
@@ -890,6 +912,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('picker: on a model that is not the current one, ← starts from its default', /❯ 3\. og\/m3/.test(t.term.screen.text()) && /effort ◂ high ▸/.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => /effort/.test(l)).join(' | '))
   t.key('\x1b[A'); t.key('\x1b[A'); t.key('\r'); t.clock.advance(20)
   check('picker: ↵ picks the row with the effort chosen, and closes', JSON.stringify(picked) === '[[0,"high"]]' && t.term.screen.find('1. og/m1') === null, JSON.stringify(picked))
+  check('picker: and the input box is back in its rows', box() === 40 - 4, String(box()))
   check('picker: and nothing was sent as a message', t.sent.length === 0)
   open()
   t.key('4'); t.clock.advance(20)
@@ -941,7 +964,8 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('mouse: a click on one that takes none runs it', JSON.stringify(intercepted) === '["/help"]', JSON.stringify(intercepted))
 }
 
-// 72. Review of the pickers. A small screen keeps the input box; text being typed when a picker opens
+// 72. Review of the pickers. A small screen keeps the hint line and the highlighted row (the picker has the
+// input box's place); text being typed when a picker opens
 // keeps ↵ and digits; the picker does not share the screen with the completion list or a history
 // search; shift+tab steps the effort with the completion list open; a click in a tall input box does
 // not scroll it; rows above the window are counted; numbers line up past nine.
@@ -951,7 +975,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
     const small = setup({ cols: 80, rows })
     small.app.openPicker({ title: 'Model', rows: many, onPick: () => {} })
     small.clock.advance(20)
-    check(`picker: on a screen ${rows} rows tall the input box and the hint line stay`, small.term.screen.find('╰') !== null && small.term.screen.find('╭') !== null && small.term.screen.text().includes('↑↓ pick'), small.term.screen.text().split('\n').slice(-5).join(' | '))
+    check(`picker: on a screen ${rows} rows tall the hint line keeps the last row and the highlighted row shows`, small.term.screen.row(rows - 1).includes('↑↓ pick') && small.term.screen.text().includes('❯'), small.term.screen.text().split('\n').slice(-5).join(' | '))
     check(`picker: and it still shows a row to pick (${rows} rows)`, /❯ +1\. p\/model-1 /.test(small.term.screen.text()))
   }
 
@@ -1008,7 +1032,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
     const t = setup({ cols: 80, rows })
     t.app.openPicker({ title: 'Model', rows: none, onPick: () => {} })
     t.clock.advance(20)
-    check(`picker: models that take no effort, ${rows} rows: the box and the hint line stay`, t.term.screen.find('╰') !== null && t.term.screen.text().includes('↑↓ pick'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+    check(`picker: models that take no effort, ${rows} rows: the hint line keeps the last row and the highlighted row shows`, t.term.screen.row(rows - 1).includes('↑↓ pick') && t.term.screen.text().includes('❯'), t.term.screen.text().split('\n').slice(-4).join(' | '))
     check(`picker: and the highlighted model says it takes none (${rows} rows)`, t.term.screen.text().includes('this model takes no effort'))
   }
   // 18 rows leave the picker three, 17 two, 16 one: the title and the effort line give way to the rows.
@@ -1020,7 +1044,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
     crowd.app.offer('ts-1', [{ id: 'yes', label: 'yes' }, { id: 'no', label: 'no' }])
     crowd.app.openPicker({ title: 'Model', rows: none, onPick: () => {} })
     crowd.clock.advance(20)
-    check(`picker: on a crowded screen (${rows} rows) the box and the hint line stay`, crowd.term.screen.find('╰') !== null && crowd.term.screen.text().includes('↑↓ pick'), crowd.term.screen.text().split('\n').slice(-5).join(' | '))
+    check(`picker: on a crowded screen (${rows} rows) the hint line keeps the last row and the highlighted row shows`, crowd.term.screen.row(rows - 1).includes('↑↓ pick') && crowd.term.screen.text().includes('❯'), crowd.term.screen.text().split('\n').slice(-5).join(' | '))
     check(`picker: and a row to pick is still shown (${rows} rows)`, /❯ +1\. p\/model-1 /.test(crowd.term.screen.text()))
   }
 
@@ -1061,6 +1085,14 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   s.app.turnStarted()
   s.key('하나 더\r'); s.key('그만\r'); s.clock.advance(20)
   check('instant: a typed stop is said at once, and what waited goes back to the box', s.sent.includes('그만') && s.app.editor.text === '하나 더' && !/queued/.test(s.term.screen.text()), JSON.stringify(s.app.editor.text))
+}
+
+// 75. ctrl+r searching what was typed keeps the input box, a choice pending or not, nothing typed yet and no history.
+{
+  const t = setup()
+  t.app.offer('ts-r', [{ id: 'r', label: '허용' }])
+  t.key('\x12'); t.clock.advance(20)
+  check('search: ctrl+r keeps the input box while a choice is pending', t.app.editor.text === '' && t.term.screen.text().includes('╭') && t.term.screen.text().includes('history search'), t.term.screen.text().split('\n').slice(-4).join(' | '))
 }
 
 const failed = results.filter((r) => !r.ok)

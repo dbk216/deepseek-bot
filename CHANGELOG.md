@@ -35,11 +35,12 @@ the caveat about version numbers is at the bottom.
   replaces the messenger there (the guided setup asks first); the old one's tokens stay, its channel
   ids give way to every channel and its people to the ones given. `--yes`, which guarded a `*` that
   opened several messengers at once, is gone.
-- **The terminal uses its bottom as Claude Code does.** On a short conversation the input box sat at
-  the last rows with the conversation at the top, so `/model`'s list appeared far from where one types.
-  The box now follows the conversation and stays at the bottom once the screen is full. `/model` and
-  `/sessions` open a picker just above it (`↑↓`, a digit, `↵` or a click; `←→` sets the highlighted
-  model's effort) instead of printing a list into the transcript.
+- **The terminal uses its bottom as Claude Code does.** The input box, the status line and the hint
+  line keep the last rows, and the conversation sits right above them, a short one with the empty rows
+  over it. `/model` and `/sessions` open a picker in the box's place (`↑↓`, a digit, `↵` or a click;
+  `←→` sets the highlighted model's effort) instead of printing a list into the transcript, and a
+  question's options and an approval take the box's place too while nothing is typed; typing or
+  pasting brings the box back.
 - **`shift+tab` steps the reasoning effort**, shown at the left of the status line where `▸▸ ask` used
   to be. That label was never sent by the gateway: it was a default the terminal drew. The model the
   conversation runs on is at the right of the status line. A click on the effort steps it too.
@@ -177,8 +178,8 @@ the caveat about version numbers is at the bottom.
   installer says so for Telegram and Discord, and `dsh gateway setup` asks.
 - **English, Korean and Chinese.** A `language` setting in the deepbot row (`en` by default, `ko`,
   `zh`) sets what the bot itself says on every platform (approvals and their buttons, stops,
-  failures, the working message, Slack's status, the usage report) and everything `dsh` draws; `dsh`
-  starts in its environment's language and takes the gateway's once connected. Stop, usage, allow and
+  failures, the working message, Slack's status, the usage report); `dsh`'s own interface is English,
+  as Claude Code's and pi's are. Stop, usage, allow and
   deny are understood in all three whatever the setting, recall reads Chinese by pairs of
   characters, and the injection check knows Chinese shapes. The installer asks, offering the
   environment's language; an existing profile is told how to set it. An unknown value is a config

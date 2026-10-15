@@ -16,8 +16,7 @@ import { constants } from 'node:os'
 import { App } from './app.js'
 import { Connection, discover, lookup } from './client.js'
 import { bind, commandInfo, createCommands, HARNESS_CLI, parseArgs, resumeHint, route, usage, type Commands } from './cli.js'
-import { envLanguage } from '../i18n.js'
-import { setLanguage, t } from './strings.js'
+import { t } from './strings.js'
 import { fileFinder } from './files.js'
 import { appendHistory, historyFile, loadHistory } from './history.js'
 import { processIO, restoreOnExit } from './render/terminal.js'
@@ -36,8 +35,6 @@ function forward(argv: string[]): never {
 }
 
 function main(): void {
-  // Until the gateway says its language, the terminal speaks the environment's.
-  setLanguage(envLanguage(process.env))
   const argv = process.argv.slice(2)
   const where = route(argv)
   if (where === 'harness') forward(argv)

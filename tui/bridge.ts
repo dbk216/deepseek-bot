@@ -9,7 +9,7 @@
  * informative, never an exception.
  */
 import { randomUUID } from 'node:crypto'
-import { stringsFor, type Strings } from './strings.js'
+import { t, type Strings } from './strings.js'
 
 export interface AgentItem {
   id: string
@@ -77,7 +77,7 @@ function tokensOf(usage: any): number {
     .reduce((sum, k) => sum + (Number.isFinite(usage[k]) ? Number(usage[k]) : 0), 0)
 }
 
-export function createBridge(services: Services, log: (...parts: unknown[]) => void, words: Strings['gateway'] = stringsFor('en').gateway) {
+export function createBridge(services: Services, log: (...parts: unknown[]) => void, words: Strings['gateway'] = t().gateway) {
   const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max)}… ${words.charsLeftOut(text.length - max)}`)
   const seen = new Set<string>()
   /** The first time a shape is met, it goes to the log — the contract is not published. */

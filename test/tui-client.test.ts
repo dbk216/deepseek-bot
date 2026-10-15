@@ -32,7 +32,7 @@ const { Connection, discover, lookup } = await import('../dist/tui/client.js')
 const { bind, createCommands, parseArgs, resumeHint, route, usage } = await import('../dist/tui/cli.js')
 const USAGE = usage()
 const { createLocalTransport } = await import('../dist/transports/local.js')
-const { setLanguage, t: words } = await import('../dist/tui/strings.js')
+const { t: words } = await import('../dist/tui/strings.js')
 const { fakeTerminal } = await import('./tui-fakes.ts')
 
 const results = []
@@ -251,10 +251,7 @@ async function until(predicate, ms = 3000) {
   bind(app, { type: 'panel', agents: [], jobs: [], usage: { tokens: 8100, contextPct: 23.4 } })
   bind(app, { type: 'ready', version: 1, conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
   bind(app, { type: 'ready', version: 1, language: 'zh', conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
-  check('language: the gateway\'s language is the terminal\'s once ready', words().hints.idle(false).startsWith('↵ 发送') && await until(() => term.screen.text().includes('↵ 发送')))
-  bind(app, { type: 'ready', version: 1, language: 'en', conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
-  check('language: and back, when it says so', await until(() => term.screen.text().includes('↵ send')))
-  setLanguage('en')
+  check('language: a gateway that names another language (an older one) leaves the terminal in English', words().hints.idle(false).startsWith('↵ send') && await until(() => term.screen.text().includes('↵ send')) && !term.screen.text().includes('发送'))
   await until(() => term.screen.text().includes('8.1k tok'))
   check('usage: the conversation\'s tokens and context fill the status line', /ctx ▰▰▱▱▱▱▱▱ 23% · 8\.1k tok/.test(term.screen.text()), term.screen.text().split('\n').find((l) => l.includes('tok')))
   check('model: the gateway\'s model is named in the info line', term.screen.text().includes('deepseek-v4.1 · /home/agent'))
@@ -384,8 +381,8 @@ for (const platform of ['win32', 'darwin']) {
   check('/sessions: the list is shown, numbered, with titles', await until(() => /1\. 오늘 날씨 어때/.test(term.screen.text()) && /2\. 배포 일정 정리해줘/.test(term.screen.text())))
   check('/sessions: the command itself is not echoed as a message', !term.screen.text().includes('› /sessions'))
   const listRow = term.screen.find('2. 배포 일정 정리해줘')?.row ?? -1
-  const boxRow = term.screen.find('╭')?.row ?? -1
-  check('/sessions: the list sits just above the input box, where the eye is', listRow >= 0 && boxRow > listRow && boxRow - listRow <= 4, `list row ${listRow}, box row ${boxRow}`)
+  const hintRow = term.screen.text().split('\n').findIndex((l) => l.includes('↑↓ pick'))
+  check('/sessions: the list is at the bottom in the input box\'s place, right above the hint line', listRow >= 0 && term.screen.find('╭') === null && hintRow > listRow && hintRow - listRow <= 4, `list row ${listRow}, hint row ${hintRow}`)
   term.type('\x1b[B\r')
   check('/sessions: ↓ then ↵ resumes the second one', await until(() => connection.conversation === 'conv-a' && app.status.session === 'conv-a'))
   check('/resume: the earlier messages are shown', await until(() => term.screen.text().includes('earlier in this conversation') && term.screen.text().includes('staging 먼저.')))
