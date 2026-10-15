@@ -528,7 +528,12 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   check('withdraw: what waits is taken back, the running turn is not stopped, and the taken message never runs', t.logs.some((l) => /withdrew 1 of 3 named/.test(l)) && cancelled === 0 && ran.length === 2 && !ran.some((m) => m.includes('기다리는 일')) && ran.some((m) => m.includes('다른 터미널의 일')), JSON.stringify({ cancelled, ran: ran.map((m) => m.slice(-20)), log: t.logs.filter((l) => /withdr/.test(l)) }))
   a.send({ type: 'withdraw', ids: 'a-2' })
   const bad = await a.waitFor((f) => f.type === 'error')
-  check('withdraw: ids that are not a list are refused', bad?.code === 'bad-frame', JSON.stringify(bad))
+  check('withdraw: ids that are not a list are refused, saying so', bad?.code === 'bad-frame' && /ids/.test(bad?.message ?? ''), JSON.stringify(bad))
+  const errors = a.frames.filter((f) => f.type === 'error').length
+  a.send({ type: 'message', text: '이상한 id', id: 'not an id!' })
+  await a.waitFor((f) => f.type === 'error' && a.frames.filter((g) => g.type === 'error').length > errors)
+  const badId = a.frames.filter((f) => f.type === 'error').at(-1)
+  check('message: an id that is not one is refused, not dropped', badId?.code === 'bad-frame' && /id/.test(badId?.message ?? '') && !ran.some((m) => m.includes('이상한 id')), JSON.stringify(badId))
   await a.close()
   await b.close()
   await t.done()

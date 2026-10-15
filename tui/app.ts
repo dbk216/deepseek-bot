@@ -33,8 +33,8 @@ import { Transcript, type Block } from './render/transcript.js'
 import { fit, graphemes, stringWidth } from './render/width.js'
 
 export interface Backend {
-  /** A message, with the id this terminal gave it (so ↑ can take it back while it waits). */
-  send(text: string, id?: string): void
+  /** A message, with the id this terminal gave it (so ↑ can take it back while it waits); false when it was not sent. */
+  send(text: string, id?: string): boolean | void
   cancel(): void
   /** Ask the gateway to take back the messages waiting here, by their ids; false when it could not be asked.
    * The gateway answers with `withdrawn`, the turn going on. */
@@ -185,6 +185,14 @@ export class App {
   /** Long pastes in the box, by the chip that stands for each. */
   private readonly pastes = new Map<string, string>()
   private pasteCount = 0
+  /** Chips that went out in a message: ↑ through what was sent brings them back, so they are kept. */
+  private readonly sentChips = new Set<string>()
+  /** Messages of this terminal shown as started, lately: the gateway may still have had one waiting. */
+  private readonly started = new Map<string, { text: string; blocks: string[] }>()
+  /** Text the gateway gave back while the box was not the message box (a question, a search, a view). */
+  private takenBack: string[] = []
+  /** Whether this terminal asked for its waiting messages back and has not heard. */
+  private asked = false
   /** The keys on show (? on an empty box), in the input box's place. */
   private shortcuts = false
   /** Messages sent while a turn runs: shown above the input until their turn starts. */
@@ -401,7 +409,12 @@ export class App {
       // its stop mark are its own, apart from the one that ended.
       this.interrupted = false
       this.status.startedAt = this.clock.now()
-      if (this.pending.length > 0) this.shown(this.pending.shift()!.text)
+      if (this.pending.length > 0) {
+        // Kept a while: an ↑ sent before this end was read may be answered with this message withdrawn.
+        const next = this.pending.shift()!
+        this.started.set(next.id, { text: next.text, blocks: this.shown(next.text) })
+        if (this.started.size > 8) this.started.delete(this.started.keys().next().value!)
+      }
     }
     this.transcript.touch()
     this.terminal.requestRender()
@@ -448,8 +461,8 @@ export class App {
   /** Send a message shown as `display` (a command's short form) rather than as its full text. */
   sendAs(display: string, text: string): void {
     const id = this.messageId()
+    if (this.o.backend.send(text, id) === false) return
     this.said(display, id)
-    this.o.backend.send(text, id)
   }
 
   private messageId(): string {
@@ -462,13 +475,31 @@ export class App {
    */
   withdrawn(ids: string[]): void {
     this.withdrawing += ids.length
-    const mine = this.pending.filter((p) => ids.includes(p.id))
-    if (mine.length > 0) {
-      this.pending = this.pending.filter((p) => !ids.includes(p.id))
-      const back = mine.map((p) => p.text).join('\n')
-      this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
+    // One shown as started (its typing-off was read before this answer) was still waiting there: it leaves
+    // the transcript. Then the ones still queued here.
+    const back: string[] = []
+    for (const id of ids) {
+      const shown = this.started.get(id)
+      if (shown === undefined) continue
+      this.started.delete(id)
+      for (const block of shown.blocks) this.transcript.remove(block)
+      back.push(shown.text)
     }
+    const mine = this.pending.filter((p) => ids.includes(p.id))
+    this.pending = this.pending.filter((p) => !ids.includes(p.id))
+    back.push(...mine.map((p) => p.text))
+    if (this.asked && back.length === 0) this.showToast(t().nothingTakenBack)
+    this.asked = false
+    this.takenBack.push(...back)
+    this.restoreTakenBack()
     this.terminal.requestRender(true)
+  }
+
+  /** Text the gateway gave back goes to the box once it is the message box again. */
+  private restoreTakenBack(): void {
+    if (this.takenBack.length === 0 || this.view.kind !== 'main' || this.question !== null || this.search !== null || this.picker !== null) return
+    const back = this.takenBack.splice(0).join('\n')
+    this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
   }
 
   /**
@@ -508,11 +539,14 @@ export class App {
     return this.stopWords.includes(said) ? 'stop' : this.instantWords.includes(said) ? 'instant' : null
   }
 
-  private shown(text: string): void {
-    this.transcript.push(userBlock(text, this.mode))
-    this.transcript.push(spacerBlock())   // one blank line between a question and what answers it
+  private shown(text: string): string[] {
+    const said = userBlock(text, this.mode)
+    const gap = spacerBlock()   // one blank line between a question and what answers it
+    this.transcript.push(said)
+    this.transcript.push(gap)
     this.gapped = true
     this.transcript.toBottom()
+    return [said.id, gap.id]
   }
 
   /** A turn's step — thinking, a tool call, the answer — with one blank line before it. */
@@ -743,8 +777,9 @@ export class App {
     if (event.type === 'paste') {
       this.clearSelection()
       // A terminal may send a pasted line break as CR: one kind of break, before anything is counted or kept.
-      const text = (event.text.length > MAX_PASTE_CHARS ? event.text.slice(0, MAX_PASTE_CHARS) : event.text).replace(/\r\n?/g, '\n')
-      if (text !== event.text) this.showToast(t().pasteCut(MAX_PASTE_CHARS.toLocaleString('en-US')))
+      const cut = event.text.length > MAX_PASTE_CHARS
+      const text = (cut ? event.text.slice(0, MAX_PASTE_CHARS) : event.text).replace(/\r\n?/g, '\n')
+      if (cut) this.showToast(t().pasteCut(MAX_PASTE_CHARS.toLocaleString('en-US')))
       this.search = null
       this.shortcuts = false
       // Pasted into an open question, as typed into it: the person's own words.
@@ -853,6 +888,7 @@ export class App {
         // the turn goes on. Not while a question, a list or a choice has the keys.
         if (this.editor.text === '' && this.pending.length > 0 && this.view.kind === 'main' && this.question === null && this.picker === null && this.choice === null) {
           if (this.o.backend.withdraw?.(this.pending.map((p) => p.id)) !== true) this.notice(t().notSent, 'error')
+          else this.asked = true
           break
         }
         this.editor.up(width)
@@ -1046,7 +1082,8 @@ export class App {
   }
 
   private submit(): void {
-    const text = this.unchipped(this.editor.text)
+    const raw = this.editor.text
+    const text = this.unchipped(raw)
     if (text.trim() === '') return
     this.editor.submit()
     // Kept for the next run only where it went somewhere: a command run, a message sent.
@@ -1061,10 +1098,12 @@ export class App {
     if (this.view.kind === 'job') { this.showToast(t().shellNoInput); return }
     this.o.remember?.(text)
     const id = this.messageId()
+    // Not sent (no link): it stays in the box, never shown as asked or queued.
+    if (this.o.backend.send(text, id) === false) { this.editor.set(raw); return }
     this.said(text, id)
-    this.o.backend.send(text, id)
-    // Chips not in what was sent (or sent before, which ↑ brings back) are let go.
-    for (const chip of [...this.pastes.keys()]) if (!this.editor.past.some((entry) => entry.includes(chip))) this.pastes.delete(chip)
+    // Chips in neither the box nor what was sent (↑ through history brings those back) are let go.
+    for (const chip of this.pastes.keys()) if (raw.includes(chip)) this.sentChips.add(chip)
+    for (const chip of [...this.pastes.keys()]) if (!this.sentChips.has(chip)) this.pastes.delete(chip)
   }
 
   /** Stop the turn. The gateway withdraws the messages waiting behind it, so they come back to the input. */
@@ -1207,6 +1246,8 @@ export class App {
 
   private render(screen: Screen): void {
     const { cols, rows } = screen
+    // Whatever closed the question or the search, text the gateway gave back meanwhile comes to the box now.
+    this.restoreTakenBack()
     setFrame(Math.floor(this.clock.now() / 80))
     const s = (style) => sgr(style, this.mode)
     const editor = this.editor.layout(this.editorWidth())

@@ -343,7 +343,9 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
           return refuse(client, words === null ? 'bad-frame' : `${frame.type}-unsupported`, words === null ? say.needsText : `no ${frame.type} word is configured`)
         }
         // The terminal's own id for the message, so ↑ can take it back while it waits.
-        const id = frame.type === 'message' && typeof frame.id === 'string' && /^[\w-]{1,64}$/.test(frame.id) ? frame.id : undefined
+        const given: unknown = frame.type === 'message' ? frame.id : undefined
+        if (given !== undefined && (typeof given !== 'string' || !/^[\w-]{1,64}$/.test(given))) return refuse(client, 'bad-frame', say.badMessageId)
+        const id = typeof given === 'string' ? given : undefined
         handlers?.onMessage({
           eventId: `local-${randomUUID()}`,
           target: { channel: LOCAL_CHANNEL, threadTs: client.conversation },
@@ -412,7 +414,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
       case 'withdraw': {
         if (client.conversation === null) return refuse(client, 'no-hello', 'say hello first')
         const ids = frame.ids
-        if (!Array.isArray(ids) || ids.length > 200 || !ids.every((id) => typeof id === 'string')) return refuse(client, 'bad-frame', say.needsText)
+        if (!Array.isArray(ids) || ids.length > 200 || !ids.every((id) => typeof id === 'string')) return refuse(client, 'bad-frame', say.idsNeeded)
         const conversation = client.conversation
         // Every terminal on the conversation is told, so each counts those ends apart and takes back its own.
         const announce = (withdrawn: string[]) => toConversation(conversation, { type: 'withdrawn', ids: withdrawn })

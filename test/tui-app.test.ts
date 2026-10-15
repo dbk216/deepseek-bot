@@ -41,11 +41,12 @@ function setup({ cols = 80, rows = 30, env = { COLORTERM: 'truecolor' }, extra =
   const withdrawals = []
   const sentIds = []
   let withdrawOk = true
+  let sendOk = true
   let exited = null
   const app = new App({
     io: term.io, env, platform: 'darwin', clock,
     backend: {
-      send: (t, id) => { sent.push(t); sentIds.push(id) }, cancel: () => { cancels++ }, action: (id) => actions.push(id),
+      send: (t, id) => { sent.push(t); sentIds.push(id); return sendOk }, cancel: () => { cancels++ }, action: (id) => actions.push(id),
       view: (...a) => views.push(['view', ...a]), agentSend: (...a) => views.push(['send', ...a]),
       agentInterrupt: (...a) => views.push(['interrupt', ...a]), jobKill: (...a) => views.push(['kill', ...a]),
       answer: (id, answers) => answers_.push({ id, answers }),
@@ -63,6 +64,7 @@ function setup({ cols = 80, rows = 30, env = { COLORTERM: 'truecolor' }, extra =
     get cancels() { return cancels },
     withdrawals, sentIds,
     set withdrawOk(ok) { withdrawOk = ok },
+    set sendOk(ok) { sendOk = ok },
     get exited() { return exited },
     key: (s) => term.type(s),
     frames: () => term.out.length,
@@ -1700,6 +1702,8 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.key(`\x1b[200~${twelve}\x1b[201~`); t.key('\r'); t.clock.advance(20)
   check('chip: sent, still the text it stands for', t.sent.at(-1) === `x${twelve}`, JSON.stringify(t.sent.at(-1)?.slice(0, 12)))
   check('chip: chips not in the box or what was sent are let go', t.app.pasteChips <= 2, String(t.app.pasteChips))
+  t.key('\x1b[A'); t.key('\r'); t.clock.advance(20)
+  check('chip: a sent one brought back with ↑ is sent as its text again', t.sent.at(-1) === `x${twelve}` && t.sent.at(-2) === `x${twelve}`, JSON.stringify(t.sent.slice(-2).map((m) => m.slice(0, 14))))
   t.key('\x12'); t.key('zzz'); t.clock.advance(20)
   check('placeholder: not inside a history search', !t.term.screen.text().includes('Message deepseek-bot'))
   t.key('\x1b'); t.clock.advance(60)
@@ -1708,6 +1712,60 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   narrow.clock.advance(20)
   const border = narrow.term.screen.text().split('\n').find((l) => l.startsWith('╭')) ?? '(none)'
   check('overflow: on a box too narrow for the count, the corner stays', border.startsWith('╭─') && !border.includes('more'), border)
+}
+
+// 79c. What the second review found. A CR paste is not "too long"; ctrl+w after a chip and words takes the words,
+// then the chip whole; a click inside a chip puts the cursor at its edge; ↑ answered after the next turn started here
+// takes that turn's message back out of the transcript; text taken back while a question has the box waits for
+// the box; a message that could not be sent stays in the box; and ↑ that took nothing back says so.
+{
+  const t = setup({ cols: 80, rows: 30 })
+  const twelve = Array.from({ length: 12 }, (_, i) => `q ${i + 1}`)
+  t.key(`\x1b[200~${twelve.join('\r')}\x1b[201~`); t.clock.advance(20)
+  check('paste: a CR paste is not called too long', !t.term.screen.text().includes('too long'), t.term.screen.text().split('\n').find((l) => l.includes('paste')) ?? '')
+  t.key(' 이거 봐'); t.key('\x17'); t.key('\x17'); t.key('\x17'); t.clock.advance(20)
+  check('chip: ctrl+w after a chip and words takes the words, then the chip whole', t.app.editor.text === '', JSON.stringify(t.app.editor.text))
+  t.key(`\x1b[200~${twelve.join('\n')}\x1b[201~`); t.clock.advance(20)
+  const chip = t.app.editor.text
+  const at = t.term.screen.find('[paste #')
+  t.key(SGR(0, at.col + 4, at.row)); t.key(SGR(0, at.col + 4, at.row, true)); t.key('\x0b'); t.clock.advance(20)
+  check('chip: a click inside it puts the cursor at its edge, so ctrl+k leaves it whole', t.app.editor.text === chip, JSON.stringify(t.app.editor.text))
+  t.app.editor.set(''); t.clock.advance(20)
+
+  // ↑ asks for B and C; the running turn's end arrives first, so B is shown as started; then the gateway says it
+  // withdrew both (B was still waiting there): B leaves the transcript and both come back.
+  t.app.turnStarted(); t.key('B-msg\r'); t.app.turnStarted(); t.key('C-msg\r'); t.app.turnStarted(); t.clock.advance(20)
+  const [idB, idC] = t.sentIds.slice(-2)
+  t.key('\x1b[A'); t.app.turnEnded(); t.clock.advance(20)
+  const startedB = /^› B-msg/m.test(t.term.screen.text())
+  t.app.withdrawn([idB, idC]); t.clock.advance(20)
+  check('queue: a message shown as started that the gateway withdrew leaves the transcript and comes back', startedB && t.app.editor.text === 'B-msg\nC-msg' && !/^› B-msg/m.test(t.term.screen.text()), JSON.stringify({ startedB, text: t.app.editor.text }))
+  t.app.turnEnded(); t.app.turnEnded(); t.clock.advance(20)
+  t.app.editor.set('')
+
+  // Taken back while a question has the box: it waits, and comes to the box when the question is done.
+  t.app.turnStarted(); t.key('D-msg\r'); t.app.turnStarted(); t.clock.advance(20)
+  const idD = t.sentIds.at(-1)
+  t.key('\x1b[A')
+  t.app.ask('q-hold', [{ id: 'q', question: 'which?', options: [{ label: 'a' }], multiSelect: false }]); t.clock.advance(20)
+  t.app.withdrawn([idD]); t.clock.advance(20)
+  const during = t.app.editor.text
+  t.key('\x1b'); t.clock.advance(60)
+  check('queue: taken back while a question has the box, it waits for the box', during === '' && t.app.question === null && t.app.editor.text === 'D-msg' && !t.answers.some((a) => JSON.stringify(a).includes('D-msg')), JSON.stringify({ during, after: t.app.editor.text }))
+  t.app.turnEnded(); t.app.turnEnded(); t.clock.advance(20)
+  t.app.editor.set('')
+
+  // A message that could not be sent is not queued: it stays in the box.
+  t.app.turnStarted(); t.sendOk = false
+  t.key('E-msg\r'); t.clock.advance(20)
+  check('send: a message that could not be sent stays in the box, not queued', t.app.editor.text === 'E-msg' && !/^› E-msg/m.test(t.term.screen.text()), JSON.stringify(t.app.editor.text))
+  t.sendOk = true; t.app.editor.set('')
+
+  // ↑ that the gateway answers with nothing: every message had started.
+  t.key('F-msg\r'); t.app.turnStarted(); t.clock.advance(20)
+  t.key('\x1b[A'); t.app.withdrawn([]); t.clock.advance(20)
+  check('queue: ↑ that took nothing back says so', t.term.screen.text().includes('already started') && /^› F-msg/m.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => /F-msg|started/.test(l)).join(' | '))
+  t.app.turnEnded(); t.app.turnEnded()
 }
 
 const failed = results.filter((r) => !r.ok)

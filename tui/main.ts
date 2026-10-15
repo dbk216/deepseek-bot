@@ -80,7 +80,11 @@ function main(): void {
     env: process.env,
     platform: process.platform,
     backend: {
-      send(text, id) { if (!connection?.send({ type: 'message', text, ...(id !== undefined ? { id } : {}) })) app.notice(t().notSent, 'error') },
+      send(text, id) {
+        const sent = connection?.send({ type: 'message', text, ...(id !== undefined ? { id } : {}) }) === true
+        if (!sent) app.notice(t().notSent, 'error')
+        return sent
+      },
       cancel() { connection?.send({ type: 'cancel' }) },
       withdraw(ids) { return connection?.send({ type: 'withdraw', ids }) === true },
       action(id) { if (!connection?.send({ type: 'action', id })) app.notice(t().notSent, 'error') },

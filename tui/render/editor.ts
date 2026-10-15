@@ -129,7 +129,7 @@ export class Editor {
     return true
   }
 
-  /** A cursor inside an atom (a click, a row up) goes to its end before anything is typed. */
+  /** A cursor inside an atom (put there by a click, or a row up or down) goes to its end. */
   private outOfAtom(): void {
     const atom = this.atomWhere((start, end) => start < this.pos && this.pos < end)
     if (atom !== null) this.pos = atom.end
@@ -166,6 +166,9 @@ export class Editor {
     if (this.takeAtom((start, end) => start < this.pos && this.pos <= end)) return
     const end = this.pos
     while (this.pos > 0 && /\s/.test(this.chars[this.pos - 1])) this.pos--
+    // A chip before the spaces is the word: all of it goes, with the spaces.
+    const atom = this.atomWhere((_, atomEnd) => atomEnd === this.pos)
+    if (atom !== null && atom.end > atom.start) { this.chars.splice(atom.start, end - atom.start); this.pos = atom.start; this.browsing = -1; return }
     while (this.pos > 0 && !/\s/.test(this.chars[this.pos - 1])) this.pos--
     if (end > this.pos) this.browsing = -1
     this.chars.splice(this.pos, end - this.pos)
@@ -184,7 +187,7 @@ export class Editor {
   /** Up a visual row, or on the first row back through history. Returns whether anything changed. */
   up(width: number): boolean {
     const { cells, cursor } = this.measure(width)
-    if (cursor.y > 0) { this.pos = this.nearest(cells, cursor.y - 1, cursor.x); return true }
+    if (cursor.y > 0) { this.pos = this.nearest(cells, cursor.y - 1, cursor.x); this.outOfAtom(); return true }
     if (this.history.length === 0) return false
     if (this.browsing === -1) { this.draft = this.text; this.browsing = this.history.length }
     if (this.browsing === 0) return false
@@ -196,7 +199,7 @@ export class Editor {
   /** Down a visual row, or forward through history toward the draft. */
   down(width: number): boolean {
     const { cells, cursor, rows } = this.measure(width)
-    if (cursor.y < rows.length - 1) { this.pos = this.nearest(cells, cursor.y + 1, cursor.x); return true }
+    if (cursor.y < rows.length - 1) { this.pos = this.nearest(cells, cursor.y + 1, cursor.x); this.outOfAtom(); return true }
     if (this.browsing === -1) return false
     this.browsing++
     if (this.browsing >= this.history.length) { this.browsing = -1; this.set(this.draft) } else this.set(this.history[this.browsing])
@@ -207,6 +210,7 @@ export class Editor {
   place(width: number, row: number, x: number): void {
     const { cells, rows } = this.measure(width)
     this.pos = this.nearest(cells, Math.max(0, Math.min(row, rows.length - 1)), x)
+    this.outOfAtom()
   }
 
   layout(width: number): EditorLayout {
