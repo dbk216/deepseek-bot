@@ -15,7 +15,11 @@ import { t } from './strings.js'
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected'
 
 export interface ConnectionOptions {
-  socketPath: string
+  /**
+   * Where the gateway listens, or how to look it up: a function is asked again on every attempt,
+   * and its null (no live gateway) is an attempt that failed, retried as a dropped one is.
+   */
+  socketPath: string | (() => string | null)
   conversation?: string
   tenant?: string
   onFrame(frame: ServerFrame): void
@@ -100,7 +104,9 @@ export class Connection {
   private open(): void {
     if (this.closed) return
     this.o.onState('connecting')
-    const socket = (this.o.dial ?? dial)(this.o.socketPath)
+    const path = typeof this.o.socketPath === 'function' ? this.o.socketPath() : this.o.socketPath
+    if (path === null) { this.retry(); return }
+    const socket = (this.o.dial ?? dial)(path)
     this.socket = socket
     const reader = new FrameReader()
     socket.setEncoding('utf8')
@@ -137,11 +143,15 @@ export class Connection {
       this.socket = null
       this.ready = false
       if (this.closed) return
-      const wait = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)]
-      this.attempt++
-      this.o.onState('disconnected', t().reconnectingIn(wait))
-      this.timer = (this.o.setTimer ?? setTimeout)(() => { this.timer = null; this.open() }, wait)
+      this.retry()
     })
+  }
+
+  private retry(): void {
+    const wait = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)]
+    this.attempt++
+    this.o.onState('disconnected', t().reconnectingIn(wait))
+    this.timer = (this.o.setTimer ?? setTimeout)(() => { this.timer = null; this.open() }, wait)
   }
 }
 

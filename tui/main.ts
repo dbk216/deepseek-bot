@@ -52,11 +52,14 @@ function main(): void {
   if (parsed.help) { process.stdout.write(usage()); return }
   if (!process.stdin.isTTY || !process.stdout.isTTY) { process.stderr.write(t().needsTty); process.exit(2) }
 
-  let socketPath = parsed.socket
+  let socketPath: string | (() => string | null) | undefined = parsed.socket
   if (socketPath === undefined) {
     const found = discover(parsed.name)
     if ('error' in found) { process.stderr.write(`dsh: ${found.error}\n`); process.exit(2) }
-    socketPath = found.socket
+    // Looked up again on every reconnect: a restarted gateway may listen somewhere else (on Windows
+    // its pipe is named anew), and a name it no longer holds is never dialed.
+    const name = found.name
+    socketPath = () => { const again = discover(name); return 'error' in again ? null : again.socket }
   }
 
   let connection: Connection | null = null

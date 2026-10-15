@@ -13,7 +13,7 @@ import './dist-fresh.ts'   // fails loudly on a stale dist
 
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,14 +21,16 @@ import { fileURLToPath } from 'node:url'
 const DSH_HOME = mkdtempSync(join(tmpdir(), 'deepbot-dshhome-'))
 process.env.DSH_HOME = DSH_HOME
 
-// Where the local transport listens for a state directory: <stateDir>/tui.sock, or on Windows the
-// named pipe hashed from that path.
+// Where the running gateway for a state directory listens: <stateDir>/tui.sock, or on Windows the
+// pipe the discovery file names, since its name is new at every start.
 const listenPath = (stateDir) => process.platform === 'win32'
-  ? `\\\\.\\pipe\\deepbot-tui-${createHash('sha1').update(join(stateDir, 'tui.sock')).digest('hex').slice(0, 12)}`
+  ? JSON.parse(readFileSync(join(DSH_HOME, 'run', 'deepbot-tui', 'default.json'), 'utf8')).socket
   : join(stateDir, 'tui.sock')
 
 const { App } = await import('../dist/tui/app.js')
 const { Connection, discover } = await import('../dist/tui/client.js')
+// How the terminal finds the gateway on every attempt, as tui/main.ts does: through discovery.
+const viaDiscovery = () => { const d = discover('default'); return 'error' in d ? null : d.socket }
 const { bind, createCommands, parseArgs, resumeHint, route, usage } = await import('../dist/tui/cli.js')
 const USAGE = usage()
 const { createLocalTransport } = await import('../dist/transports/local.js')
@@ -231,7 +233,7 @@ async function until(predicate, ms = 3000) {
     onExit: () => {},
   })
   connection = new Connection({
-    socketPath: listenPath(stateDir),
+    socketPath: viaDiscovery,
     onFrame: (f) => bind(app, f),
     onState: (state, detail) => {
       if (state === 'connecting') app.setStatus({ connected: false, link: '연결 중…' })
@@ -283,6 +285,45 @@ async function until(predicate, ms = 3000) {
   app.stop(0)
   await local.close()
   rmSync(stateDir, { recursive: true, force: true })
+}
+
+// 3b. A reconnect looks the gateway up again (on Windows its pipe is named anew at every start),
+// and dials nothing while no live gateway is registered: an old name may be someone else's by then.
+{
+  const first = mkdtempSync(join(tmpdir(), 'deepbot-move-a-'))
+  const second = mkdtempSync(join(tmpdir(), 'deepbot-move-b-'))
+  const gateway = async (stateDir) => {
+    const local = createLocalTransport({ cfg: {}, stateDir, log: () => {}, sessionCwd: async () => '/home/agent' })
+    await local.connect({ onMessage: () => {}, onStatus: () => {} })
+    return local
+  }
+  let local = await gateway(first)
+  const dialed = []
+  const connection = new Connection({
+    socketPath: viaDiscovery,
+    dial: (path) => { dialed.push(path); return connect(path) },
+    onFrame: () => {},
+    onState: () => {},
+  })
+  connection.start()
+  check('lookup: connects to the gateway discovery names', await until(() => connection.connected) && dialed[0] === listenPath(first))
+  await local.close()
+  await until(() => !connection.connected)
+  await sleep(600)
+  check('lookup: with no live gateway registered, no old name is dialed', dialed.length === 1, JSON.stringify(dialed))
+  local = await gateway(second)
+  check('lookup: a gateway back somewhere else is found and reconnected to', await until(() => connection.connected, 6000) && dialed.at(-1) === listenPath(second) && dialed.at(-1) !== dialed[0], JSON.stringify(dialed))
+  connection.close()
+  await local.close()
+
+  // A fixed path is still dialed as given.
+  const states = []
+  const fixed = new Connection({ socketPath: join(first, 'nothing.sock'), onFrame: () => {}, onState: (s) => states.push(s), setTimer: () => 0, clearTimer: () => {} })
+  fixed.start()
+  check('lookup: a path given as it is is dialed, and its failure retried', await until(() => states.includes('disconnected')))
+  fixed.close()
+  rmSync(first, { recursive: true, force: true })
+  rmSync(second, { recursive: true, force: true })
 }
 
 // 4. Commands: handled by the terminal, never echoed or sent as a message.

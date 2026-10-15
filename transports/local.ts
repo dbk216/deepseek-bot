@@ -6,9 +6,11 @@
  * workspace, recall, approvals and the turn queue without any of it knowing a terminal exists.
  *
  * Only the owner can connect: the socket is created 0600 in the deployment's state directory (or a
- * per-user temporary directory when that path is too long for a socket; a named pipe on Windows,
- * where only the owner and administrators may open it read-write). A reply that finds no
- * terminal is kept, within a bound, until its conversation reconnects.
+ * per-user temporary directory when that path is too long for a socket). On Windows it is a named
+ * pipe, whose default ACL lets only the owner, SYSTEM and administrators write; any user of the
+ * machine may open it read-only, which gets nothing (nothing is sent before a hello) but holds one
+ * of the terminal places. A reply that finds no terminal is kept, within a bound, until its
+ * conversation reconnects.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -466,12 +468,15 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
   /** Where to listen: the state directory, or a short per-user path when that is too long. */
   function chooseSocketPath(): string {
     const wanted = typeof cfg.tuiSocket === 'string' && cfg.tuiSocket !== '' ? cfg.tuiSocket : join(host.stateDir, 'tui.sock')
-    const hash = createHash('sha1').update(wanted).digest('hex').slice(0, 12)
-    // Windows listens only on named pipes; a file path is EACCES. Same hash, so one state dir is one pipe.
-    if (process.platform === 'win32') return wanted.startsWith('\\\\.\\pipe\\') ? wanted : `\\\\.\\pipe\\deepbot-tui-${hash}`
+    // Windows listens only on named pipes (a file path is EACCES), in a namespace every user of the
+    // machine shares. A name worked out from the path could be taken first, and a terminal
+    // reconnecting to it would talk to whoever holds it, so the name is new at every start; the
+    // terminal finds it through the discovery file.
+    if (process.platform === 'win32') return wanted.startsWith('\\\\.\\pipe\\') ? wanted : `\\\\.\\pipe\\deepbot-tui-${randomUUID()}`
     if (Buffer.byteLength(wanted) <= MAX_SOCKET_PATH) return wanted
     // Shorter, and still the owner's own: beside the discovery files. A shared temporary directory
     // (Linux's /tmp) would let another user take a predictable name first.
+    const hash = createHash('sha1').update(wanted).digest('hex').slice(0, 12)
     const short = [join(discoveryDir(), `${hash}.sock`), join(tmpdir(), `deepbot-tui-${hash}.sock`)].find((p) => Buffer.byteLength(p) <= MAX_SOCKET_PATH) ?? join(tmpdir(), `dbt-${hash}.sock`)
     log(`local: socket path ${wanted} is too long for a unix socket (${Buffer.byteLength(wanted)} bytes); using ${short}`)
     return short
@@ -513,7 +518,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         s.once('error', reject)
         s.listen(path, () => { s.off('error', reject); resolve() })
       })
-      // A pipe has no mode (chmod is EBUSY); its default ACL lets only the owner and admins open it read-write.
+      // A pipe has no mode (chmod is EBUSY); its default ACL is what keeps others from writing to it.
       if (!pipe) chmodSync(path, 0o600)
       s.on('error', (e) => log(`local: server error: ${e.message}`))
       server = s

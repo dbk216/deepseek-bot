@@ -67,7 +67,7 @@ jobs:
       - run: pnpm run typecheck
       # Only the suites that pass on Windows. Left out, and why:
       #   core, edges, safe-write, recall-context, watch: link and path checks written for a POSIX
-      #     filesystem; whether the gates hold on Windows is not yet verified.
+      #     filesystem; whether those checks hold on Windows is not yet verified.
       #   gateway, install, launcher, profile, tui-app: launchd, bash, file modes and the macOS
       #     harness app, which a Windows port has to replace rather than pass.
       - run: node test/reconnect.test.ts

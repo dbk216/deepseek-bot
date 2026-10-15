@@ -13,7 +13,6 @@ import './dist-fresh.ts'   // fails loudly on a stale dist
 
 import { connect } from 'node:net'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 
@@ -21,10 +20,10 @@ import { dirname, join, sep } from 'node:path'
 const DSH_HOME = mkdtempSync(join(tmpdir(), 'deepbot-dshhome-'))
 process.env.DSH_HOME = DSH_HOME
 
-// Where the local transport listens for a state directory: <stateDir>/tui.sock, or on Windows the
-// named pipe hashed from that path.
+// Where the running gateway for a state directory listens: <stateDir>/tui.sock, or on Windows the
+// pipe the discovery file names, since its name is new at every start.
 const listenPath = (stateDir) => process.platform === 'win32'
-  ? `\\\\.\\pipe\\deepbot-tui-${createHash('sha1').update(join(stateDir, 'tui.sock')).digest('hex').slice(0, 12)}`
+  ? JSON.parse(readFileSync(join(DSH_HOME, 'run', 'deepbot-tui', 'default.json'), 'utf8')).socket
   : join(stateDir, 'tui.sock')
 
 const { apply } = await import('../dist/index.js')
@@ -86,7 +85,9 @@ function hostFor(stateDir, cfg = {}) {
   await local.connect({ onMessage: (m) => inbound.push(m), onAction: (a) => actions.push(a), onStatus: () => {} })
   const socketPath = listenPath(stateDir)
   check('local: listens on <stateDir>/tui.sock', existsSync(socketPath) && local.hasSocket() && local.ready())
-  // A Windows pipe has no mode bits; its default ACL is what keeps other users out.
+  // A Windows pipe has no mode bits; its default ACL is what keeps other users from writing to it.
+  // Its name is in a namespace they share, so it must not be one they could work out and take first.
+  if (process.platform === 'win32') check('local: on Windows, a pipe named anew, not from the path', /^\\\\\.\\pipe\\deepbot-tui-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(socketPath), socketPath)
   if (process.platform !== 'win32') check('local: the socket is owner-only (0600)', (statSync(socketPath).mode & 0o777) === 0o600, (statSync(socketPath).mode & 0o777).toString(8))
   const discovery = join(DSH_HOME, 'run', 'deepbot-tui', 'default.json')
   const found = existsSync(discovery) ? JSON.parse(readFileSync(discovery, 'utf8')) : null
@@ -186,7 +187,7 @@ function hostFor(stateDir, cfg = {}) {
   await long.connect({ onMessage: () => {}, onStatus: () => {} })
   const where = JSON.parse(readFileSync(join(DSH_HOME, 'run', 'deepbot-tui', 'default.json'), 'utf8')).socket
   // A Windows pipe name has no such limit: the long state directory gets its pipe like any other.
-  if (process.platform === 'win32') check('long path: a pipe, whatever the length', long.hasSocket() && where === listenPath(deep), where)
+  if (process.platform === 'win32') check('long path: a pipe, whatever the length', long.hasSocket() && where.startsWith('\\\\.\\pipe\\deepbot-tui-') && !logs.some((l) => l.includes('too long')), where)
   else check('long path: falls back to a short per-user path and says so', long.hasSocket() && Buffer.byteLength(where) <= 103 && logs.some((l) => l.includes('too long')), where)
   await long.close()
   rmSync(stateDir, { recursive: true, force: true })
@@ -481,7 +482,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   const credentials = { describe: (ref) => { if (ref === 'FLAKY_API_KEY') throw new Error('store unreadable'); return Promise.resolve({ configured: ref === 'OG_API_KEY', writable: true }) }, resolve: async () => undefined }
   const t = boot({ services: { llm, settings, credentials, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm' }) } } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await c.waitFor((f) => f.type === 'ready')
@@ -586,7 +587,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   // A route recorded for this conversation with no session behind it yet (a first turn that died): no line.
   const t = boot({ state: { routes: { 'tui:conv-note': 'zz/old' } }, services: { llm, agents, agentDefaultModel: { currentSelection: () => ({ provider: 'og', model: 'm1' }) } } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-note' })
   await c.waitFor((f) => f.type === 'ready')
@@ -621,7 +622,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   // The words the core answers without a turn reach the terminal, so it does not queue them behind one.
   const t = boot({ config: { cancelWords: ['그만', 'stop'], usageWords: ['사용량'], approveWords: ['허용'], denyWords: ['거부'] } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await c.waitFor((f) => f.type === 'ready')
@@ -1471,7 +1472,8 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   let unload = () => {}
   apply({ get: (n) => stubs[n], effect: (fn) => { unload = fn() }, on: () => () => {}, logger: { info: () => {} } }, { platform: 'local', targetChannels: [LOCAL_CHANNEL], stateDir, progressAfterMs: 50 })
   await sleep(150)
-  const c = client(listenPath(stateDir))
+  const socket = listenPath(stateDir)
+  const c = client(socket)
   let connected = true
   await c.opened.catch(() => { connected = false })
   check('tui-only: platform "local" boots without any Slack credentials', connected)
@@ -1485,7 +1487,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   }
   unload()
   await sleep(50)
-  check('tui-only: unloading the plugin removes the socket', !existsSync(listenPath(stateDir)))
+  check('tui-only: unloading the plugin removes the socket', !existsSync(socket))
   rmSync(stateDir, { recursive: true, force: true })
 }
 
