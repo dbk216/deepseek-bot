@@ -1763,9 +1763,56 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
 
   // ↑ that the gateway answers with nothing: every message had started.
   t.key('F-msg\r'); t.app.turnStarted(); t.clock.advance(20)
-  t.key('\x1b[A'); t.app.withdrawn([]); t.clock.advance(20)
-  check('queue: ↑ that took nothing back says so', t.term.screen.text().includes('already started') && /^› F-msg/m.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => /F-msg|started/.test(l)).join(' | '))
-  t.app.turnEnded(); t.app.turnEnded()
+  const idF = t.sentIds.at(-1)
+  t.key('\x1b[A')
+  // Another terminal's answer comes first: not this terminal's, so it says nothing here.
+  t.app.withdrawn(['other-9'], ['other-9']); t.clock.advance(20)
+  const early = t.term.screen.text().includes('already started')
+  t.app.withdrawn([], [idF]); t.clock.advance(20)
+  check('queue: ↑ that took nothing back says so, on its own answer only', !early && t.term.screen.text().includes('already started') && /^› F-msg/m.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => /F-msg|started/.test(l)).join(' | '))
+  t.app.turnEnded(); t.app.turnEnded(); t.app.turnEnded()
+}
+
+// 79d. What the third review found. On a narrow box ↑ goes over a wrapped chip to history; a chip sent in an
+// answer is kept for ↑ too; text taken back while an approval shows waits for it; and a message not sent is not
+// kept in the history file.
+{
+  const remembered = []
+  const t = setup({ cols: 24, rows: 30, extra: { remember: (text) => remembered.push(text) } })
+  t.key('older\r'); t.clock.advance(20)
+  const twelve = Array.from({ length: 12 }, (_, i) => `n ${i + 1}`).join('\n')
+  t.key('ab'); t.key(`\x1b[200~${twelve}\x1b[201~`); t.clock.advance(20)
+  // One ↑ from the wrapped chip's end lands at its start, not inside it: ctrl+k there takes it whole.
+  t.key('\x1b[A'); t.key('\x0b'); t.clock.advance(20)
+  check('chip: ↑ into a wrapped chip stops at its start', t.app.editor.text === 'ab', JSON.stringify(t.app.editor.text))
+  t.key(`\x1b[200~${twelve}\x1b[201~`); t.clock.advance(20)
+  for (let i = 0; i < 6; i++) t.key('\x1b[A')
+  t.clock.advance(20)
+  check('chip: on a narrow box ↑ goes over a wrapped chip, to what was sent before', t.app.editor.text === 'older', JSON.stringify(t.app.editor.text))
+  t.app.editor.set(''); t.clock.advance(20)
+  // A chip in an answer, then another message: the answer brought back with ↑ is still its text.
+  t.app.ask('q-chip2', [{ id: 'q', question: 'logs?', options: [{ label: 'a' }], multiSelect: false }]); t.clock.advance(20)
+  t.key(`\x1b[200~${twelve}\x1b[201~`); t.key('\r'); t.clock.advance(20)
+  t.key('next one\r'); t.clock.advance(20)
+  t.key('\x1b[A'); t.key('\x1b[A'); t.key('\r'); t.clock.advance(20)
+  check('chip: one sent in an answer is still its text when ↑ brings it back', t.sent.at(-1) === twelve, JSON.stringify(t.sent.at(-1)?.slice(0, 12)))
+  // Taken back while an approval shows: it waits, and the approval's keys stay the approval's.
+  t.app.turnStarted(); t.key('G-msg\r'); t.app.turnStarted(); t.clock.advance(20)
+  const idG = t.sentIds.at(-1)
+  t.key('\x1b[A')
+  t.app.message('ts-g', 'I need permission: ls', null, false)
+  t.app.offer('ts-g', [{ id: 'approval:allow:g', label: 'Allow', style: 'primary' }, { id: 'approval:deny:g', label: 'Deny', style: 'danger' }]); t.clock.advance(20)
+  t.app.withdrawn([idG], [idG]); t.clock.advance(20)
+  const whileChoice = t.app.editor.text
+  t.key('1'); t.clock.advance(20)
+  check('queue: taken back while an approval shows, it waits; the approval still takes its keys', whileChoice === '' && t.actions.at(-1) === 'approval:allow:g' && t.app.editor.text === 'G-msg', JSON.stringify({ whileChoice, action: t.actions.at(-1), text: t.app.editor.text }))
+  t.app.turnEnded(); t.app.turnEnded(); t.app.editor.set('')
+  // Not sent: not kept as sent.
+  const kept = remembered.length
+  t.sendOk = false
+  t.key('H-msg\r'); t.clock.advance(20)
+  check('history: a message that was not sent is not kept', remembered.length === kept && t.app.editor.text === 'H-msg', JSON.stringify(remembered.slice(kept)))
+  t.sendOk = true
 }
 
 const failed = results.filter((r) => !r.ok)

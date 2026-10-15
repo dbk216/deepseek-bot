@@ -187,7 +187,13 @@ export class Editor {
   /** Up a visual row, or on the first row back through history. Returns whether anything changed. */
   up(width: number): boolean {
     const { cells, cursor } = this.measure(width)
-    if (cursor.y > 0) { this.pos = this.nearest(cells, cursor.y - 1, cursor.x); this.outOfAtom(); return true }
+    if (cursor.y > 0) {
+      this.pos = this.nearest(cells, cursor.y - 1, cursor.x)
+      // Inside an atom going up: to its start, so the next ↑ goes on up (its end may be on the row left).
+      const atom = this.atomWhere((start, end) => start < this.pos && this.pos < end)
+      if (atom !== null) this.pos = atom.start
+      return true
+    }
     if (this.history.length === 0) return false
     if (this.browsing === -1) { this.draft = this.text; this.browsing = this.history.length }
     if (this.browsing === 0) return false

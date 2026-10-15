@@ -56,7 +56,7 @@ export type ServerFrame =
   | { type: 'typing'; on: boolean }
   /** Which of the conversation's waiting messages were withdrawn, by the ids their terminals gave them. Sent
    * before their typing stops, to every terminal on the conversation. */
-  | { type: 'withdrawn'; ids: string[] }
+  | { type: 'withdrawn'; ids: string[]; asked?: string[] }
   | { type: 'sessions'; items: ConversationItem[] }
   | { type: 'history'; items: Array<{ role: 'user' | 'assistant'; text: string }> }
   | { type: 'panel'; agents: AgentItem[]; jobs: JobItem[]; usage: Usage }

@@ -104,7 +104,7 @@ export function bind(app: App, frame: ServerFrame, commands?: Commands): void {
       else app.turnEnded()
       return
     case 'withdrawn':
-      app.withdrawn(frame.ids)
+      app.withdrawn(frame.ids, frame.asked ?? [])
       return
     case 'post':
       app.message(frame.ts, frame.text, frame.replace, frame.answer)

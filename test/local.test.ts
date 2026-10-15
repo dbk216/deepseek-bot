@@ -533,7 +533,11 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   a.send({ type: 'message', text: '이상한 id', id: 'not an id!' })
   await a.waitFor((f) => f.type === 'error' && a.frames.filter((g) => g.type === 'error').length > errors)
   const badId = a.frames.filter((f) => f.type === 'error').at(-1)
-  check('message: an id that is not one is refused, not dropped', badId?.code === 'bad-frame' && /id/.test(badId?.message ?? '') && !ran.some((m) => m.includes('이상한 id')), JSON.stringify(badId))
+  check('message: an id that is not one is refused, not dropped', a.frames.filter((f) => f.type === 'error').length === errors + 1 && badId?.code === 'bad-frame' && /message id/.test(badId?.message ?? '') && !ran.some((m) => m.includes('이상한 id')), JSON.stringify(badId))
+  // The answer to a withdraw names what was asked, so a terminal tells its own answer from another's.
+  a.send({ type: 'withdraw', ids: ['gone-1'] })
+  const answer = await a.waitFor((f) => f.type === 'withdrawn' && Array.isArray(f.asked) && f.asked.includes('gone-1'))
+  check('withdraw: the answer names what was asked', JSON.stringify(answer?.ids) === '[]' && JSON.stringify(answer?.asked) === '["gone-1"]', JSON.stringify(answer))
   await a.close()
   await b.close()
   await t.done()

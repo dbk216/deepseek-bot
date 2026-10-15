@@ -191,8 +191,8 @@ export class App {
   private readonly started = new Map<string, { text: string; blocks: string[] }>()
   /** Text the gateway gave back while the box was not the message box (a question, a search, a view). */
   private takenBack: string[] = []
-  /** Whether this terminal asked for its waiting messages back and has not heard. */
-  private asked = false
+  /** The ids this terminal asked for back, until the gateway's answer to that ask comes. */
+  private asking: string[] | null = null
   /** The keys on show (? on an empty box), in the input box's place. */
   private shortcuts = false
   /** Messages sent while a turn runs: shown above the input until their turn starts. */
@@ -473,7 +473,7 @@ export class App {
    * The gateway withdrew these waiting messages (sent to every terminal on the conversation, before their
    * typing stops): each one's end is not a next turn's start, and those this terminal sent go back to the box.
    */
-  withdrawn(ids: string[]): void {
+  withdrawn(ids: string[], asked: string[] = []): void {
     this.withdrawing += ids.length
     // One shown as started (its typing-off was read before this answer) was still waiting there: it leaves
     // the transcript. Then the ones still queued here.
@@ -488,8 +488,11 @@ export class App {
     const mine = this.pending.filter((p) => ids.includes(p.id))
     this.pending = this.pending.filter((p) => !ids.includes(p.id))
     back.push(...mine.map((p) => p.text))
-    if (this.asked && back.length === 0) this.showToast(t().nothingTakenBack)
-    this.asked = false
+    // The answer to this terminal's own ask (another terminal's may come first): nothing back says so.
+    if (this.asking !== null && asked.some((id) => this.asking!.includes(id))) {
+      if (back.length === 0) this.showToast(t().nothingTakenBack)
+      this.asking = null
+    }
     this.takenBack.push(...back)
     this.restoreTakenBack()
     this.terminal.requestRender(true)
@@ -497,7 +500,7 @@ export class App {
 
   /** Text the gateway gave back goes to the box once it is the message box again. */
   private restoreTakenBack(): void {
-    if (this.takenBack.length === 0 || this.view.kind !== 'main' || this.question !== null || this.search !== null || this.picker !== null) return
+    if (this.takenBack.length === 0 || this.view.kind !== 'main' || this.question !== null || this.search !== null || this.picker !== null || this.choice !== null) return
     const back = this.takenBack.splice(0).join('\n')
     this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
   }
@@ -888,7 +891,7 @@ export class App {
         // the turn goes on. Not while a question, a list or a choice has the keys.
         if (this.editor.text === '' && this.pending.length > 0 && this.view.kind === 'main' && this.question === null && this.picker === null && this.choice === null) {
           if (this.o.backend.withdraw?.(this.pending.map((p) => p.id)) !== true) this.notice(t().notSent, 'error')
-          else this.asked = true
+          else this.asking = this.pending.map((p) => p.id)
           break
         }
         this.editor.up(width)
@@ -997,7 +1000,7 @@ export class App {
     if (q.typing) {
       // A backslash before Enter is a new line here too.
       if (key.name === 'enter' && !key.alt && !key.shift && this.editor.before === '\\') { this.editor.backspace(); this.editor.insert('\n'); this.terminal.requestRender(true); return true }
-      if (key.name === 'enter' && !key.alt && !key.shift) { q.submitCustom(this.unchipped(this.editor.submit())); this.answered(); return true }
+      if (key.name === 'enter' && !key.alt && !key.shift) { q.submitCustom(this.unchipped(this.sentFromBox())); this.answered(); return true }
       if (key.name === 'escape') { q.typing = false; this.terminal.requestRender(true); return true }
       return false
     }
@@ -1085,7 +1088,7 @@ export class App {
     const raw = this.editor.text
     const text = this.unchipped(raw)
     if (text.trim() === '') return
-    this.editor.submit()
+    this.sentFromBox()
     // Kept for the next run only where it went somewhere: a command run, a message sent.
     if (this.o.intercept?.(text.trim()) === true) { this.o.remember?.(text); return }
     if (this.view.kind === 'agent') {
@@ -1096,14 +1099,22 @@ export class App {
       return
     }
     if (this.view.kind === 'job') { this.showToast(t().shellNoInput); return }
-    this.o.remember?.(text)
     const id = this.messageId()
-    // Not sent (no link): it stays in the box, never shown as asked or queued.
+    // Not sent (no link): it stays in the box, never shown as asked or queued, nor kept as sent.
     if (this.o.backend.send(text, id) === false) { this.editor.set(raw); return }
+    this.o.remember?.(text)
     this.said(text, id)
-    // Chips in neither the box nor what was sent (↑ through history brings those back) are let go.
+  }
+
+  /**
+   * The box's text, as it leaves (a message, an answer, a command, a subagent's message): into history,
+   * and its chips kept for ↑ to bring back; chips in neither the box nor anything that left are let go.
+   */
+  private sentFromBox(): string {
+    const raw = this.editor.submit()
     for (const chip of this.pastes.keys()) if (raw.includes(chip)) this.sentChips.add(chip)
     for (const chip of [...this.pastes.keys()]) if (!this.sentChips.has(chip)) this.pastes.delete(chip)
+    return raw
   }
 
   /** Stop the turn. The gateway withdraws the messages waiting behind it, so they come back to the input. */
