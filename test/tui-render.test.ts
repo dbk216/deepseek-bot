@@ -153,6 +153,13 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   check('transcript: lines arriving while scrolled away are counted', t.unseen === 2, `unseen ${t.unseen}`)
   t.toBottom()
   check('transcript: back to the bottom resumes following', t.visible(40, 10)[9].spans[1].text === 'message 31' && t.unseen === 0)
+  // Scrolled up, then given room for all of it (the input box gave its rows to a choice): at the bottom again,
+  // so a line arriving now is in view, not counted as unseen.
+  t.scroll(-3)
+  t.visible(40, 40)
+  add('m32', 'message 32')
+  t.visible(40, 40)
+  check('transcript: given room for every line, it follows again and counts nothing unseen', t.follow && t.unseen === 0, `follow ${t.follow} unseen ${t.unseen}`)
   const last = blocks[blocks.length - 1]
   let calls = 0
   const original = blocks[0].lines

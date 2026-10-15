@@ -464,6 +464,72 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
 }
 
 {
+  // A turn the person stops in the terminal is marked there ("⎿ Interrupted"): the gateway does not post its
+  // own "Stopped." under it. A turn that ran out of time is still told.
+  let release: (value?: unknown) => void = () => {}
+  const agents = {
+    create: async (o) => ({ agent: { session: { header: { id: o.sessionId }, seq: 0, eventAt: () => undefined }, followup: () => {}, whenIdle: () => new Promise((r) => { release = r }), cancel: () => release() }, dispose: async () => {} }),
+    resume: async () => { throw new Error('no') },
+  }
+  const t = boot({ services: { agents } })
+  await sleep(100)
+  const c = client(listenPath(t.stateDir))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'message', text: '길게 해줘' })
+  await c.waitFor((f) => f.type === 'typing' && f.on === true)
+  await sleep(100)
+  c.send({ type: 'cancel' })
+  await c.waitFor((f) => f.type === 'typing' && f.on === false, 3000)
+  await sleep(200)
+  check('stop: a turn stopped in the terminal gets no "Stopped." post: the terminal marks it itself', !c.frames.some((f) => f.type === 'post' && /stopped/i.test(f.text)), JSON.stringify(c.frames.filter((f) => f.type === 'post').map((f) => f.text)))
+  await c.close()
+  await t.done()
+}
+{
+  // Only waiting (every slot taken by another conversation): a stop withdraws it, the terminal marks it and takes
+  // the text back into its box, so the gateway says nothing there either.
+  const agents = {
+    create: async (o) => ({ agent: { session: { header: { id: o.sessionId }, seq: 0, eventAt: () => undefined }, followup: () => {}, whenIdle: () => new Promise(() => {}), cancel: () => {} }, dispose: async () => {} }),
+    resume: async () => { throw new Error('no') },
+  }
+  const t = boot({ services: { agents }, config: { maxConcurrency: 1 } })
+  await sleep(100)
+  t.slack.deliver(t.slack.message({ text: '오래 걸리는 일', target: { channel: 'C_ALLOWED', threadTs: 'busy' } }))
+  await sleep(200)
+  const c = client(listenPath(t.stateDir))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'message', text: '기다리는 메시지' })
+  await sleep(200)
+  c.send({ type: 'cancel' })
+  await sleep(400)
+  check('stop: a terminal message withdrawn while it waited gets no notice there', t.logs.some((l) => /withdrew 1 waiting/.test(l)) && !c.frames.some((f) => f.type === 'post' && /withdrew|stopped/i.test(f.text)), JSON.stringify({ log: t.logs.filter((l) => /cancel requested/.test(l)), posts: c.frames.filter((f) => f.type === 'post').map((f) => f.text) }))
+  await c.close()
+  await t.done()
+}
+{
+  // Stopped while its agent is still being made: the terminal marks that too, so the gateway says nothing.
+  const agents = { create: () => new Promise(() => {}), resume: async () => { throw new Error('no') } }
+  const t = boot({ services: { agents } })
+  await sleep(100)
+  const c = client(listenPath(t.stateDir))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'message', text: '시작해줘' })
+  await c.waitFor((f) => f.type === 'typing' && f.on === true)
+  await sleep(100)
+  c.send({ type: 'cancel' })
+  await sleep(400)
+  check('stop: a turn stopped while starting gets no notice in the terminal either', !c.frames.some((f) => f.type === 'post' && /stopped|halted/i.test(f.text)), JSON.stringify(c.frames.filter((f) => f.type === 'post').map((f) => f.text)))
+  await c.close()
+  await t.done()
+}
+
+{
   // /model: the providers' models, listed; one chosen for this conversation runs its next turn, with its effort.
   const llm = {
     listProviders: () => [{ id: 'deepseek-official' }, { id: 'opengateway' }],
@@ -974,7 +1040,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   check('approval: the terminal is asked with buttons, for this request', tuiFrame !== null && /^approval:allow:tui:conv-1#[0-9a-f]{8}$/.test(tuiFrame.buttons[0].id), JSON.stringify(tuiFrame?.buttons))
   // Only the buttons: a word typed in the terminal waits behind the running turn, as the terminal cannot
   // know an approval is pending, and the request used to invite one.
-  check('approval: the terminal\'s request points at its buttons, not at a word to type', !/\*allow\*|reply/i.test(tuiFrame?.text ?? '') && /above the input box/.test(tuiFrame?.text ?? ''), tuiFrame?.text)
+  check('approval: the terminal\'s request points at its buttons, not at a word to type', !/\*allow\*|reply/i.test(tuiFrame?.text ?? '') && /Choose below: ↑↓/.test(tuiFrame?.text ?? ''), tuiFrame?.text)
   c.send({ type: 'action', id: tuiFrame.buttons[1].id })
   // Bounded: a press the gate refused leaves the request pending, which must fail here, not hang the suite.
   check('approval: pressing a button decides it', (await Promise.race([tuiAsk, sleep(2000).then(() => 'still pending')])) === 'rejected')
@@ -1076,6 +1142,12 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   const results = tools.filter((f) => f.kind === 'tool.result')
   check('tools: each result names its call, with whether it failed', results.length === 2 && results[0].callId === 'c1' && results[0].ok === true && results[0].text === 'edited' && results[1].ok === false, JSON.stringify(results.map((r) => ({ ...r, text: r.text.slice(0, 20) }))))
   check('tools: a long result is cut before it reaches the terminal', results[1].text.length <= 4001)
+  // How many lines it had is counted before the cut: "Read 300 lines" for a long file, not the lines that fit.
+  emit('session/event', agent.session, { type: 'tool/call', data: { name: 'read', callId: 'c-long', arguments: JSON.stringify({ path: '/w/long.ts' }) } })
+  emit('session/event', agent.session, { type: 'tool/result', data: { message: { role: 'tool', toolCallId: 'c-long', content: [{ type: 'text', text: Array.from({ length: 300 }, (_, i) => `${i + 1}\t${'y'.repeat(40)}`).join('\n') }], isError: false } } })
+  await sleep(60)
+  const long = c.frames.find((f) => f.type === 'stream' && f.kind === 'tool.result' && f.callId === 'c-long')
+  check('tools: a result says how many lines it had before the cut', long?.lines === 300 && long.text.length <= 4001, JSON.stringify({ lines: long?.lines, length: long?.text?.length }))
   // An edit too large to send whole is cut at a line and marked; a presenter that answers later or
   // throws falls back to the first argument; another session's calls (a subagent's) are not shown here.
   const big = Array.from({ length: 2000 }, (_, i) => `line ${i}`).join('\n')
@@ -1600,7 +1672,11 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   c.send({ type: 'hello', version: PROTOCOL_VERSION })
   const ready = await c.waitFor((f) => f.type === 'ready')
   check('default tenant: a terminal that asks for none is in the configured default, Korean name and all', ready?.tenant === '한국어 팀' && ready.workspace.endsWith(join(sep, 'tenants', '한국어 팀')), JSON.stringify(ready))
-  check('language: ready names the deployment\'s language, for the terminal to speak', ready?.language === 'ko', String(ready?.language))
+  // The terminal is English whatever the deployment speaks: ready names no language, and what the gateway says to it is English.
+  check('language: ready names no language for a Korean deployment: the terminal stays English', ready?.language === undefined, String(ready?.language))
+  c.send({ type: 'models' })
+  const noModels = await c.waitFor((f) => f.type === 'error' && f.code === 'models-unavailable')
+  check('language: and the gateway refuses the terminal in English', noModels?.message === 'this deployment lists no models', JSON.stringify(noModels))
   c.send({ type: 'message', text: '안녕' })
   for (let i = 0; i < 100 && created.length === 0; i++) await sleep(10)
   check('default tenant: its turn runs there', String(created[0]?.meta?.cwd ?? '').endsWith(join(sep, 'tenants', '한국어 팀')), String(created[0]?.meta?.cwd))

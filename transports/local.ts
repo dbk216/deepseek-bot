@@ -18,8 +18,7 @@ import { connect as dial, createServer, type Server, type Socket } from 'node:ne
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createBridge, type Services } from '../tui/bridge.js'
-import { stringsFor } from '../tui/strings.js'
-import { languageOf } from '../i18n.js'
+import { t } from '../tui/strings.js'
 import { discoveryDir, encode, FrameReader, MAX_FRAME_BYTES, NAME, PROTOCOL_VERSION, type ConversationItem, type ModelChoice, type ModelItem, type ServerFrame } from '../tui/protocol.js'
 import type { ActionButton, ActionEvent, InboundMessage, PostedMessage, QuestionAnswer, QuestionItem, StreamFrame, Target, Transport, TransportStatus } from '../types/transport.js'
 
@@ -107,9 +106,8 @@ interface Client {
 
 export function createLocalTransport(host: LocalHost): LocalTransport {
   const { cfg, log } = host
-  // The deployment's language: the words this sends, and the one the terminal switches to.
-  const language = languageOf(cfg.language)
-  const say = stringsFor(language).gateway
+  // What this says to the terminal is English, as the terminal is, whatever the deployment's language.
+  const say = t().gateway
   const name = typeof cfg.tuiName === 'string' && NAME.test(cfg.tuiName) ? cfg.tuiName : 'default'
   const discoveryFile = join(discoveryDir(), `${name}.json`)
   let server: Server | null = null
@@ -276,7 +274,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         client.conversation = conversation
         const workspace = await (host.workspaceFor?.(`${LOCAL_CHANNEL}:${conversation}`) ?? host.sessionCwd()).catch(() => '')
         send(client, {
-          type: 'ready', version: PROTOCOL_VERSION, language, conversation, workspace,
+          type: 'ready', version: PROTOCOL_VERSION, conversation, workspace,
           tenant: host.tenantOf?.(`${LOCAL_CHANNEL}:${conversation}`) ?? effective, model: host.model?.(`${LOCAL_CHANNEL}:${conversation}`) ?? '',
           effort: host.effortOf?.(`${LOCAL_CHANNEL}:${conversation}`) ?? null,
           busy: host.busy?.(`${LOCAL_CHANNEL}:${conversation}`) ?? 0,

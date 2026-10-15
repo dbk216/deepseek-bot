@@ -11,6 +11,7 @@
 import './dist-fresh.ts'   // fails loudly on a stale dist
 
 import { App } from '../dist/tui/app.js'
+import { messages } from '../dist/messages.js'
 import { RESTORE } from '../dist/tui/render/terminal.js'
 import { fakeClock, fakeTerminal } from './tui-fakes.ts'
 import { commandInfo, COMMANDS, help } from '../dist/tui/cli.js'
@@ -110,7 +111,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   check('cursor: rests in the input box after the prompt', box !== null && cursor.y === box.row && cursor.x === box.col + 4, JSON.stringify({ cursor, box }))
 }
 
-// 3. A streamed turn: spinner while running, text as it arrives, a dropped attempt, a tool step.
+// 3. A streamed turn: the working indicator while running, text as it arrives, a dropped attempt, a tool step.
 {
   const t = setup()
   t.key('배포 일정 알려줘\r')
@@ -122,17 +123,17 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.clock.advance(20)
   const streaming = t.term.screen.text()
   check('stream: a failed attempt\'s text is dropped', !streaming.includes('잘못된 시도'))
-  check('stream: text appears with a caret while streaming', streaming.includes('어제 스레드 기준으로 ▍') || streaming.includes('어제 스레드 기준으로▍'))
-  check('stream: the status line shows a spinner and elapsed time', /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d+\.\ds/.test(streaming))
+  check('stream: text appears as it streams, with no caret', streaming.includes('어제 스레드 기준으로') && !streaming.includes('▍'))
+  check('stream: the status line shows what it is doing, for how long, and how to stop it', /✻ \S+… \(\d+s · esc to interrupt\)/.test(streaming))
   t.app.toolCall({ name: 'recall', title: '2 passages' })
   t.app.delta('staging 먼저.')
   t.app.final('staging 먼저, 그다음 production.')
   t.app.turnEnded()
   t.clock.advance(20)
   const done = t.term.screen.text()
-  check('stream: a tool step appears between the two parts', done.includes('● recall  2 passages'))
+  check('stream: a tool step appears between the two parts', done.includes('● Recall(2 passages)'))
   check('stream: the final text replaces the streamed text', done.includes('staging 먼저, 그다음 production.') && !done.includes('staging 먼저.▍'))
-  check('stream: no spinner after the turn', !/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d+\.\ds/.test(done))
+  check('stream: no working indicator after the turn', !done.includes('esc to interrupt'))
 }
 
 // 3b. The turn's reply takes the place of what was streamed — and only the reply does.
@@ -148,7 +149,8 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.clock.advance(20)
   const asking = t.term.screen.text()
   check('mid-turn: the approval request is its own message; the streamed text stays', asking.includes('build 폴더를 지울게.') && asking.includes('권한이 필요합니다'))
-  check('choice: offered above the input box', /⚠ +허용 +거부/.test(asking) || (asking.includes('⚠') && asking.includes(' 허용 ') && asking.includes(' 거부 ')))
+  check('choice: the request\'s first line, then its options numbered, one a row', /⚠ 권한이 필요합니다: rm -rf build/.test(asking) && /❯ 1\. 허용/.test(asking) && / {2}2\. 거부/.test(asking), asking.split('\n').slice(-6).join(' | '))
+  check('choice: and the input box gives way to it while nothing is typed, as in Claude Code', !asking.includes('╭') && !asking.includes('╰'), asking.split('\n').slice(-4).join(' | '))
   t.key('\x1b[C')
   t.key('\r')
   check('choice: → then Enter picks the second option', t.actions.length === 1 && t.actions[0] === 'approval:deny:k' && t.app.choice === null, JSON.stringify(t.actions))
@@ -168,14 +170,16 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   check('answer: without a stream the reply is simply shown (the fallback)', t.term.screen.text().includes('스트림 없이 온 답변'))
   t.app.offer('ts-2', [{ id: 'a', label: '허용' }, { id: 'b', label: '거부' }])
   t.clock.advance(20)
-  const at = t.term.screen.find(' 허용 ')
-  t.key(SGR(0, at.col + 1, at.row)); t.key(SGR(0, at.col + 1, at.row, true))
+  const at = t.term.screen.find('1. 허용')
+  if (at !== null) { t.key(SGR(0, at.col + 1, at.row)); t.key(SGR(0, at.col + 1, at.row, true)) }
   check('choice: a click on an option picks it', t.actions[0] === 'a' && t.app.choice === null)
   t.app.offer('ts-3', [{ id: 'x', label: '허용' }])
   t.app.unpost('ts-3')
   check('choice: withdrawn with the message that offered it', t.app.choice === null)
   t.key('입력 중')
   t.app.offer('ts-4', [{ id: 'y', label: '허용' }])
+  t.clock.advance(20)
+  check('choice: with text typed, the input box stays, with the text', t.term.screen.text().includes('╭') && t.term.screen.text().includes('입력 중'))
   t.key('\r')
   check('choice: with text typed, Enter sends the text instead of picking', t.actions.length === 1 && t.sent.includes('입력 중'))
 }
@@ -321,6 +325,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.clock.advance(20)
   const asked = t.term.screen.text()
   check('question: the panel shows the question, its options and "type your own…"', /\? question \(1\/2\)/.test(asked) && asked.includes('배포 대상 환경은?') && /❯ staging/.test(asked) && asked.includes('production — 실서비스') && asked.includes('type your own…'))
+  check('question: the input box gives way to the options', !asked.includes('╭'), asked.split('\n').slice(-4).join(' | '))
   t.key('\x1b[B'); t.key('\r')
   check('question: ↓ Enter answers the first and moves to the second', /\(2\/2\)/.test(t.term.screen.text()) && t.term.screen.text().includes('? 배포 대상 환경은? → production'))
   t.key(' '); t.key('\x1b[B'); t.key('\x1b[B'); t.key(' ')
@@ -336,15 +341,31 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   t.key('\r')
   check('question: Enter sends those words as the answer', JSON.stringify(t.answers[1]) === JSON.stringify({ id: 'q-2', answers: [{ id: 'name', selected: [], custom: '아리' }] }) && t.app.editor.text === '')
 
+  t.app.ask('q-own', [{ id: 'own', question: '직접 쓸래?', options: [{ label: 'a' }], multiSelect: false }])
+  t.key('\x1b[B'); t.key('\r'); t.clock.advance(20)
+  check('question: "type your own…" chosen brings the input box back, empty, to type in', t.app.question?.typing === true && t.app.editor.text === '' && t.term.screen.text().includes('╭'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+  t.app.closeQuestion('q-own'); t.clock.advance(20)
+  // Pasted words are the person's own words too: the question switches to them, and Enter answers with them.
+  t.app.ask('q-paste', [{ id: 'p', question: '붙여 넣을래?', options: [{ label: 'a' }], multiSelect: false }])
+  t.key('\x1b[200~붙여 넣은 답\x1b[201~'); t.clock.advance(20)
+  check('question: a paste switches to typing, in the input box', t.app.question?.typing === true && t.app.editor.text === '붙여 넣은 답' && t.term.screen.text().includes('╭'))
+  // A choice arriving while the question is being typed into leaves the box: the typing goes on.
+  t.app.offer('ts-q', [{ id: 'z', label: '허용' }])
+  t.key('\x15'); t.clock.advance(20)
+  check('question: typing an answer keeps the input box even with a choice pending', t.app.question?.typing === true && t.app.editor.text === '' && t.term.screen.text().includes('╭'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+  t.key('붙여 넣은 답'); t.key('\r'); t.clock.advance(20)
+  check('question: and Enter answers with the pasted words', t.answers.some((a) => a.id === 'q-paste' && a.answers[0]?.custom === '붙여 넣은 답'), JSON.stringify(t.answers.at(-1)))
+  t.app.unpost('ts-q')
+
   t.app.ask('q-3', [{ id: 'skip-me', question: '건너뛸 질문', options: [{ label: 'a' }], multiSelect: false }])
   t.key('\x1b'); t.clock.advance(40)
-  check('question: esc skips it, and the turn is not cancelled', JSON.stringify(t.answers[2]) === JSON.stringify({ id: 'q-3', answers: [{ id: 'skip-me', selected: [] }] }) && t.cancels === 0)
+  check('question: esc skips it, and the turn is not cancelled', JSON.stringify(t.answers[3]) === JSON.stringify({ id: 'q-3', answers: [{ id: 'skip-me', selected: [] }] }) && t.cancels === 0)
 
   t.app.ask('q-4', [{ id: 'click', question: '클릭으로 고르기', options: [{ label: '첫째' }, { label: '둘째' }], multiSelect: false }])
   t.clock.advance(20)
   const second = t.term.screen.find('둘째')
   t.key(SGR(0, second.col, second.row)); t.key(SGR(0, second.col, second.row, true))
-  check('question: a click on an option answers it', JSON.stringify(t.answers[3]?.answers) === JSON.stringify([{ id: 'click', selected: ['둘째'] }]))
+  check('question: a click on an option answers it', JSON.stringify(t.answers[4]?.answers) === JSON.stringify([{ id: 'click', selected: ['둘째'] }]))
 
   t.app.ask('q-5', [{ id: 'plan', question: '이 계획으로 진행할까?', options: [{ label: 'Revise' }, { label: 'Approve' }], multiSelect: false, detail: '1. 렌더러\n2. transport', intent: { kind: 'plan-review', approve: 'Approve' } }])
   t.clock.advance(20)
@@ -507,24 +528,24 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
 }
 
 {
-  // Thinking and tool steps: shown briefly, everything on ctrl+o.
+  // Thinking and tool steps: shown briefly; thinking in full on ctrl+t, tool output on ctrl+o.
   const t = setup({ rows: 40 })
   t.app.turnStarted()
   t.app.thinking('계획을 세우는 중\n둘째 생각\n셋째 생각\n넷째 생각')
   t.clock.advance(20)
   let screen = t.term.screen.text()
-  check('thinking: shown while it streams, its latest lines', screen.includes('thinking…') && screen.includes('넷째 생각') && !screen.includes('계획을 세우는 중'), screen.split('\n').slice(10, 20).join(' | '))
+  check('thinking: shown while it streams, its latest lines', screen.includes('Thinking…') && screen.includes('넷째 생각') && !screen.includes('계획을 세우는 중'), screen.split('\n').slice(10, 20).join(' | '))
   t.app.delta('답을 씁니다')
   t.clock.advance(20)
   screen = t.term.screen.text()
-  check('thinking: folded to one line once the answer starts', /thought · /.test(screen) && !screen.includes('넷째 생각') && screen.includes('답을 씁니다'))
-  t.key('\x0f')   // ctrl+o
+  check('thinking: folded to one line once the answer starts', /Thought for /.test(screen) && !screen.includes('넷째 생각') && screen.includes('답을 씁니다'))
+  t.key('\x14')   // ctrl+t
   t.clock.advance(20)
   screen = t.term.screen.text()
-  check('ctrl+o: unfolds the thinking in full', screen.includes('계획을 세우는 중') && screen.includes('넷째 생각'))
-  t.key('\x0f')
+  check('ctrl+t: unfolds the thinking in full', screen.includes('계획을 세우는 중') && screen.includes('넷째 생각'))
+  t.key('\x14')
   t.clock.advance(20)
-  check('ctrl+o: and folds it again', !t.term.screen.text().includes('계획을 세우는 중'))
+  check('ctrl+t: and folds it again', !t.term.screen.text().includes('계획을 세우는 중'))
 
   t.app.toolCall({ name: 'str_replace_editor', callId: 'c1', title: 'str_replace /w/a.ts',
     diff: [{ path: '/w/a.ts', old: 'same one\nold value\nsame two', new: 'same one\nnew value\nsame two' }] })
@@ -535,7 +556,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.toolResult('c1', true, 'r1\nr2\nr3\nr4\nr5')
   t.clock.advance(20)
   screen = t.term.screen.text()
-  check('tools: the result shows under its call, a few lines', screen.includes('⎿ r1') && screen.includes('r3') && !screen.includes('r4'))
+  check('tools: an edit\'s result is its diff: the tool\'s own words wait for ctrl+o', !screen.includes('r1') && screen.includes('Updated /w/a.ts'))
   t.key('\x0f')
   t.clock.advance(20)
   check('ctrl+o: unfolds the result too', t.term.screen.text().includes('r5'))
@@ -545,7 +566,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.toolResult('unknown', true, '아무 데도 안 붙음')
   t.clock.advance(20)
   screen = t.term.screen.text()
-  check('tools: a failed result is shown, and one for an unknown call is dropped', screen.includes('⎿ exit 1') && !screen.includes('아무 데도 안 붙음'))
+  check('tools: a failed result is shown, and one for an unknown call is dropped', screen.includes('⎿  Error: exit 1') && !screen.includes('아무 데도 안 붙음'))
   t.app.thinking('버려질 생각')
   t.app.resetAttempt()
   t.clock.advance(20)
@@ -625,25 +646,25 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   shown = card('n5', { path: 'e', old: 'keep\n}\n\nmore', new: 'keep\nnew one\n}\nnew two\n\nnew three', newCut: true })
   check('tools: a card that leaves rows out says how many', /only the lines that are certain, \d+ left out/.test(shown), shown.replace(/\n/g, ' | '))
   check('tools: an addition past the last shared line is withheld when the old side was cut', !shown.includes('+ maybe old') && shown.includes('- old kept') && !/no difference/.test(shown), shown.replace(/\n/g, ' | '))
-  t.key('\x0f')
+  t.key('\x14')
   t.app.thinking(Array.from({ length: 600 }, (_, i) => `생각 ${i}`).join('\n'))
   t.clock.advance(20)
-  check('thinking: unfolded past its limit, it says how much more there is', /more lines/.test(t.term.screen.text()))
-  t.key('\x0f')
+  check('thinking: unfolded past its limit, it says how much more there is', /… \+\d+ lines/.test(t.term.screen.text()))
+  t.key('\x14')
   // A retried attempt drops its thinking even when its answer had begun.
   t.app.thinking('버려질 계획')
   t.app.delta('버려질 답')
   t.app.resetAttempt()
   t.clock.advance(20)
   screen = t.term.screen.text()
-  check('thinking: a retry after the answer began drops the folded thinking too', !/thought · /.test(screen) && !screen.includes('버려질 답'), screen.split('\n').slice(-14).join(' | '))
+  check('thinking: a retry after the answer began drops the folded thinking too', !/Thought for /.test(screen) && !screen.includes('버려질 답'), screen.split('\n').slice(-14).join(' | '))
   // A thinking block from before a tool call belongs to a model call that succeeded: it stays.
   t.app.thinking('남을 계획')
   t.app.toolCall({ name: 'bash', callId: 'b1' })
   t.app.delta('다음 답')
   t.app.resetAttempt()
   t.clock.advance(20)
-  check('thinking: the thinking of an earlier, finished step stays', /thought · /.test(t.term.screen.text()))
+  check('thinking: the thinking of an earlier, finished step stays', /Thought for /.test(t.term.screen.text()))
 }
 
 {
@@ -737,7 +758,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
 }
 
 // 60. How a conversation looks: what was said on a band, answers and tool calls marked, thinking in sky
-// blue with a light passing over it, a rule between exchanges, and what waits shown as waiting.
+// blue with a light passing over it, no rule between exchanges, and what waits shown as waiting.
 {
   const BAND = '48;2;38;44;56', OK = '38;2;76;195;138', DANGER = '38;2;240;90;90', MUTED = '38;2;138;147;166', SKY = '38;2;125;211;252'
   const t = setup({ cols: 80, rows: 40 })
@@ -750,25 +771,25 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.turnStarted()
   t.app.toolCall({ name: 'bash', callId: 'c1', title: 'ls' })
   t.clock.advance(20)
-  const first = styleAt('● bash')
+  const first = styleAt('● Bash')
   t.clock.advance(480)
-  const second = styleAt('● bash')
+  const second = styleAt('● Bash')
   check('tool: the dot blinks while the tool runs', first !== null && second !== null && first !== second, `${first} / ${second}`)
-  check('status: says which tool runs', t.term.screen.text().includes('running bash…'))
+  check('status: says which tool runs', t.term.screen.text().includes('Running bash…'))
   t.app.toolResult('c1', true, 'a.txt')
   t.clock.advance(20)
-  check('tool: green once it succeeded', (styleAt('● bash') ?? '').includes(OK), styleAt('● bash'))
+  check('tool: green once it succeeded', (styleAt('● Bash') ?? '').includes(OK), styleAt('● Bash'))
   t.app.toolCall({ name: 'grep', callId: 'c2', title: 'x' })
   t.app.toolResult('c2', false, 'no such file')
   t.clock.advance(20)
-  check('tool: red once it failed', (styleAt('● grep') ?? '').includes(DANGER), styleAt('● grep'))
+  check('tool: red once it failed', (styleAt('● Grep') ?? '').includes(DANGER), styleAt('● Grep'))
   t.app.toolCall({ name: 'fetch', callId: 'c3', title: 'https://example.com' })
   t.app.thinking('weighing the two options\n')
   t.clock.advance(20)
-  const label = t.term.screen.find('✻ thinking…')
+  const label = t.term.screen.find('✻ Thinking…')
   const styles = label === null ? new Set() : new Set(Array.from({ length: 9 }, (_, i) => cell(label.row, label.col + 2 + i).style))
   check('thinking: in sky blue, with a light passing over its label', label !== null && styles.size > 1 && [...styles].some((s) => String(s).includes(SKY)), [...styles].join(' | ').slice(0, 120))
-  check('status: says it is thinking', /✻ thinking…/.test(t.term.screen.row(t.term.screen.find('▸▸ effort').row)))
+  check('status: says it is thinking', /✻ Thinking… \(\d+s · esc to interrupt\)/.test(t.term.screen.row(t.term.screen.find('esc to interrupt')?.row ?? 0)))
   t.app.delta('The answer.')
   t.app.final('The answer.')
   t.app.turnEnded()
@@ -776,18 +797,18 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('answer: marked with a dot where it starts', t.term.screen.text().includes('● The answer.'))
   const lines = t.term.screen.text().split('\n')
   const answerAt = lines.findIndex((l) => l.includes('● The answer.'))
-  check('steps: a blank line before the answer, and before each tool call', answerAt > 0 && lines[answerAt - 1].trim() === '' && lines[lines.findIndex((l) => l.includes('● grep')) - 1].trim() === '', lines.slice(Math.max(0, answerAt - 2), answerAt + 1).join(' | '))
-  const settled = styleAt('● fetch')
+  check('steps: a blank line before the answer, and before each tool call', answerAt > 0 && lines[answerAt - 1].trim() === '' && lines[lines.findIndex((l) => l.includes('● Grep')) - 1].trim() === '', lines.slice(Math.max(0, answerAt - 2), answerAt + 1).join(' | '))
+  const settled = styleAt('● Fetch')
   t.clock.advance(480)
-  check('tool: a call left without a result stops blinking when the turn ends', settled !== null && settled === styleAt('● fetch') && settled.includes(MUTED), settled)
-  check('thinking: folded, it says what it was, in one colour', (() => { const at = t.term.screen.find('✻ thought ·'); return at !== null && cell(at.row, at.col + 2).style === cell(at.row, at.col + 8).style && cell(at.row, at.col + 2).style.includes(SKY) })())
+  check('tool: a call left without a result stops blinking when the turn ends', settled !== null && settled === styleAt('● Fetch') && settled.includes(MUTED), settled)
+  check('thinking: folded, it says what it was, in one colour', (() => { const at = t.term.screen.find('∴ Thought for'); return at !== null && cell(at.row, at.col + 2).style === cell(at.row, at.col + 8).style && cell(at.row, at.col + 2).style.includes(SKY) })())
 
   t.key('second question\r')
   t.clock.advance(20)
   const rows = t.term.screen.text().split('\n')
   const ruleAt = rows.findIndex((l) => /^ {2}─{20,}/.test(l))
   const secondAt = rows.findIndex((l) => l.includes('› second question'))
-  check('rule: a line between one exchange and the next, and none before the first', ruleAt !== -1 && ruleAt < secondAt && ruleAt > rows.findIndex((l) => l.includes('● The answer.')) && rows.findIndex((l) => /^ {2}─{20,}/.test(l)) === ruleAt, `${ruleAt} < ${secondAt}`)
+  check('rule: none between one exchange and the next, as in Claude Code and pi', ruleAt === -1 && secondAt !== -1, `${ruleAt} < ${secondAt}`)
 
   // A message sent while a turn runs waits above the input, and joins the transcript when its turn starts.
   t.app.turnStarted()
@@ -823,11 +844,11 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('clear: the old conversation\'s queue shows before', t.term.screen.text().includes('1 queued'))
   t.app.clear()
   t.clock.advance(20)
-  check('clear: after, nothing is queued and no old tool is named', !t.term.screen.text().includes('queued') && !t.term.screen.text().includes('running bash'))
+  check('clear: after, nothing is queued and no old tool is named', !t.term.screen.text().includes('queued') && !t.term.screen.text().includes('Running bash'))
   t.app.turnStarted()
   t.clock.advance(20)
   // Checked while the first turn runs: its end would reset the tool anyway, and hide a clear() that did not.
-  check('clear: the new conversation\'s first turn is working, not running the old one\'s tool', t.term.screen.text().includes('working…') && !t.term.screen.text().includes('running bash'))
+  check('clear: the new conversation\'s first turn is working, not running the old one\'s tool', t.term.screen.text().includes('Working…') && !t.term.screen.text().includes('Running bash'))
   t.app.turnEnded()
   t.clock.advance(20)
   check('clear: and its end does not bring the old message in', !t.term.screen.text().includes('left behind'))
@@ -842,20 +863,22 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.clock.advance(20)
   const at = t.term.screen.find('› plain')
   check('no colour: what was said has no band and no trailing spaces', at !== null && !t.term.screen.grid.some((c) => c.style.includes('48;')) && t.term.screen.row(at.row).trimEnd() === '› plain')
-  check('no colour: the thinking label is one style', (() => { const l = t.term.screen.find('✻ thinking…'); return l !== null && new Set(Array.from({ length: 9 }, (_, i) => t.term.screen.grid[l.row * 60 + l.col + 2 + i].style)).size === 1 })())
+  check('no colour: the thinking label is one style', (() => { const l = t.term.screen.find('✻ Thinking…'); return l !== null && new Set(Array.from({ length: 9 }, (_, i) => t.term.screen.grid[l.row * 60 + l.col + 2 + i].style)).size === 1 })())
   t.app.turnEnded()
 }
 
-// 70. The bottom of the screen, as in Claude Code. A short conversation has the input box right under it
-// (it used to wait at the last rows, with /model's list at the top of an empty screen); /model and
-// /sessions are pickers just above the box; shift+tab steps the effort, shown where a permission label
-// the gateway never sent ("▸▸ ask") used to be; and the mouse works on what the keys work on.
+// 70. The bottom of the screen. The input box keeps the last rows and a short conversation sits right above
+// it, so nothing opens in the middle of an empty screen (it once followed the conversation down from the
+// top, with the rest of the screen empty under it); /model and /sessions are pickers in the box's place;
+// shift+tab steps the effort, shown where a permission label the gateway never sent ("▸▸ ask") used to
+// be; and the mouse works on what the keys work on.
 {
   const steps = []
   const t = setup({ cols: 80, rows: 40, extra: { stepEffort: () => steps.push(1) } })
   const box = () => t.term.screen.find('╭')?.row ?? -1
   const info = t.term.screen.find('session tui-3f2a9c1e-aaaa')?.row ?? -1
-  check('layout: a short conversation has the input box right under it, not at the last rows', info >= 0 && box() > info && box() - info <= 4 && box() < 40 - 5, `info ${info}, box ${box()}`)
+  check('layout: the input box keeps the last rows, and a short conversation sits right above it', box() === 40 - 4 && info >= 0 && box() - info <= 4, `info ${info}, box ${box()}`)
+  check('layout: the empty rows are above the conversation, under the header, not between it and the box', t.term.screen.row(3).trim() === '', t.term.screen.row(3))
   const status = t.term.screen.row(box() - 1)
   check('status: the effort, with the key that steps it, and no permission label', /▸▸ effort medium \(shift\+tab\)/.test(status) && !/\bask\b/.test(status), status)
   check('status: the model it runs on, at the right', /deepseek-v4\.1\s*$/.test(status), status)
@@ -879,7 +902,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const open = () => { t.app.openPicker({ title: 'Model', rows, onPick: (i, e) => picked.push([i, e]) }); t.clock.advance(20) }
   open()
   const first = t.term.screen.find('1. og/m1')
-  check('picker: numbered rows, the current one marked and highlighted, just above the input box', first !== null && box() > first.row && box() - first.row <= 8 && /❯ 1\. og\/m1 +M one +✓/.test(t.term.screen.row(first.row)), t.term.screen.row(first?.row ?? 0))
+  check('picker: numbered rows, the current one marked and highlighted, at the bottom in the input box\'s place', first !== null && box() === -1 && first.row > 30 && /❯ 1\. og\/m1 +M one +✓/.test(t.term.screen.row(first.row)), `${t.term.screen.row(first?.row ?? 0)} @${first?.row} box ${box()}`)
   check('picker: the highlighted model\'s effort, and what it takes', /effort ◂ medium ▸ +low · medium · high/.test(t.term.screen.text()), t.term.screen.text().split('\n').find((l) => l.includes('effort ◂')))
   check('picker: the hint line says the keys', /↑↓ .*←→ effort.*↵ .*esc /.test(t.term.screen.row(39)) || /↑↓ .*←→ effort.*↵ .*esc /.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => l.includes('↑↓')).join(' | '))
   t.key('\x1b[C'); t.clock.advance(20)
@@ -890,6 +913,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('picker: on a model that is not the current one, ← starts from its default', /❯ 3\. og\/m3/.test(t.term.screen.text()) && /effort ◂ high ▸/.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => /effort/.test(l)).join(' | '))
   t.key('\x1b[A'); t.key('\x1b[A'); t.key('\r'); t.clock.advance(20)
   check('picker: ↵ picks the row with the effort chosen, and closes', JSON.stringify(picked) === '[[0,"high"]]' && t.term.screen.find('1. og/m1') === null, JSON.stringify(picked))
+  check('picker: and the input box is back in its rows', box() === 40 - 4, String(box()))
   check('picker: and nothing was sent as a message', t.sent.length === 0)
   open()
   t.key('4'); t.clock.advance(20)
@@ -941,7 +965,8 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('mouse: a click on one that takes none runs it', JSON.stringify(intercepted) === '["/help"]', JSON.stringify(intercepted))
 }
 
-// 72. Review of the pickers. A small screen keeps the input box; text being typed when a picker opens
+// 72. Review of the pickers. A small screen keeps the hint line and the highlighted row (the picker has the
+// input box's place); text being typed when a picker opens
 // keeps ↵ and digits; the picker does not share the screen with the completion list or a history
 // search; shift+tab steps the effort with the completion list open; a click in a tall input box does
 // not scroll it; rows above the window are counted; numbers line up past nine.
@@ -951,7 +976,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
     const small = setup({ cols: 80, rows })
     small.app.openPicker({ title: 'Model', rows: many, onPick: () => {} })
     small.clock.advance(20)
-    check(`picker: on a screen ${rows} rows tall the input box and the hint line stay`, small.term.screen.find('╰') !== null && small.term.screen.find('╭') !== null && small.term.screen.text().includes('↑↓ pick'), small.term.screen.text().split('\n').slice(-5).join(' | '))
+    check(`picker: on a screen ${rows} rows tall the hint line keeps the last row and the highlighted row shows`, small.term.screen.row(rows - 1).includes('↑↓ pick') && small.term.screen.text().includes('❯'), small.term.screen.text().split('\n').slice(-5).join(' | '))
     check(`picker: and it still shows a row to pick (${rows} rows)`, /❯ +1\. p\/model-1 /.test(small.term.screen.text()))
   }
 
@@ -1008,7 +1033,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
     const t = setup({ cols: 80, rows })
     t.app.openPicker({ title: 'Model', rows: none, onPick: () => {} })
     t.clock.advance(20)
-    check(`picker: models that take no effort, ${rows} rows: the box and the hint line stay`, t.term.screen.find('╰') !== null && t.term.screen.text().includes('↑↓ pick'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+    check(`picker: models that take no effort, ${rows} rows: the hint line keeps the last row and the highlighted row shows`, t.term.screen.row(rows - 1).includes('↑↓ pick') && t.term.screen.text().includes('❯'), t.term.screen.text().split('\n').slice(-4).join(' | '))
     check(`picker: and the highlighted model says it takes none (${rows} rows)`, t.term.screen.text().includes('this model takes no effort'))
   }
   // 18 rows leave the picker three, 17 two, 16 one: the title and the effort line give way to the rows.
@@ -1020,7 +1045,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
     crowd.app.offer('ts-1', [{ id: 'yes', label: 'yes' }, { id: 'no', label: 'no' }])
     crowd.app.openPicker({ title: 'Model', rows: none, onPick: () => {} })
     crowd.clock.advance(20)
-    check(`picker: on a crowded screen (${rows} rows) the box and the hint line stay`, crowd.term.screen.find('╰') !== null && crowd.term.screen.text().includes('↑↓ pick'), crowd.term.screen.text().split('\n').slice(-5).join(' | '))
+    check(`picker: on a crowded screen (${rows} rows) the hint line keeps the last row and the highlighted row shows`, crowd.term.screen.row(rows - 1).includes('↑↓ pick') && crowd.term.screen.text().includes('❯'), crowd.term.screen.text().split('\n').slice(-5).join(' | '))
     check(`picker: and a row to pick is still shown (${rows} rows)`, /❯ +1\. p\/model-1 /.test(crowd.term.screen.text()))
   }
 
@@ -1061,6 +1086,374 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   s.app.turnStarted()
   s.key('하나 더\r'); s.key('그만\r'); s.clock.advance(20)
   check('instant: a typed stop is said at once, and what waited goes back to the box', s.sent.includes('그만') && s.app.editor.text === '하나 더' && !/queued/.test(s.term.screen.text()), JSON.stringify(s.app.editor.text))
+}
+
+// 75. ctrl+r searching what was typed keeps the input box, a choice pending or not, nothing typed yet and no history.
+{
+  const t = setup()
+  t.app.offer('ts-r', [{ id: 'r', label: '허용' }])
+  t.key('\x12'); t.clock.advance(20)
+  check('search: ctrl+r keeps the input box while a choice is pending', t.app.editor.text === '' && t.term.screen.text().includes('╭') && t.term.screen.text().includes('history search'), t.term.screen.text().split('\n').slice(-4).join(' | '))
+}
+
+// 76. The transcript after Claude Code and pi. A tool call reads `Name(what it was asked)`; its result sits under
+// `⎿`, summarised for reads and searches, the last lines of a shell's output, otherwise the first few, with
+// "… +N lines (ctrl+o to expand)"; an edit says which file and how much changed, its lines on red and green;
+// thinking folds to "Thought for Ns", opened by ctrl+t, apart from ctrl+o; a stop leaves "Interrupted"; and
+// no rule between exchanges, no caret on the streaming text.
+{
+  const t = setup({ cols: 100, rows: 60 })
+  t.app.turnStarted()
+  t.app.thinking('첫째 생각\n둘째 생각')
+  t.clock.advance(4200)
+  t.app.thinking('\n셋째 생각')
+  t.app.delta('답을 씁니다')
+  t.clock.advance(20)
+  const thought = t.term.screen.text()
+  check('thinking: folded to "Thought for Ns", with the key that opens it', /∴ Thought for 4s \(ctrl\+t to expand\)/.test(thought) && !thought.includes('둘째 생각'), thought.split('\n').find((l) => l.includes('Thought')) ?? '(none)')
+  check('stream: no caret on the text being streamed', !thought.includes('▍'))
+  t.key('\x0f'); t.clock.advance(20)
+  check('ctrl+o: does not open the thinking', !t.term.screen.text().includes('둘째 생각'))
+  t.key('\x0f'); t.key('\x14'); t.clock.advance(20)
+  check('ctrl+t: opens the thinking', t.term.screen.text().includes('둘째 생각') && t.term.screen.text().includes('셋째 생각'))
+  t.key('\x14'); t.clock.advance(20)
+
+  const read = Array.from({ length: 120 }, (_, i) => `${i + 1}\tline ${i + 1}`).join('\n')
+  t.app.toolCall({ name: 'read', callId: 'r1', title: 'src/index.ts' })
+  t.app.toolResult('r1', true, read)
+  t.app.toolCall({ name: 'grep', callId: 'g1', title: 'TODO' })
+  t.app.toolResult('g1', true, 'a.ts:1: TODO one\nb.ts:9: TODO two\nc.ts:3: TODO three')
+  const out = Array.from({ length: 12 }, (_, i) => `out ${i + 1}`).join('\n')
+  t.app.toolCall({ name: 'bash', callId: 'b1', title: 'npm test' })
+  t.app.toolResult('b1', true, out)
+  t.app.toolCall({ name: 'schedule_create', callId: 's1', title: 'water' })
+  t.app.toolResult('s1', true, 'one\ntwo\nthree\nfour\nfive')
+  t.app.toolCall({ name: 'bash', callId: 'b2', title: 'false' })
+  t.app.toolResult('b2', false, 'command failed: exit 1')
+  t.clock.advance(20)
+  const tools = t.term.screen.text()
+  const rowOf = (s) => tools.split('\n').find((l) => l.includes(s)) ?? '(none)'
+  check('tool: a call reads Name(what it was asked)', /● Read\(src\/index\.ts\)/.test(tools) && /● Bash\(npm test\)/.test(tools) && /● Grep\(TODO\)/.test(tools), rowOf('index.ts'))
+  check('tool: a read is one line under ⎿: how much was read', /⎿ {2}Read 120 lines/.test(tools) && !tools.includes('line 3'), rowOf('Read 120'))
+  check('tool: a search says how much it found', /⎿ {2}Found 3 lines/.test(tools) && !tools.includes('TODO two'), rowOf('Found'))
+  check('tool: a shell shows its last five lines, and how many came before', /… \+7 lines \(ctrl\+o to expand\)/.test(tools) && tools.includes('out 8') && tools.includes('out 12') && !tools.includes('out 7\n') && !/\bout 1\b/.test(tools), rowOf('+7 lines'))
+  check('tool: anything else shows its first lines, then how many more', /⎿ {2}one/.test(tools) && tools.includes('three') && !tools.includes('four') && /… \+2 lines \(ctrl\+o to expand\)/.test(tools), rowOf('+2 lines'))
+  check('tool: a failure says Error, in red', /⎿ {2}Error: command failed: exit 1/.test(tools), rowOf('Error'))
+  t.key('\x0f'); t.clock.advance(20)
+  const open = t.term.screen.text()
+  check('ctrl+o: opens the tool output, all of it', /\bout 1\b/.test(open) && open.includes('four') && open.includes('line 3'))
+  t.key('\x0f'); t.clock.advance(20)
+  check('tool: a shell\'s folded output still sits under ⎿', /⎿ {2}… \+7 lines/.test(tools), rowOf('+7 lines'))
+  t.key('\x14'); t.clock.advance(20)
+  check('ctrl+t: leaves the tool output folded', !t.term.screen.text().includes('line 3') && /Read 120 lines/.test(t.term.screen.text()))
+  t.key('\x14'); t.clock.advance(20)
+  // A read cut before it reached the terminal: the count is the gateway's, from before the cut.
+  t.app.toolCall({ name: 'read', callId: 'r2', title: 'src/long.ts' })
+  t.app.toolResult('r2', true, 'cut text…', 300)
+  // A long shell output opened: its end, where the error is, stays in view.
+  t.app.toolCall({ name: 'bash', callId: 'b3', title: 'make' })
+  t.app.toolResult('b3', true, Array.from({ length: 100 }, (_, i) => `make ${i + 1}`).join('\n'))
+  // A shell that failed: its last lines, under a line saying it failed.
+  t.app.toolCall({ name: 'bash', callId: 'b4', title: 'npm test' })
+  t.app.toolResult('b4', false, [...Array.from({ length: 10 }, (_, i) => `log ${i + 1}`), 'assertion failed'].join('\n'))
+  t.clock.advance(20)
+  const more = t.term.screen.text()
+  check('tool: a read counts the lines the gateway counted', /Read 300 lines/.test(more), more.split('\n').find((l) => l.includes('Read 3')) ?? '(none)')
+  t.app.toolCall({ name: 'read', callId: 'r3', title: 'notes.md' })
+  t.app.toolResult('r3', true, 'No results yet, says the file\nsecond line', 2)
+  t.clock.advance(20)
+  check('tool: a file that starts with "No results" is still read whole', /Read 2 lines/.test(t.term.screen.text()))
+  check('tool: a failed shell shows its end, under Error', /⎿ {2}Error/.test(more) && more.includes('assertion failed') && !more.includes('log 1\n') && !/Error: log 1/.test(more), more.split('\n').filter((l) => /Error|assertion/.test(l)).join(' | '))
+  t.key('\x0f'); t.clock.advance(20)
+  check('ctrl+o: a long shell output opened keeps its last lines in view', t.term.screen.text().includes('make 100'), t.term.screen.text().split('\n').filter((l) => l.includes('make')).slice(-2).join(' | '))
+  t.key('\x0f'); t.clock.advance(20)
+
+  t.app.toolCall({ name: 'edit', callId: 'e1', title: 'src/a.ts', diff: [{ path: 'src/a.ts', old: 'const a = 1\nconst b = 2', new: 'const a = 10\nconst b = 2\nconst c = 3' }] })
+  t.clock.advance(20)
+  check('diff: not "Updated" before the edit has answered', !t.term.screen.text().includes('Updated src/a.ts'))
+  t.app.toolResult('e1', true, 'edited')
+  t.clock.advance(20)
+  const edit = t.term.screen.text()
+  check('diff: says which file, and how many lines came and went', /⎿ {2}Updated src\/a\.ts with 2 additions and 1 removal/.test(edit), edit.split('\n').find((l) => l.includes('Updated')) ?? '(none)')
+  const plus = t.term.screen.find('+ const a = 10')
+  const minus = t.term.screen.find('- const a = 1')
+  check('diff: added lines on green, removed on red, the colour behind the text', plus !== null && minus !== null && /\x1b\[[0-9;]*48;2;/.test(t.term.screen.grid[plus.row * 100 + plus.col + 2].style) && /\x1b\[[0-9;]*48;2;/.test(t.term.screen.grid[minus.row * 100 + minus.col + 2].style) && t.term.screen.grid[plus.row * 100 + plus.col + 2].style !== t.term.screen.grid[minus.row * 100 + minus.col + 2].style, `${plus?.row} ${minus?.row}`)
+  t.app.toolCall({ name: 'edit', callId: 'e2', title: 'src/b.ts', diff: [{ path: 'src/b.ts', old: 'x', new: 'y' }] })
+  t.app.toolResult('e2', false, 'old_string not found in src/b.ts')
+  t.clock.advance(20)
+  check('diff: an edit that failed is not "Updated"', !t.term.screen.text().includes('Updated src/b.ts') && /Error: old_string not found/.test(t.term.screen.text()))
+  t.app.final('끝')
+  t.app.turnEnded()
+  t.key('다음 질문'); t.key('\r'); t.clock.advance(20)
+  t.key('그다음 질문'); t.key('\r'); t.clock.advance(20)
+  t.app.turnStarted()
+  t.clock.advance(20)
+  const between = t.term.screen.text().split('\n')
+  check('exchanges: no rule between one and the next (only the divider, from the edge)', !between.some((l) => /^ {2}─{10,}/.test(l)), between.filter((l) => l.includes('────')).join(' | '))
+  t.app.delta('길게 쓰는 중')
+  t.key('\x1b'); t.clock.advance(60)
+  check('stop: a stopped turn says Interrupted, in red', /⎿ {2}Interrupted/.test(t.term.screen.text()), t.term.screen.text().split('\n').filter((l) => l.includes('Interrupted')).join(' | '))
+  t.key('\x1b'); t.clock.advance(60)
+  check('stop: once, however many times esc is pressed', t.term.screen.text().split('Interrupted').length - 1 === 1)
+  t.app.turnEnded()
+  // A message sent behind a stopped turn starts its own turn when that one ends: stopped in turn, it is marked too.
+  const marks = () => t.term.screen.text().split('Interrupted').length - 1
+  t.app.turnStarted()
+  t.key('\x1b'); t.clock.advance(60)
+  t.key('second\r'); t.clock.advance(20)
+  t.app.turnStarted()
+  t.app.turnEnded()
+  t.key('\x1b'); t.clock.advance(60)
+  check('stop: a turn that started behind a stopped one is marked when stopped too', marks() === 3, String(marks()))
+  t.app.turnEnded()
+  // A stop that withdraws a waiting message: the waiting one's end comes first, and the stopped turn is still the
+  // same turn — esc again does not mark it twice.
+  t.app.turnStarted()
+  t.key('queued\r'); t.clock.advance(20)
+  t.app.turnStarted()
+  t.key('\x1b'); t.clock.advance(60)
+  t.app.turnEnded()
+  t.key('\x1b'); t.clock.advance(60)
+  check('stop: a waiting message withdrawn first does not let the stopped turn be marked twice', marks() === 4, String(marks()))
+  t.app.turnEnded()
+  // A stop typed as a word marks the turn too.
+  t.app.setAnsweredAtOnce(['stop'], [])
+  t.app.turnStarted()
+  t.key('\x15'); t.key('stop'); t.key('\r'); t.clock.advance(20)
+  check('stop: a typed stop marks the turn Interrupted too', t.term.screen.text().split('Interrupted').length - 1 === 5)
+  t.app.turnEnded()
+}
+
+// 76b. In 256 colours an edit's added and removed lines are still green and red behind the text.
+{
+  const t = setup({ cols: 80, rows: 30, env: { TERM: 'xterm-256color' } })
+  t.app.turnStarted()
+  t.app.toolCall({ name: 'edit', callId: 'e', title: 'a.ts', diff: [{ path: 'a.ts', old: 'old', new: 'new' }] })
+  t.app.toolResult('e', true, 'ok')
+  t.clock.advance(20)
+  const plus = t.term.screen.find('+ new')
+  const minus = t.term.screen.find('- old')
+  const bg = (at) => (at === null ? '' : t.term.screen.grid[at.row * 80 + at.col + 2].style)
+  check('diff: 256 colours, green and red behind the lines', /48;5;22m/.test(bg(plus)) && /48;5;52m/.test(bg(minus)), `${JSON.stringify(bg(plus))} ${JSON.stringify(bg(minus))}`)
+  // A row wider than the screen wraps; copied, it is the line as written, without the colour's padding.
+  const long = Array.from({ length: 10 }, (_, i) => `abcdefgh${i}`).join(' ')
+  t.app.toolCall({ name: 'edit', callId: 'w', title: 'b.ts', diff: [{ path: 'b.ts', old: 'x', new: long }] })
+  t.app.toolResult('w', true, 'ok')
+  t.clock.advance(20)
+  const from = t.term.screen.find('+ abcdefgh0')
+  const to = t.term.screen.find('abcdefgh9')
+  if (from !== null && to !== null) { t.key(SGR(0, from.col, from.row)); t.key(SGR(32, to.col + 9, to.row)); t.key(SGR(0, to.col + 9, to.row, true)) }
+  t.clock.advance(20)
+  check('diff: a wrapped row copies as one line, no padding in it', t.copied.at(-1) === `+ ${long}`, JSON.stringify(t.copied.at(-1)))
+  t.app.turnEnded()
+}
+
+// 77. Working, approvals and hints after Claude Code. One indicator while a turn runs, with the time and the key that
+// stops it; an approval's options answered by number, and esc answers no; the hint line is "? for shortcuts", and
+// ? on an empty box shows them.
+{
+  const t = setup({ cols: 100, rows: 30 })
+  t.app.turnStarted()
+  t.clock.advance(3200)
+  const running = t.term.screen.text()
+  const statusRow = running.split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: one indicator, the time and how to stop it', /✻ Working… \(3s · esc to interrupt\)/.test(statusRow), statusRow)
+  check('working: no second spinner and no effort label while it runs', !/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(running) && !statusRow.includes('▸▸'), statusRow)
+  t.app.thinking('생각 중')
+  t.clock.advance(20)
+  check('working: thinking says so', /✻ Thinking… \(3s · esc to interrupt\)/.test(t.term.screen.text()), t.term.screen.text().split('\n').find((l) => l.includes('✻ Thinking')) ?? '(none)')
+
+  t.app.message('ts-a', '권한이 필요합니다: rm -rf build\n세부 내용', null, false)
+  t.app.offer('ts-a', [{ id: 'approval:allow:k', label: 'Allow', style: 'primary' }, { id: 'approval:deny:k', label: 'Deny', style: 'danger' }])
+  t.clock.advance(20)
+  t.key('2')
+  check('approval: a digit picks that option', t.actions.at(-1) === 'approval:deny:k' && t.app.choice === null, JSON.stringify(t.actions))
+  t.app.offer('ts-a', [{ id: 'approval:allow:k2', label: 'Allow', style: 'primary' }, { id: 'approval:deny:k2', label: 'Deny', style: 'danger' }])
+  t.clock.advance(20)
+  check('approval: the hint line says the keys', /↑↓ .*1–2 .*↵ .*esc deny/.test(t.term.screen.row(29)), t.term.screen.row(29))
+  t.key('\x1b'); t.clock.advance(60)
+  check('approval: esc answers no, and the turn goes on', t.actions.at(-1) === 'approval:deny:k2' && t.cancels === 0 && t.app.choice === null, JSON.stringify({ actions: t.actions, cancels: t.cancels }))
+  t.app.offer('ts-a', [{ id: 'approval:allow:k3', label: 'Allow' }, { id: 'approval:deny:k3', label: 'Deny' }])
+  t.key('\x1b[B'); t.key('\r')
+  check('approval: ↓ and Enter pick the next one', t.actions.at(-1) === 'approval:deny:k3', JSON.stringify(t.actions))
+  // ↑ moves through the options too: it used to bring back the last message sent, which Enter then sent again.
+  t.key('지난 메시지'); t.key('\r'); t.clock.advance(20)
+  const sentBefore = t.sent.length
+  t.app.offer('ts-a', [{ id: 'approval:allow:k4', label: 'Allow' }, { id: 'approval:deny:k4', label: 'Deny' }])
+  t.key('\x1b[B'); t.key('\x1b[A'); t.key('\r')
+  check('approval: ↑ moves through the options, not the history', t.actions.at(-1) === 'approval:allow:k4' && t.sent.length === sentBefore && t.app.editor.text === '', JSON.stringify({ actions: t.actions.slice(-1), sent: t.sent.slice(sentBefore) }))
+  t.app.turnEnded()
+  t.clock.advance(20)
+
+  check('hint: "? for shortcuts" while nothing is typed', t.term.screen.row(29).trim() === '? for shortcuts', t.term.screen.row(29))
+  t.key('?'); t.clock.advance(20)
+  const panel = t.term.screen.text()
+  check('shortcuts: ? on an empty box shows them, in the box\'s place', panel.includes('Shortcuts') && panel.includes('shift+tab effort') && panel.includes('ctrl+t expand/fold thinking') && !panel.includes('╭') && t.app.editor.text === '', panel.split('\n').slice(-8).join(' | '))
+  t.key('\x1b'); t.clock.advance(60)
+  check('shortcuts: esc closes them', !t.term.screen.text().includes('Shortcuts') && t.term.screen.text().includes('╭'))
+  t.key('?'); t.key('a'); t.clock.advance(20)
+  check('shortcuts: typing closes them and types', t.app.editor.text === 'a' && !t.term.screen.text().includes('Shortcuts'), JSON.stringify(t.app.editor.text))
+  t.key('?'); t.clock.advance(20)
+  check('shortcuts: ? in text being typed is a question mark', t.app.editor.text === 'a?')
+}
+
+// 77b. What review found in 77. An approval is answered only where it is seen and only by the keys the hint names;
+// esc is "no" only when nothing else (a selection) is what it would close; the status line does not offer esc
+// for a stop it will not do; the time is the running turn's own; and the shortcuts fit the screen.
+{
+  const t = setup({ cols: 100, rows: 30 })
+  const en = messages('en')
+  const allowDeny = (k) => [{ id: `approval:allow:${k}`, label: 'Allow', style: 'primary' }, { id: `approval:deny:${k}`, label: 'Deny', style: 'danger' }]
+  t.app.turnStarted()
+  t.app.message('ts-b', `${en.approvalNeeded('rm -rf build')}\n${en.approvalHowTerminal}`, null, false)
+  t.app.offer('ts-b', allowDeny('b1')); t.clock.advance(20)
+  // The last line that says so: the transcript has the message too, above.
+  const title = t.term.screen.text().split('\n').filter((l) => l.includes('I need permission')).at(-1) ?? '(none)'
+  check('approval: the adapter\'s own request, with one warning sign', /⚠ I need permission: rm -rf build/.test(title) && (title.match(/⚠/g) ?? []).length === 1, title)
+  check('approval: the status line does not offer esc for a stop while esc answers no', !t.term.screen.text().includes('esc to interrupt') && /esc deny/.test(t.term.screen.row(29)), t.term.screen.text().split('\n').find((l) => l.includes('✻')))
+  check('approval: what the message tells the person is how it is answered here', /↑↓/.test(en.approvalHowTerminal) && !/←→/.test(en.approvalHowTerminal), en.approvalHowTerminal)
+
+  // A question over it: the digit that starts an answer is the answer's.
+  t.app.ask('q-b', [{ id: 'n', question: 'How many replicas?', options: [{ label: 'three' }], multiSelect: false }])
+  t.key('1'); t.clock.advance(20)
+  check('approval: a digit typed into a question never answers the approval under it', t.actions.length === 0 && t.app.choice !== null && t.app.editor.text === '1', JSON.stringify({ actions: t.actions, text: t.app.editor.text }))
+  t.key('\r'); t.clock.advance(20)
+  // A picker over it: a digit with no row of its own closes it and is text, not the approval's.
+  t.app.openPicker({ title: 'Model', rows: [{ label: 'm1' }], onPick: () => {} }); t.clock.advance(20)
+  t.key('2'); t.clock.advance(20)
+  check('approval: a digit that closes a picker over it is text, not an answer', t.actions.length === 0 && t.app.choice !== null && t.app.editor.text === '2', JSON.stringify({ actions: t.actions, text: t.app.editor.text }))
+  t.app.editor.set(''); t.clock.advance(20)
+
+  // A selection: esc clears it, as it does anywhere, and the approval waits.
+  const at = t.term.screen.find('rm -rf build')
+  t.key(SGR(0, at.col, at.row)); t.key(SGR(32, at.col + 6, at.row)); t.key(SGR(0, at.col + 6, at.row, true))
+  t.key('\x1b'); t.clock.advance(60)
+  check('approval: esc with text selected clears the selection, and answers nothing', t.actions.length === 0 && t.app.choice !== null && t.cancels === 0 && t.term.screen.grid.filter(inverted).length === 0, JSON.stringify({ actions: t.actions, cancels: t.cancels }))
+  // Each half of what makes an option "no": its style, or its id.
+  t.key('\x1b'); t.clock.advance(60)
+  check('approval: esc answers no', t.actions.at(-1) === 'approval:deny:b1', JSON.stringify(t.actions))
+  t.app.offer('ts-b', [{ id: 'approval:allow:b2', label: 'Allow' }, { id: 'approval:refuse:b2', label: 'Refuse', style: 'danger' }]); t.key('\x1b'); t.clock.advance(60)
+  check('approval: "no" by its danger style alone', t.actions.at(-1) === 'approval:refuse:b2', JSON.stringify(t.actions.at(-1)))
+  t.app.offer('ts-b', [{ id: 'approval:allow:b3', label: 'Allow' }, { id: 'approval:deny:b3', label: 'Deny' }]); t.key('\x1b'); t.clock.advance(60)
+  check('approval: "no" by its id alone', t.actions.at(-1) === 'approval:deny:b3', JSON.stringify(t.actions.at(-1)))
+  // A choice with no "no": the hint does not promise one, and esc is the turn's stop, as the status line says.
+  t.app.offer('ts-b', [{ id: 'pick:a', label: 'A' }, { id: 'pick:b', label: 'B' }]); t.clock.advance(20)
+  check('choice: with no "no" option the hint does not say esc denies', !/esc deny/.test(t.term.screen.row(29)) && t.term.screen.text().includes('esc to interrupt'), t.term.screen.row(29))
+  // ↑ alone, from the first of three, goes to the last: back, not forward. Shift with ↓ is still ↓.
+  t.app.offer('ts-b', [{ id: 'o:1', label: 'One' }, { id: 'o:2', label: 'Two' }, { id: 'o:3', label: 'Three' }]); t.clock.advance(20)
+  t.key('\x1b[A')
+  check('choice: ↑ goes back', t.app.choice?.index === 2, String(t.app.choice?.index))
+  t.key('\x1b[1;2B')
+  check('choice: shift+↓ goes forward, as ↓ does', t.app.choice?.index === 0, String(t.app.choice?.index))
+  t.app.offer('ts-b', Array.from({ length: 12 }, (_, i) => ({ id: `o:${i}`, label: `Option ${i + 1}` }))); t.clock.advance(20)
+  check('choice: the digits named are the ones that work, 1–9', /1–9 pick/.test(t.term.screen.row(29)), t.term.screen.row(29))
+  t.app.offer('ts-b', [{ id: 'o:only', label: 'OK' }]); t.clock.advance(20)
+  check('choice: one option, no range of digits', !/1–1/.test(t.term.screen.row(29)) && /↵ choose/.test(t.term.screen.row(29)), t.term.screen.row(29))
+  // A message whose first line is blank still has a title, and a long one is cut with an ellipsis.
+  t.app.message('ts-c', `\n${en.approvalNeeded('x'.repeat(200))}`, null, false)
+  t.app.offer('ts-c', allowDeny('c1')); t.clock.advance(20)
+  const long = t.term.screen.text().split('\n').filter((l) => l.includes('I need permission')).at(-1) ?? '(none)'
+  check('approval: the first line with words is the title, cut with …', /⚠ I need permission: x+…/.test(long), long.slice(0, 60))
+  t.key('1')
+
+  // Something that arrives while the shortcuts are open closes them; the panel, when it had the keys, gives them back.
+  t.app.turnEnded(); t.clock.advance(20)
+  t.key('?'); t.clock.advance(20)
+  t.app.offer('ts-b', allowDeny('b4')); t.clock.advance(20)
+  check('shortcuts: an approval closes them', !t.term.screen.text().includes('Shortcuts') && /esc deny/.test(t.term.screen.row(29)), t.term.screen.row(29))
+  t.key('1'); t.clock.advance(20)
+  t.app.setPanel([{ id: 'a', label: 'idle a', mode: 'one-shot', status: 'idle', since: null, settledMs: 0, tokens: 0 }], [])
+  t.key('\t'); t.clock.advance(20)
+  const focused = t.app.focus
+  t.app.offer('ts-b', allowDeny('b5')); t.clock.advance(20)
+  check('approval: one arriving while the panel has the keys takes them', focused === 'panel' && t.app.focus === 'editor', `${focused} → ${t.app.focus}`)
+  t.key('\r')
+  check('approval: and ↵ answers it', t.actions.at(-1) === 'approval:allow:b5', JSON.stringify(t.actions.at(-1)))
+  t.key('\t'); t.clock.advance(20)
+  t.key('?'); t.clock.advance(20)
+  check('shortcuts: ? with the panel focused does not open them', !t.term.screen.text().includes('Shortcuts'), String(t.app.focus))
+  t.app.editor.set(''); t.app.setPanel([], []); t.clock.advance(20)
+
+  // Two turns, the second queued by another terminal: the time is the second's own from its start.
+  t.app.turnStarted(); t.app.turnStarted()
+  t.clock.advance(15000)
+  t.app.turnEnded()
+  t.clock.advance(2200)
+  const second = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: the next turn\'s time starts at its start', /\(2s · esc to interrupt\)/.test(second), second)
+  // shift+tab while a turn runs: the effort label is hidden, so the step says itself.
+  // A terminal that attaches mid-turn learns the effort; nothing was stepped.
+  t.app.setStatus({ effort: 'low' }); t.clock.advance(20)
+  check('working: the effort learned while a turn runs is not called a step', !t.term.screen.text().includes('from the next turn'), t.term.screen.text().split('\n').find((l) => l.includes('✻')))
+  t.app.effortStepped('high'); t.clock.advance(20)
+  check('working: an effort step while a turn runs is shown', t.term.screen.text().includes('effort high from the next turn'), t.term.screen.text().split('\n').find((l) => l.includes('✻')))
+  t.app.turnEnded(); t.clock.advance(20)
+  // A stop withdraws the turn waiting behind it; its end is not a next turn's start, and the end of the stopped
+  // one is: a turn queued after the stop has its own time.
+  t.app.turnStarted(); t.app.turnStarted()
+  t.clock.advance(4000)
+  t.key('\x1b'); t.clock.advance(60)
+  t.app.turnEnded()
+  t.clock.advance(1000)
+  const stopped = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: the end of a turn a stop withdrew does not restart the stopped turn\'s time', /\(5s/.test(stopped), stopped)
+  t.app.turnStarted()
+  t.clock.advance(10000)
+  t.app.turnEnded()
+  t.clock.advance(1200)
+  const after = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: after a withdrawn turn, the turn queued next has its own time', /\(1s · esc to interrupt\)/.test(after), after)
+  t.app.turnEnded(); t.clock.advance(20)
+  // The link drops between a stop and the withdrawn turn's end: the gateway's count on reconnect is the truth,
+  // and a turn queued after it starts with its own time.
+  t.app.turnStarted(); t.app.turnStarted()
+  t.key('\x1b'); t.clock.advance(60)
+  t.app.setBusy(1)
+  t.app.turnStarted()
+  t.clock.advance(6000)
+  t.app.turnEnded()
+  t.clock.advance(1200)
+  const reconnected = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: a reconnect forgets the turns a stop withdrew', /\(1s · esc to interrupt\)/.test(reconnected), reconnected)
+  // The panel has the keys: esc gives them back to the input and stops nothing, so the line does not offer it.
+  t.app.setPanel([{ id: 'a', label: 'idle a', mode: 'one-shot', status: 'idle', since: null, settledMs: 0, tokens: 0 }], [])
+  t.key('\t'); t.clock.advance(20)
+  const panelled = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: with the panel focused, no "esc to interrupt"', t.app.focus === 'panel' && !panelled.includes('esc to interrupt'), `${t.app.focus} ${panelled}`)
+  t.key('\x1b'); t.clock.advance(60); t.app.setPanel([], [])
+  // Text selected: esc clears it first, so the line does not offer a stop either.
+  const word = t.term.screen.find('I need permission')
+  t.key(SGR(0, word.col, word.row)); t.key(SGR(32, word.col + 6, word.row)); t.key(SGR(0, word.col + 6, word.row, true)); t.clock.advance(20)
+  const selecting = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('working: with text selected, no "esc to interrupt"', !selecting.includes('esc to interrupt'), selecting)
+  t.key('\x1b'); t.clock.advance(60)
+  t.app.turnEnded(); t.clock.advance(20)
+  // A first line that is the warning sign alone: the title is the next line with words.
+  t.app.message('ts-d', '⚠️\nI need permission: ls', null, false)
+  t.app.offer('ts-d', allowDeny('d1')); t.clock.advance(20)
+  const lone = t.term.screen.text().split('\n').filter((l) => l.includes('⚠')).at(-1) ?? '(none)'
+  check('approval: a sign alone on the first line is skipped', /⚠ I need permission: ls/.test(lone), lone)
+  t.key('2'); t.clock.advance(20)
+}
+
+// 77c. The shortcuts in as many columns as fit, and no more rows than the screen has.
+{
+  const wide = setup({ cols: 100, rows: 30 })
+  wide.key('?'); wide.clock.advance(20)
+  const lines = wide.term.screen.text().split('\n')
+  const start = lines.findIndex((l) => l.includes('Shortcuts'))
+  const shown = lines.slice(start + 1).findIndex((l) => l.trim() === '' || /esc close/.test(l))
+  check('shortcuts: in columns as wide as their own items, five rows at 100 columns', start !== -1 && shown > 0 && shown <= 5, `${shown} rows`)
+  const small = setup({ cols: 40, rows: 14 })
+  small.key('?'); small.clock.advance(20)
+  const text = small.term.screen.text()
+  check('shortcuts: on a small screen they stop above the hint, and say how many are not shown', /esc close/.test(small.term.screen.row(13)) && /\+\d+ more/.test(text) && text.includes('Shortcuts'), text.split('\n').slice(-8).join(' | '))
+  const tiny = setup({ cols: 40, rows: 6 })
+  tiny.key('?'); tiny.clock.advance(20)
+  const none = setup({ cols: 40, rows: 5 })
+  none.key('?'); none.clock.advance(20)
+  check('shortcuts: with no room, nothing, and the hint stays', /esc close/.test(none.term.screen.row(4)) && !none.term.screen.text().includes('Shortcuts'), none.term.screen.text().split('\n').join(' | '))
+  check('shortcuts: with room for one line, the title alone, and the hint stays', /esc close/.test(tiny.term.screen.row(5)) && tiny.term.screen.text().includes('Shortcuts'), tiny.term.screen.text().split('\n').join(' | '))
 }
 
 const failed = results.filter((r) => !r.ok)

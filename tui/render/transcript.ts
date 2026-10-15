@@ -120,6 +120,8 @@ export class Transcript {
     const maxTop = Math.max(0, lines.length - height)
     if (this.follow) this.top = maxTop
     this.top = Math.max(0, Math.min(this.top, maxTop))
+    // At the bottom again — the viewport grew, or what was hidden fits — is following again: nothing is unseen.
+    if (this.top >= maxTop) { this.follow = true; this.unseen = 0 }
     return lines.slice(this.top, this.top + height)
   }
 

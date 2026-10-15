@@ -32,7 +32,7 @@ const { Connection, discover, lookup } = await import('../dist/tui/client.js')
 const { bind, createCommands, parseArgs, resumeHint, route, usage } = await import('../dist/tui/cli.js')
 const USAGE = usage()
 const { createLocalTransport } = await import('../dist/transports/local.js')
-const { setLanguage, t: words } = await import('../dist/tui/strings.js')
+const { t: words } = await import('../dist/tui/strings.js')
 const { fakeTerminal } = await import('./tui-fakes.ts')
 
 const results = []
@@ -80,7 +80,8 @@ async function until(predicate, ms = 3000) {
   const pickers = []
   const closed = []
   const switched = []
-  const modelApp = { stop: () => {}, notice: (text, kind) => notices.push([kind, text]), clear: () => {}, setStatus: (s) => statusSeen.push(s), status: {}, openPicker: (spec) => pickers.push(spec), closePicker: (spec) => closed.push(spec) }
+  const stepped = []
+  const modelApp = { stop: () => {}, notice: (text, kind) => notices.push([kind, text]), clear: () => {}, setStatus: (s) => statusSeen.push(s), status: {}, openPicker: (spec) => pickers.push(spec), closePicker: (spec) => closed.push(spec), effortStepped: (e) => stepped.push(e) }
   const link = { conversation: 'c-1', tenant: undefined, switchTo: (c, tenant) => switched.push([c, tenant]), send: (f) => { sent.push(f); return true } }
   const cmds = createCommands(modelApp, link)
   cmds.intercept('/model 1')
@@ -124,6 +125,7 @@ async function until(predicate, ms = 3000) {
   const quiet = notices.length
   bind(modelApp, { type: 'model', current: { ...current, effort: 'low' }, cause: 'effort' }, cmds)
   check('effort: a step shows in the status line only, not as a line in the transcript', notices.length === quiet && statusSeen.at(-1)?.effort === 'low', JSON.stringify(notices.slice(quiet)))
+  check('effort: and the app is told it was a step (said while a turn runs), a /model answer not', JSON.stringify(stepped) === '["low"]', JSON.stringify(stepped))
   cmds.stepEffort()
   check('effort: shift+tab asks the gateway for the next effort', JSON.stringify(sent.at(-1)) === JSON.stringify({ type: 'effort', step: 1 }), JSON.stringify(sent.at(-1)))
   // A model picker open when the model or effort changes under it (another terminal, a click on the
@@ -252,10 +254,7 @@ async function until(predicate, ms = 3000) {
   bind(app, { type: 'panel', agents: [], jobs: [], usage: { tokens: 8100, contextPct: 23.4 } })
   bind(app, { type: 'ready', version: 1, conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
   bind(app, { type: 'ready', version: 1, language: 'zh', conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
-  check('language: the gateway\'s language is the terminal\'s once ready', words().hints.idle(false).startsWith('↵ 发送') && await until(() => term.screen.text().includes('↵ 发送')))
-  bind(app, { type: 'ready', version: 1, language: 'en', conversation, workspace: '/home/agent', tenant: null, model: 'deepseek-v4.1' })
-  check('language: and back, when it says so', await until(() => term.screen.text().includes('↵ send')))
-  setLanguage('en')
+  check('language: a gateway that names another language (an older one) leaves the terminal in English', words().hints.idle(false) === '? for shortcuts' && await until(() => term.screen.text().includes('? for shortcuts')) && !term.screen.text().includes('发送'))
   await until(() => term.screen.text().includes('8.1k tok'))
   check('usage: the conversation\'s tokens and context fill the status line', /ctx ▰▰▱▱▱▱▱▱ 23% · 8\.1k tok/.test(term.screen.text()), term.screen.text().split('\n').find((l) => l.includes('tok')))
   check('model: the gateway\'s model is named in the info line', term.screen.text().includes('deepseek-v4.1 · /home/agent'))
@@ -385,8 +384,8 @@ for (const platform of ['win32', 'darwin']) {
   check('/sessions: the list is shown, numbered, with titles', await until(() => /1\. 오늘 날씨 어때/.test(term.screen.text()) && /2\. 배포 일정 정리해줘/.test(term.screen.text())))
   check('/sessions: the command itself is not echoed as a message', !term.screen.text().includes('› /sessions'))
   const listRow = term.screen.find('2. 배포 일정 정리해줘')?.row ?? -1
-  const boxRow = term.screen.find('╭')?.row ?? -1
-  check('/sessions: the list sits just above the input box, where the eye is', listRow >= 0 && boxRow > listRow && boxRow - listRow <= 4, `list row ${listRow}, box row ${boxRow}`)
+  const hintRow = term.screen.text().split('\n').findIndex((l) => l.includes('↑↓ pick'))
+  check('/sessions: the list is at the bottom in the input box\'s place, right above the hint line', listRow >= 0 && term.screen.find('╭') === null && hintRow > listRow && hintRow - listRow <= 4, `list row ${listRow}, hint row ${hintRow}`)
   term.type('\x1b[B\r')
   check('/sessions: ↓ then ↵ resumes the second one', await until(() => connection.conversation === 'conv-a' && app.status.session === 'conv-a'))
   check('/resume: the earlier messages are shown', await until(() => term.screen.text().includes('earlier in this conversation') && term.screen.text().includes('staging 먼저.')))

@@ -24,17 +24,17 @@ Discord's and Telegram's "typing…" — so the answer is the only notification.
 
 `language` in the deepbot row — `en` (the default), `ko` or `zh` — sets what the bot itself says:
 approval requests and their buttons, stop and failure notices, the working message and Slack's
-status, the usage report, and everything `dsh` draws. `dsh` starts in its environment's language
-(`LC_ALL`, `LC_MESSAGES`, `LANG`, the first one set) and switches to the gateway's once connected.
-Any other value is a config error, not a quiet English. It does not set the language of the
+status, the usage report. `dsh`'s own interface — hints, labels, pickers, the status line, what the
+gateway answers it — is English whatever the setting, as Claude Code's and pi's are; the bot's notices
+in it follow the setting. Any other value is a config error, not a quiet English. It does not set the language of the
 answers: the model follows the persona in `SOUL.md` and the person it is talking to.
 
 The words people type are understood in all three whatever it is set to — stop, usage, allow and
 deny above — and a one-word message may end in `.`, `!`, `?`, `~`, `。`, `！` or `？`. Recall reads
 Chinese, which has no spaces, by overlapping pairs of characters, and the check for text that tries
 to give orders knows the three languages' shapes. The installer asks for the language, offering the
-environment's. The catalogs are `messages.ts` (the bot) and `tui/strings.ts` (the terminal);
-`test/i18n.test.ts` fails when a language misses a key or is a copy of another.
+environment's. The catalog is `messages.ts`; `test/i18n.test.ts` fails when a language misses a key or
+is a copy of another. The terminal's own words, `tui/strings.ts`, are English only.
 
 ## What it is
 
@@ -520,17 +520,23 @@ alone until `dsh gateway setup` adds a messenger; from a clone, run `node dist/t
 **What it shows.** What the person said sits on a band across the pane; the answer starts at a white
 `●`; a tool call's `●` blinks while it runs and turns green or red with its result (grey when the turn
 ended without one); thinking is in sky blue, its label swept by a light while it streams, and folds to
-one line when the answer starts. A blank line separates the steps of a turn and a rule separates one
-exchange from the next. The status line says what is happening — `thinking…`, `running bash…`,
-`working…` — under the same light. A message sent while a turn runs waits above the input, tagged
-queued, and joins the transcript when its turn starts. Under `NO_COLOR` there is no band and nothing
-sweeps.
+one line when the answer starts. A blank line separates the steps of a turn; nothing rules one exchange
+off from the next. While a turn runs the status line is one indicator, as Claude Code's: what is
+happening, for how long, and how to stop it — `✻ Thinking… (12s · esc to interrupt)`, `Running bash…`,
+`Working…` — under the same light; `esc to interrupt` is left out while esc does something else (answers
+an approval no, closes a list). A message sent while a turn runs waits above the input, tagged queued,
+and joins the transcript when its turn starts. The hint line under the input box is `? for shortcuts`;
+`?` on an empty box shows the keys below in its place, in as many columns as fit. An approval shows the
+request's first line and its options numbered: `↑↓`, a digit or a click and `↵` answer it, `esc` answers
+no (with text selected, esc clears the selection first). A question or a list opened over an approval has
+the keys until it closes. Under `NO_COLOR` there is no band and nothing sweeps.
 
 | Keys | |
 |---|---|
 | `↵` / `alt+↵` | send / new line |
-| `shift+tab`, or a click on it | step this conversation's reasoning effort (shown at the left of the status line) |
-| `esc` | stop the running turn (what was waiting behind it comes back to the input); in a view, back to the conversation |
+| `shift+tab`, or a click on it | step this conversation's reasoning effort (shown at the left of the status line between turns; during one, the step is shown for a moment) |
+| `esc` | stop the running turn (what was waiting behind it comes back to the input); on an approval, answer no; in a view, back to the conversation |
+| `?` on an empty box | show the shortcuts (`esc` or any key closes them) |
 | `ctrl+c` twice, `ctrl+d` | quit (the terminal is always restored) |
 | wheel, `PgUp`/`PgDn` | scroll; drag selects and copies (pbcopy locally, OSC 52 over SSH) |
 | `tab`, `↑↓`, `↵`, or a click | the agent panel: open a subagent or a shell |
@@ -538,7 +544,8 @@ sweeps.
 | `/` or `@`, then `↑↓` and `tab` | complete a command, or a file of the workspace (`↵` or a click runs a command that takes nothing) |
 | a click in the input box | puts the cursor there |
 | `ctrl+r` | search what was typed before (`ctrl+r` again: older; `↵` keeps it to edit; `esc` cancels) |
-| `ctrl+o` | unfold or fold the thinking and the tool results |
+| `ctrl+o` | unfold or fold the tool results |
+| `ctrl+t` | unfold or fold the thinking |
 
 Commands: `/new`, `/sessions`, `/resume <n|id>`, `/tenant [name]`, `/interview <topic>`, `/model`,
 `/usage`, `/clear`, `/help`, `/quit` (or `/exit`). Anything else that starts with `/` is sent as text. What is sent or run
@@ -549,15 +556,22 @@ What appears besides the conversation:
 - **Answers stream** as the model writes them (from `agent/assistant-stream`), with Markdown drawn
   for a terminal: tables, code highlighted by token class for the common languages, and links you
   can click (OSC 8; only http(s) and mailto). The posted reply then takes the streamed text's place.
-- **Tool calls** show as the turn makes them: the tool's own title for the call (from the harness's
-  tool registry), an edit's changed lines, and the result under it — a few lines, all on `ctrl+o`.
-- **Thinking** is shown apart from the answer and folded once the answer starts, when the model
-  streams its reasoning (`reasoning-delta`); the route this deployment uses sends none.
-- **The input box follows the conversation.** On a short one it sits right under the last line, and
-  it stays at the bottom once the screen is full, so what a command shows is where the eye already is.
-- **Approvals** are buttons above the input box; **a turn's questions** (`ask_user_question`, a plan
-  review) open there too — arrows and Enter, Space on multi-select, or type your own answer.
-- **`/model` and `/sessions` open a picker** above the input box: `↑↓` or the wheel to move, a digit to
+- **Tool calls** show as Claude Code draws them: `● Name(what it was asked)` (the title from the
+  harness's tool registry), the result under `⎿` — a read as `Read N lines`, a search as `Found N lines`,
+  a list as `Found N files`, a shell's last five lines, anything else its first three, those two with
+  `… +N lines (ctrl+o to expand)`; a failure as `Error: …` in red. An edit says `Updated <path> with A
+  additions and R removals`, its changed lines on green and red. No rule between exchanges, no caret on
+  streaming text; a turn the person stops is marked `⎿ Interrupted`.
+- **Thinking** is shown apart from the answer and folds once the answer starts to `∴ Thought for Ns`,
+  opened with `ctrl+t` (apart from the tool output's `ctrl+o`, as pi has it), when the model streams its
+  reasoning (`reasoning-delta`); the route this deployment uses sends none.
+- **The input box keeps the bottom rows.** The conversation sits right above it, a short one with the
+  empty rows over it, so what is new and what a command shows are where one types. A choice — `/model`'s
+  or `/sessions`' list, a question's options, an approval — takes the box's place while nothing is typed,
+  as in Claude Code; a keystroke of text brings the box back, and so does "type your own…".
+- **Approvals** and **a turn's questions** (`ask_user_question`, a plan review) open in the input box's
+  place — arrows and Enter, Space on multi-select, or type (or paste) your own answer.
+- **`/model` and `/sessions` open a picker** in the input box's place: `↑↓` or the wheel to move, a digit to
   jump, `↵` or a click to pick, `esc` to close; typing closes it and goes to the input box. `/resume <n>`
   still works typed.
 - **The agent panel** lists the turn's subagents (running ones first, with their time and tokens)

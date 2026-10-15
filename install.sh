@@ -22,7 +22,7 @@ set -euo pipefail
 # Helpers at the top level, so a test can source this file (DEEPBOT_INSTALL_SOURCED=1) and call them.
 
 # The language a new profile starts in: the environment's, read in the POSIX order (LC_ALL, LC_MESSAGES,
-# LANG), the first one set deciding. English when it names none of the three. The plugin reads the same way.
+# LANG), the first one set deciding. English when it names none of the three.
 env_language() {
   local v
   for v in "${LC_ALL:-}" "${LC_MESSAGES:-}" "${LANG:-}"; do
@@ -370,7 +370,7 @@ new_profile=0; [ -e "$profile_dir" ] || new_profile=1
 # Asked, and checked, before init.sh writes the profile: a refused answer used to leave a profile behind
 # that a rerun then kept as it was. No messenger is asked about: those are `dsh gateway setup`'s.
 if [ "$new_profile" -eq 1 ]; then
-  ask language "language of the bot's own messages and of dsh (en / ko / zh)?" "$(env_language)"
+  ask language "language of the bot's own messages (en / ko / zh)?" "$(env_language)"
   case "$language" in en|ko|zh) ;; *) die "unknown language: $language (en, ko or zh)" ;; esac
   ask provider "model provider: deepseek (DeepSeek's own API, the default), or opengateway / custom?" deepseek
   case "$provider" in
