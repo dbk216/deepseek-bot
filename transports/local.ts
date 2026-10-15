@@ -8,9 +8,9 @@
  * Only the owner can connect: the socket is created 0600 in the deployment's state directory (or a
  * per-user temporary directory when that path is too long for a socket). On Windows it is a named
  * pipe, whose default ACL lets only the owner, SYSTEM and administrators write; any user of the
- * machine may open it read-only, which gets nothing (nothing is sent before a hello) but holds one
- * of the terminal places. A reply that finds no terminal is kept, within a bound, until its
- * conversation reconnects.
+ * machine may open it read-only, which gets nothing (nothing is sent before a hello), and such a
+ * connection gives way to a terminal when the places are full. A reply that finds no terminal is
+ * kept, within a bound, until its conversation reconnects.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -101,6 +101,8 @@ interface Client {
   panel: string
   /** What that panel offered: the only subagents and jobs this terminal may open or act on. */
   offered: { agents: Set<string>; jobs: Map<string, string> }
+  /** Whether it has sent anything. A terminal says hello at once; a read-only opener never can. */
+  spoke: boolean
 }
 
 export function createLocalTransport(host: LocalHost): LocalTransport {
@@ -443,12 +445,20 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
   }
 
   function attach(socket: Socket): void {
-    if (clients.size >= MAX_CLIENTS) { socket.end(encode({ type: 'error', code: 'busy', message: say.tooManyTerminals })); return }
-    const client: Client = { socket, conversation: null, view: null, panel: '', offered: { agents: new Set(), jobs: new Map() } }
+    if (clients.size >= MAX_CLIENTS) {
+      // Full: the oldest connection that has sent nothing gives way. On Windows any user may open
+      // the pipe read-only and never speak, and enough of those would otherwise keep the owner out.
+      const silent = [...clients].find((c) => !c.spoke)
+      if (silent === undefined) { socket.end(encode({ type: 'error', code: 'busy', message: say.tooManyTerminals })); return }
+      clients.delete(silent)
+      silent.socket.destroy()
+    }
+    const client: Client = { socket, conversation: null, view: null, panel: '', offered: { agents: new Set(), jobs: new Map() }, spoke: false }
     const reader = new FrameReader()
     clients.add(client)
     socket.setEncoding('utf8')
     socket.on('data', (chunk: string) => {
+      client.spoke = true
       for (const r of reader.push(chunk)) {
         if (r.error !== undefined) refuse(client, 'bad-frame', r.error)
         else onFrame(client, r.frame!).catch((e) => log(`local: frame failed: ${String((e as Error)?.message ?? e)}`))
@@ -471,8 +481,13 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
     // Windows listens only on named pipes (a file path is EACCES), in a namespace every user of the
     // machine shares. A name worked out from the path could be taken first, and a terminal
     // reconnecting to it would talk to whoever holds it, so the name is new at every start; the
-    // terminal finds it through the discovery file.
-    if (process.platform === 'win32') return wanted.startsWith('\\\\.\\pipe\\') ? wanted : `\\\\.\\pipe\\deepbot-tui-${randomUUID()}`
+    // terminal finds it through the discovery file. A configured pipe name is used as it is.
+    if (process.platform === 'win32') {
+      if (wanted.toLowerCase().startsWith('\\\\.\\pipe\\')) return wanted
+      const pipe = `\\\\.\\pipe\\deepbot-tui-${randomUUID()}`
+      if (typeof cfg.tuiSocket === 'string' && cfg.tuiSocket !== '') log(`local: tuiSocket ${wanted} is not a named pipe, which is all Windows listens on; using ${pipe}`)
+      return pipe
+    }
     if (Buffer.byteLength(wanted) <= MAX_SOCKET_PATH) return wanted
     // Shorter, and still the owner's own: beside the discovery files. A shared temporary directory
     // (Linux's /tmp) would let another user take a predictable name first.

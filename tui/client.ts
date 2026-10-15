@@ -191,3 +191,19 @@ export function discover(name: string | undefined, env: Record<string, string | 
   if (live.length === 0) return { error: t().noGateway(dir) }
   return { error: t().severalGateways(live.map((d) => d.name)) }
 }
+
+/**
+ * How a terminal that found its gateway through discovery reaches it on every attempt: looked up
+ * again by name, since a restarted gateway may listen somewhere else (on Windows its pipe is named
+ * anew). With no live gateway registered, the last path is dialed again as before, except on
+ * Windows: another user may hold that pipe name by then, so nothing is dialed.
+ */
+export function lookup(name: string, last: string, platform: string = process.platform): () => string | null {
+  let known = last
+  return () => {
+    let found: Discovery | { error: string }
+    try { found = discover(name) } catch (e) { found = { error: String((e as Error)?.message ?? e) } }
+    if (!('error' in found)) return (known = found.socket)
+    return platform === 'win32' ? null : known
+  }
+}

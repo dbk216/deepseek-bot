@@ -28,9 +28,7 @@ const listenPath = (stateDir) => process.platform === 'win32'
   : join(stateDir, 'tui.sock')
 
 const { App } = await import('../dist/tui/app.js')
-const { Connection, discover } = await import('../dist/tui/client.js')
-// How the terminal finds the gateway on every attempt, as tui/main.ts does: through discovery.
-const viaDiscovery = () => { const d = discover('default'); return 'error' in d ? null : d.socket }
+const { Connection, discover, lookup } = await import('../dist/tui/client.js')
 const { bind, createCommands, parseArgs, resumeHint, route, usage } = await import('../dist/tui/cli.js')
 const USAGE = usage()
 const { createLocalTransport } = await import('../dist/transports/local.js')
@@ -233,7 +231,8 @@ async function until(predicate, ms = 3000) {
     onExit: () => {},
   })
   connection = new Connection({
-    socketPath: viaDiscovery,
+    // As tui/main.ts does: looked up through discovery on every attempt.
+    socketPath: lookup('default', listenPath(stateDir)),
     onFrame: (f) => bind(app, f),
     onState: (state, detail) => {
       if (state === 'connecting') app.setStatus({ connected: false, link: '연결 중…' })
@@ -287,9 +286,11 @@ async function until(predicate, ms = 3000) {
   rmSync(stateDir, { recursive: true, force: true })
 }
 
-// 3b. A reconnect looks the gateway up again (on Windows its pipe is named anew at every start),
-// and dials nothing while no live gateway is registered: an old name may be someone else's by then.
-{
+// 3b. A terminal that found its gateway through discovery looks it up again on every reconnect (on
+// Windows the pipe is named anew at every start). With none registered, Windows dials nothing, since
+// an old pipe name may be someone else's by then; elsewhere the last path is dialed again, as before.
+// Both rules run here whatever the platform: lookup takes the platform as an argument.
+for (const platform of ['win32', 'darwin']) {
   const first = mkdtempSync(join(tmpdir(), 'deepbot-move-a-'))
   const second = mkdtempSync(join(tmpdir(), 'deepbot-move-b-'))
   const gateway = async (stateDir) => {
@@ -300,30 +301,47 @@ async function until(predicate, ms = 3000) {
   let local = await gateway(first)
   const dialed = []
   const connection = new Connection({
-    socketPath: viaDiscovery,
+    socketPath: lookup('default', listenPath(first), platform),
     dial: (path) => { dialed.push(path); return connect(path) },
     onFrame: () => {},
     onState: () => {},
   })
   connection.start()
-  check('lookup: connects to the gateway discovery names', await until(() => connection.connected) && dialed[0] === listenPath(first))
+  check(`lookup (${platform}): connects to the gateway discovery names`, await until(() => connection.connected) && dialed[0] === listenPath(first))
   await local.close()
   await until(() => !connection.connected)
   await sleep(600)
-  check('lookup: with no live gateway registered, no old name is dialed', dialed.length === 1, JSON.stringify(dialed))
+  if (platform === 'win32') check('lookup (win32): with no live gateway registered, no old name is dialed', dialed.length === 1, JSON.stringify(dialed))
+  else check(`lookup (${platform}): with no live gateway registered, the last path is dialed again`, dialed.length > 1 && dialed.every((p) => p === dialed[0]), JSON.stringify(dialed))
   local = await gateway(second)
-  check('lookup: a gateway back somewhere else is found and reconnected to', await until(() => connection.connected, 6000) && dialed.at(-1) === listenPath(second) && dialed.at(-1) !== dialed[0], JSON.stringify(dialed))
+  check(`lookup (${platform}): a gateway back somewhere else is found and reconnected to`, await until(() => connection.connected, 6000) && dialed.at(-1) === listenPath(second) && dialed.at(-1) !== dialed[0], JSON.stringify(dialed))
   connection.close()
   await local.close()
-
-  // A fixed path is still dialed as given.
-  const states = []
-  const fixed = new Connection({ socketPath: join(first, 'nothing.sock'), onFrame: () => {}, onState: (s) => states.push(s), setTimer: () => 0, clearTimer: () => {} })
-  fixed.start()
-  check('lookup: a path given as it is is dialed, and its failure retried', await until(() => states.includes('disconnected')))
-  fixed.close()
   rmSync(first, { recursive: true, force: true })
   rmSync(second, { recursive: true, force: true })
+}
+{
+  // A discovery directory that cannot be read is no gateway, not a crash inside the retry timer.
+  const home = mkdtempSync(join(tmpdir(), 'deepbot-unreadable-'))
+  mkdirSync(join(home, 'run'))
+  writeFileSync(join(home, 'run', 'deepbot-tui'), 'a file where the directory should be')
+  const saved = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  let win = 'threw', other = 'threw'
+  try { win = lookup('default', '/last.sock', 'win32')(); other = lookup('default', '/last.sock', 'darwin')() } catch { /* the defect */ }
+  process.env.DSH_HOME = saved
+  check('lookup: an unreadable discovery directory is no live gateway', win === null && other === '/last.sock', `${win} ${other}`)
+  rmSync(home, { recursive: true, force: true })
+
+  // A path given as it is (--socket) is dialed as given.
+  const dir = mkdtempSync(join(tmpdir(), 'deepbot-fixed-'))
+  const path = join(dir, 'nothing.sock')
+  const states = [], dials = []
+  const fixed = new Connection({ socketPath: path, dial: (p) => { dials.push(p); return connect(p) }, onFrame: () => {}, onState: (s) => states.push(s), setTimer: () => 0, clearTimer: () => {} })
+  fixed.start()
+  check('lookup: a path given as it is is dialed as given, and its failure retried', await until(() => states.includes('disconnected')) && dials[0] === path, JSON.stringify(dials))
+  fixed.close()
+  rmSync(dir, { recursive: true, force: true })
 }
 
 // 4. Commands: handled by the terminal, never echoed or sent as a message.

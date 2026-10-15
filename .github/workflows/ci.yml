@@ -70,6 +70,7 @@ jobs:
       #     filesystem; whether those checks hold on Windows is not yet verified.
       #   gateway, install, launcher, profile, tui-app: launchd, bash, file modes and the macOS
       #     harness app, which a Windows port has to replace rather than pass.
+      #   confined-runner: the Seatbelt sandbox, which has no Windows counterpart yet.
       - run: node test/reconnect.test.ts
       - run: node test/recall.test.ts
       - run: node test/notes.test.ts

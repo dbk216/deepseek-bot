@@ -111,6 +111,15 @@ the caveat about version numbers is at the bottom.
 
 ### Added
 
+- **A first step on Windows.** It builds, checkouts are LF everywhere (`.gitattributes`), and CI runs
+  the suites that pass on `windows-latest`. The terminal's local transport listens on a named pipe,
+  named anew at every start: that namespace is shared by every user of the machine, and a name worked
+  out from the path could be taken first. So `dsh` looks its gateway up through the discovery file on
+  every reconnect, on every platform; with none registered it dials the last path again, except on
+  Windows. When all 16 terminal places are taken, a connection that has sent nothing gives way, so
+  read-only opens of the pipe cannot keep the owner out. The installer, services, sandbox and the tool
+  gate's link checks are not ported. The health probe's path to `rotate-logs.sh` no longer breaks on a
+  path with spaces or non-ASCII characters (`fileURLToPath`).
 - **The installer can set up another model provider.** DeepSeek's own API stays the default and needs
   nothing new: the installer's provider question defaults to it, and an existing install keeps its
   `DEEPSEEK_API_KEY` and route. As options it offers OpenGateway or a custom OpenAI-compatible

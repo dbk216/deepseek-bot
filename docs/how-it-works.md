@@ -505,6 +505,9 @@ whole row, so restate what you keep:
 
 The gateway listens on `<stateDir>/tui.sock` (owner-only, 0600; a path over 103 bytes falls back to a
 short one beside the discovery files) and records it in `$DSH_HOME/run/deepbot-tui/<tuiName>.json`.
+On Windows it listens on a named pipe, `\\.\pipe\deepbot-tui-<uuid>`, named anew at every start,
+because every user of the machine shares that namespace; `dsh` looks it up in the discovery file on
+every reconnect.
 A terminal may open, message or stop only the subagents and jobs its own panel offered, and press
 only its own conversation's buttons.
 

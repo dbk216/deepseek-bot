@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { constants } from 'node:os'
 import { App } from './app.js'
-import { Connection, discover } from './client.js'
+import { Connection, discover, lookup } from './client.js'
 import { bind, commandInfo, createCommands, HARNESS_CLI, parseArgs, resumeHint, route, usage, type Commands } from './cli.js'
 import { envLanguage } from '../i18n.js'
 import { setLanguage, t } from './strings.js'
@@ -56,10 +56,7 @@ function main(): void {
   if (socketPath === undefined) {
     const found = discover(parsed.name)
     if ('error' in found) { process.stderr.write(`dsh: ${found.error}\n`); process.exit(2) }
-    // Looked up again on every reconnect: a restarted gateway may listen somewhere else (on Windows
-    // its pipe is named anew), and a name it no longer holds is never dialed.
-    const name = found.name
-    socketPath = () => { const again = discover(name); return 'error' in again ? null : again.socket }
+    socketPath = lookup(found.name, found.socket)
   }
 
   let connection: Connection | null = null

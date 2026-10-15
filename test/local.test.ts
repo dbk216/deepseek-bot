@@ -84,7 +84,7 @@ function hostFor(stateDir, cfg = {}) {
   const actions = []
   await local.connect({ onMessage: (m) => inbound.push(m), onAction: (a) => actions.push(a), onStatus: () => {} })
   const socketPath = listenPath(stateDir)
-  check('local: listens on <stateDir>/tui.sock', existsSync(socketPath) && local.hasSocket() && local.ready())
+  check('local: listens (<stateDir>/tui.sock, or a named pipe on Windows)', existsSync(socketPath) && local.hasSocket() && local.ready())
   // A Windows pipe has no mode bits; its default ACL is what keeps other users from writing to it.
   // Its name is in a namespace they share, so it must not be one they could work out and take first.
   if (process.platform === 'win32') check('local: on Windows, a pipe named anew, not from the path', /^\\\\\.\\pipe\\deepbot-tui-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(socketPath), socketPath)
@@ -190,6 +190,62 @@ function hostFor(stateDir, cfg = {}) {
   if (process.platform === 'win32') check('long path: a pipe, whatever the length', long.hasSocket() && where.startsWith('\\\\.\\pipe\\deepbot-tui-') && !logs.some((l) => l.includes('too long')), where)
   else check('long path: falls back to a short per-user path and says so', long.hasSocket() && Buffer.byteLength(where) <= 103 && logs.some((l) => l.includes('too long')), where)
   await long.close()
+  rmSync(stateDir, { recursive: true, force: true })
+}
+
+// Full: a connection that has sent nothing gives way to a terminal, so connections that never speak
+// (on Windows, any user may open the pipe read-only) cannot keep the owner out.
+{
+  const stateDir = mkdtempSync(join(tmpdir(), 'deepbot-full-'))
+  const { host } = hostFor(stateDir)
+  const local = createLocalTransport(host)
+  await local.connect({ onMessage: () => {}, onStatus: () => {} })
+  const path = listenPath(stateDir)
+  const silent = []
+  for (let i = 0; i < 16; i++) {
+    const s = connect(path)
+    const entry = { closed: false }
+    s.on('close', () => { entry.closed = true })
+    s.on('error', () => {})
+    await new Promise((r) => s.once('connect', r))
+    silent.push({ socket: s, entry })
+  }
+  await sleep(100)
+  const owner = client(path)
+  await owner.opened
+  owner.send({ type: 'hello', version: PROTOCOL_VERSION })
+  const ready = await owner.waitFor((f) => f.type === 'ready' || f.type === 'error')
+  check('full: sixteen silent connections do not keep a terminal out', ready?.type === 'ready', JSON.stringify(ready))
+  await sleep(100)
+  check('full: the oldest silent one gave way, and only it', silent[0].entry.closed && silent.slice(1).every((s) => !s.entry.closed), silent.map((s) => s.entry.closed ? 1 : 0).join(''))
+  for (const s of silent) s.socket.destroy()
+  await owner.close()
+  await sleep(100)
+
+  // Sixteen terminals that spoke are not displaced: the seventeenth is told the place is full.
+  const talking = []
+  for (let i = 0; i < 16; i++) {
+    const c = client(path)
+    await c.opened
+    c.send({ type: 'hello', version: PROTOCOL_VERSION })
+    await c.waitFor((f) => f.type === 'ready')
+    talking.push(c)
+  }
+  const late = client(path)
+  await late.opened
+  const busy = await late.waitFor((f) => f.type === 'error')
+  check('full: sixteen terminals that spoke keep their places; the next is told it is full', busy?.code === 'busy', JSON.stringify(busy))
+  for (const c of [...talking, late]) await c.close()
+  await local.close()
+
+  // On Windows the pipe is named anew at every start, not only per state directory.
+  if (process.platform === 'win32') {
+    const again = createLocalTransport(host)
+    await again.connect({ onMessage: () => {}, onStatus: () => {} })
+    const next = listenPath(stateDir)
+    check('local: on Windows, the same state directory gets a new pipe name at the next start', next !== path && next.startsWith('\\\\.\\pipe\\deepbot-tui-'), `${path} ${next}`)
+    await again.close()
+  }
   rmSync(stateDir, { recursive: true, force: true })
 }
 
@@ -631,7 +687,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   const held = async () => { throw new Error('session "sess-stuck" is already owned by an active write handle') }
   const t = boot({ state: { sessions: { 'tui:conv-stuck': 'sess-stuck' } }, config: { runTimeoutMs: 400 }, services: { agents: { create: held, resume: held, get: (id) => (id === 'sess-stuck' ? stuck : undefined), list: () => [] } } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-stuck' })
   await c.waitFor((f) => f.type === 'ready')
@@ -741,7 +797,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   }
   const t = boot({ services, state: { sessions: { 'tui:conv-before': 'sess-before' }, models: { 'tui:conv-before': { provider: 'og', model: 'm2', reasoningEffort: 'high', at: Date.now() } } } })
   await sleep(100)
-  const c = client(join(t.stateDir, 'tui.sock'))
+  const c = client(listenPath(t.stateDir))
   await c.opened
   c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-remind' })
   await c.waitFor((f) => f.type === 'ready')
@@ -749,7 +805,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   const turn = async (text) => { const n = c.frames.filter((f) => f.type === 'post').length; c.send({ type: 'message', text }); for (let i = 0; i < 400 && c.frames.filter((f) => f.type === 'post').length === n; i++) await sleep(10); await sleep(50); return requests.find((q) => q.text.includes(text)) }
   const choose = async (provider, model?, effort?) => { const n = c.frames.filter((f) => f.type === 'model').length; c.send({ type: 'model', provider, model, effort }); for (let i = 0; i < 100 && c.frames.filter((f) => f.type === 'model').length === n; i++) await sleep(10) }
   // A second terminal, on another conversation.
-  const c2 = client(join(t.stateDir, 'tui.sock'))
+  const c2 = client(listenPath(t.stateDir))
   await c2.opened
   c2.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-early' })
   await c2.waitFor((f) => f.type === 'ready')
