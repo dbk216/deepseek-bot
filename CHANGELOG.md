@@ -49,6 +49,9 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **A custom endpoint's context window could be written as another number.** Shell arithmetic wraps at
+  2^64, so the installer took `18446744073709551716` and wrote `contextWindow: 100`. A window is now a
+  whole number from 1 to 999999999, and one outside that is refused with what was typed.
 - **One rare Chinese word was recalled unprompted.** A Chinese word is matched by its overlapping
   pairs of characters, and all of them matched a passage that has it, so one word counted as the two
   distinctive words unprompted recall needs. A span of pairs the passage has side by side now counts

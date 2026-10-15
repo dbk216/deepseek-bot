@@ -229,8 +229,8 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   check('provider: DeepSeek\'s own route writes nothing', ds.code === 0 && ds.out === '', JSON.stringify(ds))
   const bad = (args) => withHelpers(`valid_endpoint ${args}`).code !== 0
   check('provider: what goes into the YAML is checked — a URL with a quote, a model with a space, a bad key name, a window that is not a number',
-    bad(`"https://x.example/v1'; rm" model KEY 1000`) && bad(`https://x.example/v1 'bad model' KEY 1000`) && bad(`https://x.example/v1 model 1KEY 1000`)
-    && bad(`https://x.example/v1 model KEY lots`) && bad(`ftp://x.example model KEY 1000`)
+    bad(`"https://x.example/v1'; rm" model ACME_API_KEY 1000`) && bad(`https://x.example/v1 'bad model' ACME_API_KEY 1000`) && bad(`https://x.example/v1 model 1KEY 1000`)
+    && bad(`https://x.example/v1 model ACME_API_KEY lots`) && bad(`ftp://x.example model ACME_API_KEY 1000`)
     && withHelpers(`valid_endpoint https://llm.example.com/v1 vendor/model-x:free MY_KEY 128000`).code === 0)
   check('provider: a custom key name is one of its own — not a name the deployment uses, not a YAML word, and ends in _KEY',
     bad(`https://x.example/v1 model SLACK_BOT_TOKEN 1000`) && bad(`https://x.example/v1 model DEEPSEEK_API_KEY 1000`) && bad(`https://x.example/v1 model OG_API_KEY 1000`)
@@ -238,6 +238,14 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   check('provider: plain http only to this machine — a key would cross the network in clear text',
     bad(`http://llm.example.com/v1 model ACME_API_KEY 1000`) && withHelpers('valid_endpoint http://localhost:8080/v1 model ACME_API_KEY 1000').code === 0 && withHelpers('valid_endpoint http://127.0.0.1:8080/v1 model ACME_API_KEY 1000').code === 0)
   check('provider: the context window is written as a number, leading zeros dropped', /^ {12}contextWindow: 128000$/m.test(withHelpers(`provider_rows custom ACME_API_KEY 'https://x.example/v1' m 0128000 no`).out))
+  // Shell arithmetic wraps at 2^64: 18446744073709551716 was taken and written as 100, a 20-digit window as another
+  // number. A window is refused past nine digits, below any value that could wrap; leading zeros still count as none.
+  check('provider: a context window too large for shell arithmetic is refused, not written as another number',
+    bad(`https://x.example/v1 model ACME_API_KEY 18446744073709551716`) && bad(`https://x.example/v1 model ACME_API_KEY 99999999999999999999`)
+    && bad(`https://x.example/v1 model ACME_API_KEY 1000000000`) && bad(`https://x.example/v1 model ACME_API_KEY 0`)
+    && withHelpers('valid_endpoint https://x.example/v1 model ACME_API_KEY 999999999').code === 0
+    && withHelpers('valid_endpoint https://x.example/v1 model ACME_API_KEY 000000000000128000').code === 0
+    && /^ {6}valid_window "\$window" \|\| die "context window: [^"]*\(got: \$window\)"$/m.test(readFileSync(INSTALL, 'utf8')))
   // A rerun reads the key of the route the default model names, whatever the comments, the indent, or other routes.
   writeFileSync(join(dir, 'two-routes.yml'), `- id: llm-pi-ai\n  config:\n    providers:\n      speech:\n        apiKeyEnv: OPENAI_API_KEY\n      og:\n          apiKeyEnv: OG_API_KEY   # the gateway\n\n- id: agent-default-model\n  config:\n    provider: og\n    model: x\n`)
   check('provider: a route key that is not a variable name is not asked for or written', withHelpers('usable_key_name "!!js process.env.X"').code !== 0 && withHelpers('usable_key_name OG_API_KEY').code === 0)

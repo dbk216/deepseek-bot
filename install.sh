@@ -42,13 +42,17 @@ env_language() {
 # OpenAI-compatible endpoint go through llm-pi-ai, whose route has to be written out in full: a
 # profile row's `config` replaces the bundle's, and the image input is read from `input` only.
 
+# A window of at most nine digits after any leading zeros: shell arithmetic wraps at 2^64, and a longer
+# number was written into the profile as another one (18446744073709551716 as 100).
+valid_window() { [[ $1 =~ ^0*[1-9][0-9]{0,8}$ ]]; }
+
 # A custom endpoint's answers go into the profile's YAML: nothing that could leave a quoted value, or
 # start a new key, gets through.
 valid_endpoint() {   # valid_endpoint <baseURL> <model> <keyRef> <contextWindow>
   local url_re='^https://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$' model_re='^[A-Za-z0-9._:/@+-]+$' ref_re='^[A-Z][A-Z0-9_]*_KEY$'
   # Plain http only to this machine: anywhere else the key would cross the network in clear text.
   local here_re='^http://(localhost|127\.0\.0\.1)(:[0-9]+)?(/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]*)?$'
-  { [[ $1 =~ $url_re ]] || [[ $1 =~ $here_re ]]; } && [[ $2 =~ $model_re ]] && [[ $3 =~ $ref_re ]] && [[ $4 =~ ^[0-9]+$ ]] && [ "$((10#$4))" -gt 0 ] || return 1
+  { [[ $1 =~ $url_re ]] || [[ $1 =~ $here_re ]]; } && [[ $2 =~ $model_re ]] && [[ $3 =~ $ref_re ]] && valid_window "$4" || return 1
   # A key of its own: one the deployment reads for something else would be sent to this endpoint.
   case "$3" in DEEPSEEK_API_KEY|OG_API_KEY|SLACK_*|TELEGRAM_*|DISCORD_*) return 1 ;; esac
 }
@@ -340,8 +344,9 @@ if [ "$new_profile" -eq 1 ]; then
       ask key_ref "the name to keep its API key under?" CUSTOM_API_KEY
       ask window "the model's context window, in tokens?" 128000
       ask images "does the model read images (yes / no)?" no
+      valid_window "$window" || die "context window: a whole number of tokens from 1 to 999999999 (got: $window)"
       valid_endpoint "$base_url" "$model_id" "$key_ref" "$window" \
-        || die "the endpoint, model id, key name or context window has a character a profile cannot hold"
+        || die "the endpoint, model id or key name has a character a profile cannot hold"
       case "$images" in yes|no) ;; *) die "images: yes or no (got: $images)" ;; esac ;;
     *) die "unknown provider: $provider (deepseek, opengateway or custom)" ;;
   esac
