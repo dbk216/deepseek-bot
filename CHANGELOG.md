@@ -35,6 +35,10 @@ the caveat about version numbers is at the bottom.
   replaces the messenger there (the guided setup asks first); the old one's tokens stay, its channel
   ids give way to every channel and its people to the ones given. `--yes`, which guarded a `*` that
   opened several messengers at once, is gone.
+- **The terminal has a light palette.** On a light background its colours were the dark palette's: light
+  text that was hard to read, a dark band behind what the person said. It now takes the terminal's
+  background from `COLORFGBG`, or from the terminal's answer to an OSC 11 query sent at start, and draws
+  dark text on a light band, with light red and green behind an edit's lines.
 - **The terminal's lists and scrolling as Claude Code and pi have them.** Typing in `/model`'s or
   `/sessions`' list closed it and went to the input box; it now filters the list (every word typed, in a
   row's name or detail, any case), backspace on an empty filter closing it as before. A list longer than

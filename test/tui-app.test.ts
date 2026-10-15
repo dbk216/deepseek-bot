@@ -1921,6 +1921,25 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('click: ctrl+o still unfolds them all', /x out 7$/m.test(t.term.screen.text()) && /y out 7$/m.test(t.term.screen.text()))
 }
 
+// 81. A light terminal gets the light palette: told by COLORFGBG, or by its answer to the OSC 11 query the app
+// sends at start (not under NO_COLOR). Each app sets its own, so one in light leaves the next in dark.
+{
+  const band = (t, said = '› hello') => { const p = t.term.screen.find(said); return p === null ? '' : t.term.screen.grid[p.row * 80 + p.col + 2].style }
+  const light = setup({ env: { COLORTERM: 'truecolor', COLORFGBG: '0;15' } })
+  check('theme: the app asks the terminal for its background at start', light.term.out.join('').includes('\x1b]11;?'))
+  light.key('hello\r'); light.clock.advance(20)
+  check('theme: COLORFGBG light: dark text on a light band', /38;2;(\d+);/.test(band(light)) && Number(/38;2;(\d+);/.exec(band(light))[1]) < 0x60 && /48;2;(\d+);/.test(band(light)) && Number(/48;2;(\d+);/.exec(band(light))[1]) > 0xc0, JSON.stringify(band(light)))
+  const dark = setup()
+  dark.key('hello\r'); dark.clock.advance(20)
+  check('theme: the next app, told nothing, is dark again', Number(/38;2;(\d+);/.exec(band(dark))?.[1] ?? 0) > 0xc0, JSON.stringify(band(dark)))
+  dark.key('\x1b]11;rgb:ffff/ffff/ffff\x07'); dark.clock.advance(20)
+  dark.key('after it\r'); dark.clock.advance(20)
+  check('theme: the terminal\'s answer to OSC 11 turns it light, and nothing is typed', dark.app.editor.text === '' && Number(/48;2;(\d+);/.exec(band(dark, '› after it'))?.[1] ?? 0) > 0xc0, JSON.stringify([dark.app.editor.text, band(dark, '› after it')]))
+  const none = setup({ env: { NO_COLOR: '1' } })
+  check('theme: under NO_COLOR it does not ask', !none.term.out.join('').includes('\x1b]11;?'))
+  setup()
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

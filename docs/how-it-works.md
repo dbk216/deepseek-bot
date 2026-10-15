@@ -544,7 +544,11 @@ for; the cursor goes over a chip whole, and backspace, delete and ctrl+w take it
 box shows the keys below in its place, in as many columns as fit. An approval shows the request's first
 line and its options numbered: `↑↓`, a digit or a click and `↵` answer it, `esc` answers no (with text
 selected, esc clears the selection first). A question or a list opened over an approval has the keys
-until it closes. Under `NO_COLOR` there is no band and nothing sweeps.
+until it closes. Under `NO_COLOR` there is no band and nothing sweeps. On a light background the colours
+are the light palette's (dark text, a light band, light red and green behind an edit): the terminal
+says which by `COLORFGBG`, or by its answer to the OSC 11 query `dsh` sends at start (not every terminal
+answers it, and tmux may not pass it on); with neither, the dark palette. What was drawn before the
+answer keeps its colours.
 
 | Keys | |
 |---|---|

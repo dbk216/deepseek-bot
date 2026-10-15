@@ -33,7 +33,21 @@ export interface MouseEvent {
   ctrl: boolean
 }
 
-export type InputEvent = KeyEvent | PasteEvent | MouseEvent
+/** The terminal's answer to OSC 11 (what its background colour is), read as light or dark. */
+export interface BackgroundEvent { type: 'background'; background: 'light' | 'dark' }
+
+export type InputEvent = KeyEvent | PasteEvent | MouseEvent | BackgroundEvent
+
+/** Asks the terminal for its background colour; one that knows answers with OSC 11. */
+export const QUERY_BACKGROUND = '\x1b]11;?\x07'
+
+/** An OSC 11 answer's colour, `rgb:RRRR/GGGG/BBBB` (1 to 4 hex digits each), as light or dark by its luminance. */
+function backgroundFrom(payload: string): 'light' | 'dark' | null {
+  const m = /^11;rgba?:([0-9a-f]{1,4})\/([0-9a-f]{1,4})\/([0-9a-f]{1,4})/i.exec(payload)
+  if (m === null) return null
+  const [r, g, b] = [m[1], m[2], m[3]].map((h) => parseInt(h, 16) / (16 ** h.length - 1))
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? 'light' : 'dark'
+}
 
 const key = (name: string, mods: Partial<KeyEvent> = {}): KeyEvent =>
   ({ type: 'key', name, ctrl: false, alt: false, shift: false, ...mods })
@@ -92,6 +106,8 @@ export class InputParser {
   flush(): InputEvent[] {
     const events: InputEvent[] = []
     if (this.buffer === '\x1b') events.push(key('escape'))
+    // A terminal's answer that never finished is dropped, not typed.
+    else if (/^\x1b\]\d/.test(this.buffer)) { this.buffer = ''; return events }
     else if (this.buffer.startsWith('\x1b')) {
       // An unfinished sequence that will never finish: treat ESC as a key and re-feed the rest.
       const rest = this.buffer.slice(1)
@@ -148,6 +164,20 @@ export class InputParser {
         events.push(key(CSI_LETTER[final], mods(parts[1])))
       }
       return m[0].length
+    }
+    if (b[1] === ']') {
+      // An operating system command, as the answer to QUERY_BACKGROUND: ESC ] digits ; … ended by BEL or ST.
+      // ESC ] and anything but a digit is alt+].
+      if (b.length === 2) return 0
+      if (/^\x1b\]\d/.test(b)) {
+        const bel = b.indexOf('\x07')
+        const st = b.indexOf('\x1b\\', 2)
+        const end = bel === -1 ? st : st === -1 ? bel : Math.min(bel, st)
+        if (end === -1) return 0
+        const background = backgroundFrom(b.slice(2, end))
+        if (background !== null) events.push({ type: 'background', background })
+        return end + (end === bel ? 1 : 2)
+      }
     }
     if (b[1] === 'O') {
       if (b.length < 3) return 0

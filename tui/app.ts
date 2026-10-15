@@ -24,9 +24,9 @@ import { wrapPlain } from './render/text.js'
 import type { QuestionAnswer, QuestionItem } from '../types/transport.js'
 import { copy as systemCopy, type CopyMethod } from './render/clipboard.js'
 import { Editor } from './render/editor.js'
-import type { InputEvent, KeyEvent, MouseEvent } from './render/input.js'
+import { QUERY_BACKGROUND, type InputEvent, type KeyEvent, type MouseEvent } from './render/input.js'
 import type { Screen } from './render/screen.js'
-import { detectColorMode, palette, sgr, theme, type ColorMode } from './render/style.js'
+import { backgroundOf, detectColorMode, palette, sgr, theme, useBackground, type ColorMode } from './render/style.js'
 import { currentFrame, setFrame, shimmer } from './render/motion.js'
 import { Terminal, type TerminalIO } from './render/terminal.js'
 import { Transcript, type Block } from './render/transcript.js'
@@ -240,6 +240,8 @@ export class App {
   constructor(options: AppOptions) {
     this.o = options
     this.mode = detectColorMode(options.env)
+    // The palette is the module's: each app sets it, from COLORFGBG at first and the terminal's own answer after.
+    useBackground(backgroundOf(options.env) ?? 'dark')
     this.clock = options.clock ?? {
       now: () => Date.now(),
       setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -259,6 +261,8 @@ export class App {
 
   start(): void {
     this.terminal.start()
+    // Ask the terminal what its background is; one that knows answers, and a light one gets the light palette.
+    if (this.mode !== 'none') this.o.io.write(QUERY_BACKGROUND)
   }
 
   stop(code = 0): void {
@@ -792,6 +796,13 @@ export class App {
   // ── Input ───────────────────────────────────────────────────────────────
 
   private onEvent(event: InputEvent): void {
+    if (event.type === 'background') {
+      useBackground(event.background)
+      this.transcript.touch()
+      this.terminal.invalidate()
+      this.terminal.requestRender(true)
+      return
+    }
     if (event.type === 'paste') {
       this.clearSelection()
       // A terminal may send a pasted line break as CR: one kind of break, before anything is counted or kept.

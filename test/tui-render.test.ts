@@ -22,7 +22,7 @@ import { Editor } from '../dist/tui/render/editor.js'
 import { mark, MARK_WIDTH } from '../dist/tui/render/banner.js'
 import { copy, osc52 } from '../dist/tui/render/clipboard.js'
 import { emulator, fakeTerminal, fakeClock } from './tui-fakes.ts'
-import { sgr, detectColorMode, rgbTo256 } from '../dist/tui/render/style.js'
+import { sgr, detectColorMode, rgbTo256, backgroundOf, useBackground, theme, palette } from '../dist/tui/render/style.js'
 import { markdown } from '../dist/tui/render/markdown.js'
 import { lineDiff } from '../dist/tui/render/linediff.js'
 
@@ -409,6 +409,29 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   const unknown = md(['```', 'const x = 1', '```'].join('\n'))
   check('markdown: code without a known language is not highlighted', unknown[0].spans.filter((sp) => !sp.decor).every((sp) => sp.style === 'K'))
   check('markdown: highlighted code copies as written', extract(ts, { line: 1, col: 0 }, { line: 2, col: 99 }) === "const n = 42 // 답\nif (ok) return 'yes'", JSON.stringify(extract(ts, { line: 1, col: 0 }, { line: 2, col: 99 })))
+}
+
+// 4c. A light background, as the terminal says it: COLORFGBG at start, or its answer to OSC 11 (the background
+// colour), which the input parser reads as an event of its own, whole or split, ended by BEL or ST.
+{
+  check('background: COLORFGBG with a light background colour is light, a dark one dark, none or default unknown', backgroundOf({ COLORFGBG: '0;15' }) === 'light' && backgroundOf({ COLORFGBG: '0;default;7' }) === 'light' && backgroundOf({ COLORFGBG: '15;0' }) === 'dark' && backgroundOf({ COLORFGBG: '7;default' }) === null && backgroundOf({}) === null, String([backgroundOf({ COLORFGBG: '0;15' }), backgroundOf({ COLORFGBG: '15;0' })]))
+  const p = new InputParser()
+  const bg = (events) => events.filter((e) => e.type === 'background').map((e) => e.background).join(',')
+  check('background: OSC 11 white, ended by BEL, is light', bg(p.feed('\x1b]11;rgb:ffff/ffff/ffff\x07')) === 'light')
+  check('background: a dark grey, ended by ST, is dark', bg(p.feed('\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\')) === 'dark')
+  const first = p.feed('\x1b]11;rgb:fa')
+  const rest = p.feed('fa/fafa/fafa\x07x')
+  check('background: an answer split across reads is one event, and what follows is still typed', first.length === 0 && bg(rest) === 'light' && rest.some((e) => e.type === 'key' && e.ch === 'x'), JSON.stringify(rest))
+  check('background: two-digit components too', bg(p.feed('\x1b]11;rgb:f0/f0/f0\x07')) === 'light')
+  const unfinished = new InputParser()
+  const none = [...unfinished.feed('\x1b]11;rgb:ff'), ...unfinished.flush()]
+  check('background: an answer that never finishes is dropped at the timeout, not typed', none.length === 0, JSON.stringify(none))
+  const alt = p.feed('\x1b]a')
+  check('background: alt+] followed by a key is still alt+]', alt.length === 2 && alt[0].type === 'key' && alt[0].alt && alt[0].ch === ']', JSON.stringify(alt))
+  useBackground('light')
+  const lightText = theme.userBand.fg, lightBand = theme.userBand.bg
+  useBackground('dark')
+  check('background: a light palette has dark text on a light band, and dark comes back', lightText !== undefined && lightText[0] < 0x60 && lightBand[0] > 0xc0 && theme.userBand.fg[0] > 0xc0 && palette.band[0] < 0x60, JSON.stringify([lightText, lightBand, theme.userBand.fg]))
 }
 
 const failed = results.filter((r) => !r.ok)
