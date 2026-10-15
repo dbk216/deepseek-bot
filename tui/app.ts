@@ -35,6 +35,8 @@ import { fit, graphemes, stringWidth } from './render/width.js'
 export interface Backend {
   send(text: string): void
   cancel(): void
+  /** Take back the messages waiting behind the running turn, which goes on. */
+  withdraw?(): void
   /** A choice the bot offered (an approval button) was picked. */
   action(id: string): void
   /** Look at a subagent or a job (or back at the conversation); the gateway keeps it fresh. */
@@ -109,6 +111,8 @@ export interface AppOptions {
 }
 
 const EDITOR_MAX_ROWS = 6
+/** A paste of more lines than this is a chip in the box until it is sent. */
+const PASTE_CHIP_LINES = 10
 const TOAST_MS = 1500
 /** A paste larger than this is cut: the core keeps a few thousand characters of a message anyway. */
 const MAX_PASTE_CHARS = 200_000
@@ -172,6 +176,9 @@ export class App {
   private withdrawing = 0
   /** Whether this turn was marked stopped already. */
   private interrupted = false
+  /** Long pastes in the box, by the chip that stands for each. */
+  private readonly pastes = new Map<string, string>()
+  private pasteCount = 0
   /** The keys on show (? on an empty box), in the input box's place. */
   private shortcuts = false
   /** Messages sent while a turn runs: shown above the input until their turn starts. */
@@ -710,7 +717,13 @@ export class App {
       this.shortcuts = false
       // Pasted into an open question, as typed into it: the person's own words.
       if (this.question !== null && !this.question.typing) { this.question.cursor = this.question.rows().length - 1; this.question.typing = true }
-      this.editor.insert(text)
+      // A long paste is a chip in the box, as pi shows it, and the text again when it is sent.
+      const lines = text.split('\n').length
+      if (lines > PASTE_CHIP_LINES) {
+        const chip = t().pasteChip(++this.pasteCount, lines)
+        this.pastes.set(chip, text)
+        this.editor.insert(chip)
+      } else this.editor.insert(text)
       this.refreshCompletion()
       this.terminal.requestRender(true)
       return
@@ -787,6 +800,8 @@ export class App {
     switch (key.name) {
       case 'enter':
         if (key.alt || key.shift) this.editor.insert('\n')
+        // A backslash before Enter is a new line, as in Claude Code.
+        else if (this.editor.before === '\\') { this.editor.backspace(); this.editor.insert('\n') }
         else this.submit()
         break
       case 'escape':
@@ -800,7 +815,17 @@ export class App {
       case 'right': this.editor.right(); break
       case 'home': this.editor.home(); break
       case 'end': this.editor.end(); break
-      case 'up': this.editor.up(width); break
+      case 'up':
+        // The messages waiting behind the turn come back to an empty box, taken back from the gateway too.
+        if (this.editor.text === '' && this.pending.length > 0 && this.view.kind === 'main') {
+          // The gateway withdraws every turn waiting here: their ends are not the start of a next one.
+          this.withdrawing = Math.max(0, this.busy - 1)
+          this.o.backend.withdraw?.()
+          this.editor.set(this.pending.splice(0).join('\n'))
+          break
+        }
+        this.editor.up(width)
+        break
       case 'down': this.editor.down(width); break
       case 'pageup': this.pane.scroll(-Math.max(1, this.geometry.transcriptHeight - 2)); break
       case 'pagedown': this.pane.scroll(Math.max(1, this.geometry.transcriptHeight - 2)); break
@@ -903,7 +928,7 @@ export class App {
   private onQuestionKey(key: KeyEvent): boolean {
     const q = this.question!
     if (q.typing) {
-      if (key.name === 'enter' && !key.alt && !key.shift) { q.submitCustom(this.editor.submit()); this.answered(); return true }
+      if (key.name === 'enter' && !key.alt && !key.shift) { q.submitCustom(this.unchipped(this.editor.submit())); this.answered(); return true }
       if (key.name === 'escape') { q.typing = false; this.terminal.requestRender(true); return true }
       return false
     }
@@ -981,8 +1006,14 @@ export class App {
     return true
   }
 
+  /** The text with each paste chip in it the text it stands for. Kept for the run: ↑ can bring a chip back. */
+  private unchipped(text: string): string {
+    for (const [chip, pasted] of this.pastes) text = text.split(chip).join(pasted)
+    return text
+  }
+
   private submit(): void {
-    const text = this.editor.text
+    const text = this.unchipped(this.editor.text)
     if (text.trim() === '') return
     this.editor.submit()
     // Kept for the next run only where it went somewhere: a command run, a message sent.
@@ -1280,6 +1311,9 @@ export class App {
       const inner = cols - 4
       screen.put(0, editorTop, `╭${'─'.repeat(Math.max(0, cols - 2))}╮`, s(theme.border))
       const first = editorFirst
+      // The rows the box cannot show, counted in its border, as pi does.
+      const above = first, below = Math.max(0, editor.rows.length - first - editorRows)
+      if (above > 0) { const tag = ` ${t().moreAbove(above)} `; screen.put(Math.max(2, cols - 2 - stringWidth(tag)), editorTop, tag, s(theme.muted)) }
       for (let r = 0; r < editorRows; r++) {
         const y = editorTop + 1 + r
         screen.put(0, y, '│', s(theme.border))
@@ -1288,6 +1322,9 @@ export class App {
         screen.put(4, y, editor.rows[first + r] ?? '', '', 2 + inner)
       }
       screen.put(0, editorTop + 1 + editorRows, `╰${'─'.repeat(Math.max(0, cols - 2))}╯`, s(theme.border))
+      if (below > 0) { const tag = ` ${t().moreBelow(below)} `; screen.put(Math.max(2, cols - 2 - stringWidth(tag)), editorTop + 1 + editorRows, tag, s(theme.muted)) }
+      // A placeholder in the empty box.
+      if (this.editor.text === '' && this.focus === 'editor' && this.view.kind === 'main') screen.put(4, editorTop + 1, t().placeholder, s(theme.dim), 2 + inner)
       screen.cursor = this.focus === 'editor' ? { x: 4 + editor.cursor.x, y: editorTop + 1 + (editor.cursor.y - first) } : null
     }
 
@@ -1303,6 +1340,7 @@ export class App {
       : this.focus === 'panel' ? t().hints.panel
       : this.view.kind === 'agent' ? t().hints.agent(this.view.label)
         : this.view.kind === 'job' ? t().hints.job
+          : this.status.running && this.pending.length > 0 && this.editor.text === '' ? t().hints.queued
           : this.status.running ? t().hints.running
             : t().hints.idle(allRows.length > 0)
     screen.put(1, editorTop + boxRows, hint, s(theme.dim))

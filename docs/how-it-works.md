@@ -533,15 +533,20 @@ off from the next. While a turn runs the status line is one indicator, as Claude
 happening, for how long, and how to stop it — `✻ Thinking… (12s · esc to interrupt)`, `Running bash…`,
 `Working…` — under the same light; `esc to interrupt` is left out while esc does something else (answers
 an approval no, closes a list). A message sent while a turn runs waits above the input, tagged queued,
-and joins the transcript when its turn starts. The hint line under the input box is `? for shortcuts`;
-`?` on an empty box shows the keys below in its place, in as many columns as fit. An approval shows the
-request's first line and its options numbered: `↑↓`, a digit or a click and `↵` answer it, `esc` answers
-no (with text selected, esc clears the selection first). A question or a list opened over an approval has
-the keys until it closes. Under `NO_COLOR` there is no band and nothing sweeps.
+and joins the transcript when its turn starts; `↑` on an empty box takes those back into it to edit, and
+the gateway forgets them, the turn going on. The empty box says what it is for (`Message deepseek-bot ·
+/ commands · @ files`); past its six rows it counts the ones it cannot show in its border (`↑ 2 more`,
+`↓ 1 more`), as pi does. A paste of more than ten lines is a chip, `[paste #1 +40 lines]`, until it is
+sent as the text it stands for. The hint line under the input box is `? for shortcuts`; `?` on an empty
+box shows the keys below in its place, in as many columns as fit. An approval shows the request's first
+line and its options numbered: `↑↓`, a digit or a click and `↵` answer it, `esc` answers no (with text
+selected, esc clears the selection first). A question or a list opened over an approval has the keys
+until it closes. Under `NO_COLOR` there is no band and nothing sweeps.
 
 | Keys | |
 |---|---|
-| `↵` / `alt+↵` | send / new line |
+| `↵` / `alt+↵` or `\` then `↵` | send / new line |
+| `↑` on an empty box while messages wait | take them back to edit (the turn goes on) |
 | `shift+tab`, or a click on it | step this conversation's reasoning effort (shown at the left of the status line between turns; during one, the step is shown for a moment) |
 | `esc` | stop the running turn (what was waiting behind it comes back to the input); on an approval, answer no; in a view, back to the conversation |
 | `?` on an empty box | show the shortcuts (`esc` or any key closes them) |

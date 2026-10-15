@@ -28,6 +28,8 @@ export type ClientFrame =
   | { type: 'message'; text: string }
   | { type: 'action'; id: string }
   | { type: 'cancel' }
+  /** Take back the messages waiting behind the running turn, which goes on. */
+  | { type: 'withdraw' }
   | { type: 'usage' }
   | { type: 'sessions' }
   | { type: 'history' }

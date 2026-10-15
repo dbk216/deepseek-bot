@@ -38,6 +38,7 @@ function setup({ cols = 80, rows = 30, env = { COLORTERM: 'truecolor' }, extra =
   const answers_ = []
   const copied = []
   let cancels = 0
+  let withdrawals = 0
   let exited = null
   const app = new App({
     io: term.io, env, platform: 'darwin', clock,
@@ -46,6 +47,7 @@ function setup({ cols = 80, rows = 30, env = { COLORTERM: 'truecolor' }, extra =
       view: (...a) => views.push(['view', ...a]), agentSend: (...a) => views.push(['send', ...a]),
       agentInterrupt: (...a) => views.push(['interrupt', ...a]), jobKill: (...a) => views.push(['kill', ...a]),
       answer: (id, answers) => answers_.push({ id, answers }),
+      withdraw: () => { withdrawals++ },
     },
     copy: (t) => { copied.push(t); return 'pbcopy' },
     onExit: (code) => { exited = code },
@@ -57,6 +59,7 @@ function setup({ cols = 80, rows = 30, env = { COLORTERM: 'truecolor' }, extra =
   return {
     app, term, clock, sent, actions, views, answers: answers_, copied,
     get cancels() { return cancels },
+    get withdrawals() { return withdrawals },
     get exited() { return exited },
     key: (s) => term.type(s),
     frames: () => term.out.length,
@@ -1586,6 +1589,53 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
       check('branch: a FIFO at HEAD or at .git, or HEAD linked to a device, is no branch, at once', read.every((b) => b === null) && Date.now() - started < 1000, JSON.stringify(read))
     }
   } finally { rmSync(root, { recursive: true, force: true }) }
+}
+
+// 79. The input box after Claude Code and pi. A placeholder while it is empty; the rows it cannot show are counted
+// in its border; a long paste is a chip until it is sent; a backslash before Enter is a new line; and messages
+// waiting behind a turn come back to the box with ↑, taken back from the gateway, the turn going on.
+{
+  const t = setup({ cols: 80, rows: 30 })
+  const boxRow = () => { const p = t.term.screen.find('│ ›'); return p === null ? -1 : p.row }
+  check('input: a placeholder in the empty box', /│ › Message deepseek-bot/.test(t.term.screen.row(boxRow())), t.term.screen.row(boxRow()))
+  t.key('a'); t.clock.advance(20)
+  check('input: gone once something is typed', !t.term.screen.text().includes('Message deepseek-bot'))
+  t.key('\x15')
+  for (let i = 1; i <= 8; i++) { t.key(`line ${i}`); if (i < 8) t.key('\x1b\r') }
+  t.clock.advance(20)
+  const top = t.term.screen.text().split('\n').find((l) => l.startsWith('╭') && l.includes('more')) ?? '(none)'
+  check('input: rows above the box\'s six are counted in its border', /↑ 2 more/.test(top), top)
+  for (let i = 0; i < 7; i++) t.key('\x1b[A')
+  t.clock.advance(20)
+  const bottom = t.term.screen.text().split('\n').find((l) => l.startsWith('╰') && l.includes('more')) ?? '(none)'
+  check('input: and the rows below it, the cursor on the first', /↓ 2 more/.test(bottom) && !/↑ \d+ more/.test(t.term.screen.text()), bottom)
+  t.key('\x15'); t.key('\x15'); t.key('\x15'); t.key('\x15'); t.key('\x15'); t.key('\x15'); t.key('\x15'); t.key('\x15')
+  t.app.editor.set(''); t.clock.advance(20)
+  const pasted = Array.from({ length: 12 }, (_, i) => `pasted ${i + 1}`).join('\n')
+  t.key(`\x1b[200~${pasted}\x1b[201~`); t.clock.advance(20)
+  check('paste: twelve lines are a chip in the box', t.app.editor.text === '[paste #1 +12 lines]' && t.term.screen.text().includes('[paste #1 +12 lines]'), JSON.stringify(t.app.editor.text))
+  t.key(' 이거 봐'); t.key('\r'); t.clock.advance(20)
+  check('paste: sent, the chip is the text it stands for', t.sent.at(-1) === `${pasted} 이거 봐`, JSON.stringify(t.sent.at(-1)?.slice(-30)))
+  t.key('\x1b[200~short\npaste\x1b[201~'); t.clock.advance(20)
+  check('paste: a short one is the text itself', t.app.editor.text === 'short\npaste', JSON.stringify(t.app.editor.text))
+  t.app.editor.set('')
+  t.app.ask('q-chip', [{ id: 'p', question: 'logs?', options: [{ label: 'none' }], multiSelect: false }])
+  t.key(`\x1b[200~${pasted}\x1b[201~`); t.key('\r'); t.clock.advance(20)
+  check('paste: an answer typed in a chip goes back as the text it stands for', t.answers.some((a) => a.id === 'q-chip' && a.answers[0]?.custom === pasted), JSON.stringify(t.answers.at(-1)?.answers[0]?.custom?.slice(0, 30)))
+  t.key('👍 첫 줄\\'); t.key('\r'); t.clock.advance(20)
+  check('input: a backslash before Enter is a new line, not a send', t.app.editor.text === '👍 첫 줄\n' && !t.sent.some((m) => m.startsWith('👍')), JSON.stringify(t.app.editor.text))
+  t.app.editor.set(''); t.clock.advance(20)
+  t.app.turnStarted()
+  // Each message queued says "typing" too, as the gateway does.
+  t.key('queued one\r'); t.app.turnStarted(); t.key('queued two\r'); t.app.turnStarted(); t.clock.advance(5000)
+  check('queue: the hint says how to take them back', /↑ edit queued/.test(t.term.screen.row(29)), t.term.screen.row(29))
+  t.key('\x1b[A'); t.clock.advance(20)
+  check('queue: ↑ on an empty box takes the waiting messages back, from the gateway too, and the turn goes on', t.app.editor.text === 'queued one\nqueued two' && t.withdrawals === 1 && t.cancels === 0 && !t.term.screen.text().includes('queued two\n'), JSON.stringify({ text: t.app.editor.text, withdrawals: t.withdrawals, cancels: t.cancels }))
+  // The withdrawn turns end; the running one is still the same turn, its time going on.
+  t.app.turnEnded(); t.app.turnEnded(); t.clock.advance(1000)
+  const still = t.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('queue: the ends of the turns taken back are not a new turn', /\(6s · esc to interrupt\)/.test(still), still)
+  t.app.turnEnded()
 }
 
 const failed = results.filter((r) => !r.ok)

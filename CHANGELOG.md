@@ -35,6 +35,14 @@ the caveat about version numbers is at the bottom.
   replaces the messenger there (the guided setup asks first); the old one's tokens stay, its channel
   ids give way to every channel and its people to the ones given. `--yes`, which guarded a `*` that
   opened several messengers at once, is gone.
+- **The terminal's input box as Claude Code and pi have it.** An empty box said nothing, a box past its
+  six rows hid the rest without a sign, a pasted log filled it, a new line took `alt+↵`, and a message
+  queued behind a turn could only be taken back by stopping the turn. Now the empty box shows a dim
+  placeholder; the rows it cannot show are counted in its border (`↑ 2 more`, `↓ 1 more`); a paste of
+  more than ten lines is a chip, `[paste #1 +12 lines]`, sent as the text it stands for (in an answer to
+  a question too); `\` before `↵` is a new line; and `↑` on an empty box brings the waiting messages
+  back to edit, the hint saying so while any wait. The gateway forgets them (a `withdraw` frame on the
+  local socket), and the running turn goes on.
 - **The terminal opens with a welcome box, and its footer says more.** In place of six rows of block
   letters and a header row: a box with the mark (the README's whale), `deepseek-bot` and its version, the
   model, the workspace and session, and where to start; a narrow screen gets the words alone, and a

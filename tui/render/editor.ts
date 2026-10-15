@@ -29,6 +29,11 @@ export class Editor {
     return this.pos
   }
 
+  /** The grapheme just before the cursor, or '' at the start. */
+  get before(): string {
+    return this.chars[this.pos - 1] ?? ''
+  }
+
   set(text: string): void {
     this.chars = graphemes(text)
     this.pos = this.chars.length

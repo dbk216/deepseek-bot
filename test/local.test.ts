@@ -488,6 +488,33 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   await t.done()
 }
 {
+  // ↑ in the terminal takes back what waits behind the running turn: the gateway withdraws it and the turn goes on.
+  let cancelled = 0
+  let followups = 0
+  let release = () => {}
+  const agents = {
+    create: async (o) => ({ agent: { session: { header: { id: o.sessionId }, seq: 0, eventAt: () => undefined }, followup: () => { followups++ }, whenIdle: () => (followups === 0 ? Promise.resolve() : new Promise((r) => { release = () => r(undefined) })), cancel: () => { cancelled++ } }, dispose: async () => {} }),
+    resume: async (o) => ({ agent: { session: { header: { id: o.resumeSessionId }, seq: 0, eventAt: () => undefined }, followup: () => { followups++ }, whenIdle: async () => {}, cancel: () => { cancelled++ } }, dispose: async () => {} }),
+  }
+  const t = boot({ services: { agents } })
+  await sleep(100)
+  const c = client(listenPath(t.stateDir))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION })
+  await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'message', text: '첫 일' })
+  for (let i = 0; i < 100 && followups === 0; i++) await sleep(10)
+  c.send({ type: 'message', text: '기다리는 일' })
+  await sleep(100)
+  c.send({ type: 'withdraw' })
+  await sleep(150)
+  release()
+  await sleep(300)
+  check('withdraw: what waits is taken back, the running turn is not stopped, and the taken message never runs', t.logs.some((l) => /withdrew 1 waiting/.test(l)) && cancelled === 0 && followups === 1, JSON.stringify({ cancelled, followups, log: t.logs.filter((l) => /withdr/.test(l)) }))
+  await c.close()
+  await t.done()
+}
+{
   // Only waiting (every slot taken by another conversation): a stop withdraws it, the terminal marks it and takes
   // the text back into its box, so the gateway says nothing there either.
   const agents = {

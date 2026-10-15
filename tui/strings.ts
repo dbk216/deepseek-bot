@@ -50,7 +50,7 @@ const en = {
     model: { usage: '[n|provider/model] [effort]', hint: "the models; with one, this conversation's from its next turn" },
   },
   helpKeys: [
-    '↵ send · alt+↵ newline · esc interrupt · shift+tab effort · wheel/PgUp/PgDn scroll · drag to copy · click to place the cursor or pick',
+    '↵ send · alt+↵ or \\ ↵ newline · ↑ edit queued messages · esc interrupt · shift+tab effort · wheel/PgUp/PgDn scroll · drag to copy · click to place the cursor or pick',
     '/ commands · @ files (tab inserts) · ctrl+r search what you typed · ctrl+o expand/fold tool output · ctrl+t expand/fold thinking',
   ],
   ago: (seconds: number) => seconds < 60 ? `${seconds}s ago` : seconds < 3600 ? `${Math.round(seconds / 60)}m ago`
@@ -104,6 +104,7 @@ const en = {
     agent: (label: string) => `↵ send to ${label} · ctrl+x stop · esc back to main`,
     job: 'ctrl+x end · wheel scroll · esc back to main',
     running: '? for shortcuts',
+    queued: '↑ edit queued messages · ? for shortcuts',
     idle: (panel: boolean) => `? for shortcuts${panel ? ' · tab panel' : ''}`,
     choice: (n: number, deny: boolean) => `${n > 1 ? `↑↓ or 1–${Math.min(n, 9)} pick · ` : ''}↵ choose${deny ? ' · esc deny' : ''}`,
     shortcuts: 'esc close',
@@ -133,6 +134,10 @@ const en = {
   moreKeys: (n: number) => `+${n} more · /help lists them all`,
   shortcutsTitle: 'Shortcuts',
   welcomeKeys: '/help for help · ? for shortcuts · esc to interrupt',
+  placeholder: 'Message deepseek-bot · / commands · @ files',
+  moreAbove: (n: number) => `↑ ${n} more`,
+  moreBelow: (n: number) => `↓ ${n} more`,
+  pasteChip: (n: number, lines: number) => `[paste #${n} +${lines} lines]`,
   queued: 'queued',
   queuedCount: (n: number) => `${n} queued`,
   shells: (n: number) => `${n} shell${n === 1 ? '' : 's'}`,

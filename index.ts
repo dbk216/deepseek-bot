@@ -2473,6 +2473,13 @@ export function apply(ctx, config) {
     // As last read: the /model list asks about every listed model, and a model's efforts do not move.
     effortsFor: async (provider: string, model: string) => knownEfforts.get(`${provider}/${model}`) ?? effortsOf(provider, model),
     stepEffort: (key: string, step: 1 | -1) => stepEffort(key, step),
+    // The terminal's ↑ on an empty box: what waits behind the running turn is taken back; the turn goes on.
+    withdraw: (key: string) => {
+      const withdrawn = withdrawWaiting(key)
+      log(`withdraw requested in ${key} — withdrew ${withdrawn} waiting message(s)`)
+      settleInflight(key)
+      return withdrawn
+    },
     // The tenant a conversation is recorded in (null: the home), or undefined when none is recorded.
     boundTenant: (key: string) => (cfg.tenantIsolation === true ? state.tenantOf?.[key] : undefined),
     // The tenant a conversation is in right now, however it was decided.

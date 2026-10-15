@@ -62,6 +62,8 @@ interface LocalHost {
   /** The efforts a model takes ([] for none, or when they cannot be read), for the /model picker. */
   effortsFor?: (provider: string, model: string) => Promise<string[]>
   /** Step a conversation's effort through the ones its model takes; what was wrong, or null. */
+  /** Take back the messages waiting behind a conversation's running turn; how many there were. */
+  withdraw?: (key: string) => number
   stepEffort?: (key: string, step: 1 | -1) => Promise<null | { code: 'no-efforts'; model: string }>
   /** Set (or with null, clear) a conversation's own model; what was wrong with it, or null. */
   setModel?: (key: string, choice: { provider: string; model: string; effort?: string | null } | null) => Promise<null | { code: 'unknown-model' } | { code: 'no-key'; ref: string } | { code: 'effort'; efforts: string[] }>
@@ -400,6 +402,11 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
           if (problem !== null) { if (client.conversation === asked) refuse(client, 'effort', say.noEfforts(problem.model)); return }
           toConversation(asked, { type: 'model', current: await modelChoice(key), cause: 'effort' })
         })
+      }
+      case 'withdraw': {
+        if (client.conversation === null) return refuse(client, 'no-hello', 'say hello first')
+        host.withdraw?.(`${LOCAL_CHANNEL}:${client.conversation}`)
+        return
       }
       case 'sessions': {
         const items = await (host.listConversations?.(LOCAL_CHANNEL) ?? Promise.resolve([])).catch(() => [])

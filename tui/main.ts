@@ -82,6 +82,7 @@ function main(): void {
     backend: {
       send(text) { if (!connection?.send({ type: 'message', text })) app.notice(t().notSent, 'error') },
       cancel() { connection?.send({ type: 'cancel' }) },
+      withdraw() { connection?.send({ type: 'withdraw' }) },
       action(id) { if (!connection?.send({ type: 'action', id })) app.notice(t().notSent, 'error') },
       view(kind, id, owner) { connection?.send({ type: 'view', kind, ...(id !== undefined ? { id } : {}), ...(owner !== undefined ? { owner } : {}) }) },
       agentSend(id, text) { if (!connection?.send({ type: 'agent.send', id, text })) app.notice(t().notSent, 'error') },
