@@ -9,7 +9,7 @@
  * informative, never an exception.
  */
 import { randomUUID } from 'node:crypto'
-import { t, type Strings } from './strings.js'
+import { t } from './strings.js'
 
 export interface AgentItem {
   id: string
@@ -89,7 +89,8 @@ function splitOf(usage: any): { input?: number; output?: number; cached?: number
   return { input: n('uncachedInputTokens') + n('cacheReadTokens') + n('cacheWriteTokens'), output: n('outputTokens'), cached: n('cacheReadTokens') }
 }
 
-export function createBridge(services: Services, log: (...parts: unknown[]) => void, words: Strings['gateway'] = t().gateway) {
+export function createBridge(services: Services, log: (...parts: unknown[]) => void) {
+  const words = t().gateway
   const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max)}… ${words.charsLeftOut(text.length - max)}`)
   const seen = new Set<string>()
   /** The first time a shape is met, it goes to the log — the contract is not published. */

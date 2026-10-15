@@ -168,7 +168,7 @@ export class Editor {
     while (this.pos > 0 && /\s/.test(this.chars[this.pos - 1])) this.pos--
     // A chip before the spaces is the word: all of it goes, with the spaces.
     const atom = this.atomWhere((_, atomEnd) => atomEnd === this.pos)
-    if (atom !== null && atom.end > atom.start) { this.chars.splice(atom.start, end - atom.start); this.pos = atom.start; this.browsing = -1; return }
+    if (atom !== null) { this.chars.splice(atom.start, end - atom.start); this.pos = atom.start; this.browsing = -1; return }
     while (this.pos > 0 && !/\s/.test(this.chars[this.pos - 1])) this.pos--
     if (end > this.pos) this.browsing = -1
     this.chars.splice(this.pos, end - this.pos)

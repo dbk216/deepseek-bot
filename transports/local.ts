@@ -22,6 +22,9 @@ import { t } from '../tui/strings.js'
 import { discoveryDir, encode, FrameReader, MAX_FRAME_BYTES, NAME, PROTOCOL_VERSION, type ConversationItem, type ModelChoice, type ModelItem, type ServerFrame } from '../tui/protocol.js'
 import type { ActionButton, ActionEvent, InboundMessage, PostedMessage, QuestionAnswer, QuestionItem, StreamFrame, Target, Transport, TransportStatus } from '../types/transport.js'
 
+/** The id a terminal gives a message (and names in a withdraw): echoed to every terminal on the conversation. */
+const MESSAGE_ID = /^[\w-]{1,64}$/
+
 /** The channel every terminal conversation lives in; the conversation id is its thread. */
 export const LOCAL_CHANNEL = 'tui'
 
@@ -124,7 +127,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
   let seq = 0
   /** Questions waiting for the person, by id; re-sent to a terminal that reconnects. */
   const questions = new Map<string, { conversation: string; items: QuestionItem[]; finish: (answers: QuestionAnswer[] | null) => void }>()
-  const bridge = host.services !== undefined ? createBridge(host.services, log, say) : null
+  const bridge = host.services !== undefined ? createBridge(host.services, log) : null
   let unwatch: (() => void) | null = null
   let panelTimer: ReturnType<typeof setTimeout> | null = null
   let heartbeat: ReturnType<typeof setInterval> | null = null
@@ -344,7 +347,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         }
         // The terminal's own id for the message, so ↑ can take it back while it waits.
         const given: unknown = frame.type === 'message' ? frame.id : undefined
-        if (given !== undefined && (typeof given !== 'string' || !/^[\w-]{1,64}$/.test(given))) return refuse(client, 'bad-frame', say.badMessageId)
+        if (given !== undefined && (typeof given !== 'string' || !MESSAGE_ID.test(given))) return refuse(client, 'bad-frame', say.badMessageId)
         const id = typeof given === 'string' ? given : undefined
         handlers?.onMessage({
           eventId: `local-${randomUUID()}`,
@@ -415,7 +418,7 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
         if (client.conversation === null) return refuse(client, 'no-hello', 'say hello first')
         const ids = frame.ids
         // Each as a message id is: they are sent back to every terminal on the conversation.
-        if (!Array.isArray(ids) || ids.length > 200 || !ids.every((id) => typeof id === 'string' && /^[\w-]{1,64}$/.test(id))) return refuse(client, 'bad-frame', say.idsNeeded)
+        if (!Array.isArray(ids) || ids.length > 200 || !ids.every((id) => typeof id === 'string' && MESSAGE_ID.test(id))) return refuse(client, 'bad-frame', say.idsNeeded)
         const conversation = client.conversation
         // Every terminal on the conversation is told, so each counts those ends apart and takes back its own.
         // With what was asked, so the asking terminal knows the answer is its own.

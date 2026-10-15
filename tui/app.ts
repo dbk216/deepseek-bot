@@ -6,8 +6,8 @@
  * every interaction here — typing, Enter, a drag that copies, the wheel, Esc, a double Ctrl+C —
  * be tested against a fake terminal and a fake backend.
  *
- * Layout, top to bottom: a header, the transcript, a divider, the status line, the input box,
- * and a hint line. Nothing frames the whole screen. The input box keeps the last rows and the
+ * Layout, top to bottom: the transcript (under a header only in a subagent's or a shell's view), a
+ * divider, the status line, the input box, and a hint line. Nothing frames the whole screen. The input box keeps the last rows and the
  * transcript sits right above the divider, a short one with the empty rows over it, so what is new is
  * always next to where one types. A choice (a picker, a question's options, an approval) takes the box's
  * place while nothing is typed; the completion list opens just above the box.
@@ -518,7 +518,12 @@ export class App {
   /** Text the gateway gave back goes to the box once it is the message box again. */
   private restoreTakenBack(): void {
     if (this.takenBack.length === 0 || this.view.kind !== 'main' || this.question !== null || this.search !== null || this.picker !== null || this.choice !== null) return
-    const back = this.takenBack.splice(0).join('\n')
+    this.backToBox(this.takenBack.splice(0))
+  }
+
+  /** Messages back in the box, after what is typed there. */
+  private backToBox(texts: string[]): void {
+    const back = texts.join('\n')
     this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
   }
 
@@ -532,10 +537,7 @@ export class App {
       if (atOnce === null) { this.pending.push({ text, id }); this.terminal.requestRender(true); return }
       // A stop withdraws what waits, in the gateway: it comes back to the box, as with esc.
       if (atOnce === 'stop') this.withdrawing = Math.max(0, this.busy - 1)
-      if (atOnce === 'stop' && this.pending.length > 0) {
-        const back = this.pending.splice(0).map((p) => p.text).join('\n')
-        this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
-      }
+      if (atOnce === 'stop' && this.pending.length > 0) this.backToBox(this.pending.splice(0).map((p) => p.text))
       this.shown(text)
       if (atOnce === 'stop') this.markInterrupted()
       return
@@ -655,7 +657,7 @@ export class App {
     this.terminal.requestRender(true)
   }
 
-  /** A fresh screen for another conversation: the banner and nothing else. */
+  /** A fresh screen for another conversation: the welcome box and nothing else. */
   clear(): void {
     this.interview = null
     this.thought = null
@@ -800,7 +802,6 @@ export class App {
   private onEvent(event: InputEvent): void {
     if (event.type === 'background') {
       useBackground(event.background)
-      this.transcript.touch()
       this.terminal.invalidate()
       this.terminal.requestRender(true)
       return
@@ -875,8 +876,8 @@ export class App {
         case 'w': this.editor.killWord(); break
         case 'l': this.terminal.invalidate(); break
         case 'j': this.editor.insert('\n'); break
-        case 'o': this.detail.expanded = !this.detail.expanded; this.foldGeneration++; this.transcript.refold(); break
-        case 't': this.thinkingDetail.expanded = !this.thinkingDetail.expanded; this.transcript.refold(); break
+        case 'o': this.transcript.refold(this.o.io.columns(), () => { this.detail.expanded = !this.detail.expanded; this.foldGeneration++ }); break
+        case 't': this.transcript.refold(this.o.io.columns(), () => { this.thinkingDetail.expanded = !this.thinkingDetail.expanded }); break
         default: return
       }
       this.refreshCompletion()
@@ -1161,8 +1162,7 @@ export class App {
     this.withdrawing = Math.max(0, this.busy - 1)
     this.o.backend.cancel()
     if (this.pending.length === 0) return
-    const back = this.pending.splice(0).map((p) => p.text).join('\n')
-    this.editor.set(this.editor.text === '' ? back : `${this.editor.text}\n${back}`)
+    this.backToBox(this.pending.splice(0).map((p) => p.text))
     this.terminal.requestRender(true)
   }
 

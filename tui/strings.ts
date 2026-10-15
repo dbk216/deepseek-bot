@@ -146,8 +146,6 @@ const en = {
   agents: (n: number) => `← ${n} agent${n === 1 ? '' : 's'}`,
   panelTokens: (count: string) => `↓ ${count} tokens`,
   jobRunning: (elapsed: string) => `running · ${elapsed}`,
-  /** A subagent's or a shell's state, as the harness names it; one it does not know is shown as it is. */
-  status: (status: string) => String(status),
   thought: (seconds: number, expanded: boolean) => `Thought for ${seconds}s${expanded ? '' : ' (ctrl+t to expand)'}`,
   diffUncompared: '… too large to compare line by line',
   diffWithheld: (n: number) => `… large change: only the lines that are certain, ${n} left out (truncated)`,

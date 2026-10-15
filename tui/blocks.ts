@@ -32,6 +32,11 @@ const pad = (text: string, style = ''): Span => ({ text, style, decor: true })
 /** The display width of a line's spans. */
 const widthOf = (line: Line) => line.spans.reduce((n, span) => n + stringWidth(span.text), 0)
 
+/** A tool's name as a call is written: a lower-case name capitalised (bash → Bash), any other as it is. */
+function callName(name: string): string {
+  return /^[a-z]+$/.test(name) ? name[0].toUpperCase() + name.slice(1) : name
+}
+
 /** What the person said, on a band of its own across the pane, so a question never reads as part of an answer. */
 export function userBlock(text: string, mode: ColorMode): Block {
   const banded = mode !== 'none'
@@ -90,8 +95,7 @@ export function toolBlock(name: string, detail: string, mode: ColorMode): Block 
   const mark = sgr(theme.toolMark, mode)
   const style = sgr(theme.tool, mode)
   // As a call is written in the main transcript: Name(what it was asked).
-  const shown = /^[a-z]+$/.test(name) ? name[0].toUpperCase() + name.slice(1) : name
-  const text = detail === '' ? shown : `${shown}(${detail})`
+  const text = detail === '' ? callName(name) : `${callName(name)}(${detail})`
   return { id: nextId('tool'), version: 0, lines: (width) => layout(text, width, style, { first: pad('● ', mark), rest: pad('  ') }) }
 }
 
@@ -242,7 +246,7 @@ export function toolCallBlock(step: ToolStep, detail: Detail, mode: ColorMode): 
       const title = (step.title ?? '').split('\n')[0]
       const mark = outcome !== null ? (outcome.ok ? marks.ok : marks.failed) : settled ? marks.settled : blink(currentFrame()) ? marks.on : marks.off
       // As Claude Code writes a call: the tool's name, then what it was asked in brackets.
-      const shownName = /^[a-z]+$/.test(step.name) ? step.name[0].toUpperCase() + step.name.slice(1) : step.name
+      const shownName = callName(step.name)
       const asked = title === '' || title === step.name ? '' : `(${title})`
       const out = layout(`${shownName}${asked}`, width, style, { first: pad('● ', mark), rest: pad('  ') })
       // The tool's name in bold, what it was asked in the tool's own grey.

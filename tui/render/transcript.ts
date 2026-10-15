@@ -93,10 +93,16 @@ export class Transcript {
     this.dirty = true
   }
 
-  /** Call after folding or unfolding blocks: what that adds is not new lines for a reader scrolled away. */
-  refold(): void {
+  /**
+   * Fold or unfold blocks: what that adds is not new lines for a reader scrolled away. Laid out before and
+   * after the change, so lines that arrived before it still count, and ones that arrive after it do too.
+   */
+  refold(width: number, change: () => void): void {
+    this.layout(width)
+    change()
     this.dirty = true
     this.quiet = true
+    this.layout(width)
   }
 
   /** All lines at this width. Cheap when nothing changed. */
@@ -169,9 +175,7 @@ export class Transcript {
   keepInPlace(block: Block, width: number, change: () => void): void {
     this.layout(width)
     const before = this.spans.find((s) => s.block === block)
-    change()
-    this.refold()
-    this.layout(width)
+    this.refold(width, change)
     const after = this.spans.find((s) => s.block === block)
     if (before === undefined || after === undefined) return
     // A head above the view comes to its second row (the first may hold a prompt), so what was folded is seen.

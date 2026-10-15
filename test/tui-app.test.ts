@@ -2005,6 +2005,44 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   setup()
 }
 
+// 82. A fold is quiet only for itself. ctrl+o pressed in a subagent's view refolds the conversation behind it; lines
+// that reach the conversation afterwards, while the reader is scrolled up, are still new when they come back.
+{
+  const t = setup({ cols: 80, rows: 30 })
+  t.key('first\r')
+  t.app.turnStarted()
+  t.app.toolCall({ name: 'bash', callId: 'q1', title: 'q' }); t.app.toolResult('q1', true, Array.from({ length: 12 }, (_, i) => `q out ${i + 1}`).join('\n'))
+  t.app.final(Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join('\n\n')); t.app.turnEnded(); t.clock.advance(20)
+  t.key('\x1b[5~'); t.clock.advance(20)
+  t.app.setPanel([{ id: 'child-1', label: 'research', mode: 'one-shot', status: 'running', since: null, settledMs: 0, tokens: 0 }], [])
+  t.key('\t'); t.key('\x1b[B'); t.key('\r'); t.clock.advance(20)
+  const inView = t.app.view.kind === 'agent'
+  t.key('\x0f'); t.clock.advance(20)
+  t.app.notice('arrived while away'); t.app.notice('and another'); t.clock.advance(20)
+  t.key('\x1b'); t.clock.advance(60)
+  // The control: the same without ctrl+o says so too.
+  const c = setup({ cols: 80, rows: 30 })
+  c.key('first\r'); c.app.final(Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join('\n\n')); c.clock.advance(20)
+  c.key('\x1b[5~'); c.clock.advance(20)
+  c.app.notice('arrived while away'); c.clock.advance(20)
+  check('fold: (control) lines that arrive while scrolled up are new', /↓ \d+ new/.test(c.term.screen.text()))
+  // What comes back to the box comes after what is typed there.
+  const d = setup({ cols: 80, rows: 30 })
+  d.app.turnStarted(); d.key('waiting one\r'); d.app.turnStarted(); d.key('a draft'); d.key('\x1b'); d.clock.advance(60)
+  check('stop: what waited comes back after what is typed in the box', d.app.editor.text === 'a draft\nwaiting one', JSON.stringify(d.app.editor.text))
+  check('fold: lines that arrive after a ctrl+o elsewhere are still new', inView && t.app.view.kind === 'main' && /↓ \d+ new/.test(t.term.screen.text()), t.term.screen.text().split('\n').find((l) => / new /.test(l)) ?? `${inView} ${t.app.view.kind}`)
+  // And lines that arrived before it, while the conversation was not drawn, stay new too.
+  const e = setup({ cols: 80, rows: 30 })
+  e.key('first\r'); e.app.final(Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join('\n\n')); e.clock.advance(20)
+  e.key('\x1b[5~'); e.clock.advance(20)
+  e.app.setPanel([{ id: 'child-1', label: 'research', mode: 'one-shot', status: 'running', since: null, settledMs: 0, tokens: 0 }], [])
+  e.key('\t'); e.key('\x1b[B'); e.key('\r'); e.clock.advance(20)
+  e.app.notice('arrived before the fold'); e.app.notice('and another'); e.clock.advance(20)
+  e.key('\x0f'); e.clock.advance(20)
+  e.key('\x1b'); e.clock.advance(60)
+  check('fold: lines that arrived before a ctrl+o elsewhere are still new', e.app.view.kind === 'main' && /↓ \d+ new/.test(e.term.screen.text()), e.term.screen.text().split('\n').find((l) => / new /.test(l)) ?? e.app.view.kind)
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

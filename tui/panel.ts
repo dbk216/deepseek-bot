@@ -55,9 +55,9 @@ export function rowStatus(row: PanelRow, now: number): string {
     const a = row.agent
     const tokens = a.tokens > 0 ? ` · ${t().panelTokens(formatTokens(a.tokens))}` : ''
     if (a.status === 'running') return `${formatElapsed(a.settledMs + (a.since !== null ? now - a.since : 0))}${tokens}`
-    return `${t().status(a.status)}${tokens}`
+    return `${a.status}${tokens}`
   }
-  if (row.kind === 'job') return row.job.status === 'running' && row.job.startedAt > 0 ? t().jobRunning(formatElapsed(now - row.job.startedAt)) : t().status(row.job.status)
+  if (row.kind === 'job') return row.job.status === 'running' && row.job.startedAt > 0 ? t().jobRunning(formatElapsed(now - row.job.startedAt)) : row.job.status
   return ''
 }
 
