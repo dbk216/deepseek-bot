@@ -117,8 +117,10 @@ the caveat about version numbers is at the bottom.
   finished install is already the latest; one that stopped part way is run again. With it, a rerun of
   the installer now keeps the agent home and profile the service was installed with (it used to put
   the service back on `~/dsh-agent` and `agent`), and a full clone used as the checkout stays full and
-  only moves forward: local changes, another branch or commits not on origin stop the update instead
-  of being reset away. A harness profile named `update` is booted with `dsh --profile update`.
+  only moves forward: local changes, another branch, or commits not on origin while origin has moved on
+  stop the update instead of being reset away. An install from before this has a `dsh` that hands
+  `update` to the harness: its first update is the install line once more. Where a harness profile
+  named `update` exists, `dsh update` runs nothing and says to boot it with `dsh --profile update`.
 - **A first step on Windows.** It builds, checkouts are LF everywhere (`.gitattributes`), and CI runs
   the suites that pass on `windows-latest`. The terminal's local transport listens on a named pipe,
   named anew at every start: that namespace is shared by every user of the machine, and a name worked

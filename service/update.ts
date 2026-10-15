@@ -19,6 +19,7 @@ export interface UpdateIO {
   checkout: string
   home: string
   env: Record<string, string | undefined>
+  platform: string
   /** A command whose output is read, in the checkout. */
   run: (cmd: string, args: string[]) => { status: number | null; stdout: string; stderr: string }
   /** Run an installer script on this terminal, with these variables added; its exit status. */
@@ -33,14 +34,23 @@ Fetches the branch the source checkout is on, then runs that commit's installer:
 agent home, the profile, every file you edited and every key the harness already has, and reinstalls
 the services, restarting the bot. Nothing runs when the last finished install is already the latest.
 
-A checkout with local changes, on another branch, or with commits not on origin is not touched: the
-installer says which, and stops. A harness profile named update is booted with dsh --profile update.
+Local changes, or commits that are not on origin's branch while origin has moved on, stop it: the
+installer says which. A working copy ahead of origin is installed as it is.
 `
 
 export function update(argv: string[], io: UpdateIO): number {
   if (argv.includes('-h') || argv.includes('--help')) { io.out(HELP); return 0 }
   if (argv.length > 0) { io.err(`dsh update takes no arguments (got: ${argv.join(' ')})`); return 2 }
+  if (io.platform !== 'darwin') { io.err('the installer it runs is macOS-only: update this checkout by hand (git pull, pnpm run build)'); return 1 }
+  // Before this command existed, `dsh update` booted a harness profile named update. Whoever has one
+  // meant that: it is not replaced by a rebuild and a restart.
+  const dsh = io.env.DSH_HOME || join(io.home, '.dsh')
+  if (existsSync(join(dsh, 'profiles', 'update'))) {
+    io.err('a harness profile named update exists, so this does not run: boot it with dsh --profile update; to update deepseek-bot, run the install line again (README)')
+    return 1
+  }
   const git = (...args: string[]) => io.run('git', ['-C', io.checkout, ...args])
+  // A linked worktree's .git is a file: the installer takes either.
   if (!existsSync(join(io.checkout, '.git'))) {
     io.err(`${io.checkout} is not a git checkout, so there is nothing to update from: install again with the line in the README`)
     return 1
@@ -54,18 +64,19 @@ export function update(argv: string[], io: UpdateIO): number {
   if (fetched.status !== 0) { io.err(`could not fetch ${ref}: ${(fetched.stderr || fetched.stdout).trim()}`); return 1 }
   const tip = git('rev-parse', 'FETCH_HEAD').stdout.trim()
   const head = git('rev-parse', 'HEAD').stdout.trim()
-  // A working copy ahead of origin is already past the tip: it is installed as it is.
-  const target = head !== tip && git('merge-base', '--is-ancestor', tip, head).status === 0 ? head : tip
-  const dsh = io.env.DSH_HOME || join(io.home, '.dsh')
-  if (existsSync(join(dsh, 'profiles', 'update'))) io.out('a harness profile named update exists: boot it with dsh --profile update')
+  // A full clone ahead of origin is already past the tip: it is installed as it is. The installer resets
+  // its own shallow clone to the tip, so there the tip is what runs.
+  const target = !shallow && head !== tip && git('merge-base', '--is-ancestor', tip, head).status === 0 ? head : tip
   let finished = ''
   try { finished = readFileSync(join(dsh, 'service', 'deepbot.commit'), 'utf8').trim() } catch { /* none yet */ }
   if (head === target && finished === target) { io.out(`already up to date: ${ref} at ${target.slice(0, 7)}`); return 0 }
   const script = git('show', `${target}:install.sh`)
   if (script.status !== 0 || script.stdout === '') { io.err(`${ref} at ${target.slice(0, 7)} has no install.sh: ${script.stderr.trim()}`); return 1 }
-  io.out(head === target
-    ? `${ref} is at ${target.slice(0, 7)}, but its last install did not finish: running the installer again`
-    : `updating ${ref} from ${head.slice(0, 7)} to ${target.slice(0, 7)}, with that commit's installer`)
+  io.out(head !== target
+    ? `updating ${ref} from ${head.slice(0, 7)} to ${target.slice(0, 7)}, with that commit's installer`
+    : finished === ''
+      ? `${ref} is at ${target.slice(0, 7)}, and no finished install of it is recorded: running its installer`
+      : `${ref} is at ${target.slice(0, 7)}, but its last install did not finish: running the installer again`)
   const dir = mkdtempSync(join(tmpdir(), 'deepbot-update-'))
   const path = join(dir, 'install.sh')
   writeFileSync(path, script.stdout, { mode: 0o700 })
@@ -82,12 +93,15 @@ export function processIO(): UpdateIO {
     checkout: resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'),
     home: homedir(),
     env: process.env,
+    platform: process.platform,
     run: (cmd, args) => {
       const r = spawnSync(cmd, args, { encoding: 'utf8' })
       return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? String(r.error?.message ?? '') }
     },
     install: (script, env) => {
-      const r = spawnSync('/bin/bash', [script], { stdio: 'inherit', env: { ...process.env, ...env } })
+      // As under `curl … | bash`, stdin is not the terminal: its questions read /dev/tty, and nothing it
+      // runs (pnpm) takes a terminal on stdin for a place to prompt.
+      const r = spawnSync('/bin/bash', [script], { stdio: ['ignore', 'inherit', 'inherit'], env: { ...process.env, ...env } })
       if (r.error) { process.stderr.write(`dsh update: ${r.error.message}\n`); return 127 }
       return r.signal ? 128 + (constants.signals[r.signal] ?? 0) : (r.status ?? 1)
     },

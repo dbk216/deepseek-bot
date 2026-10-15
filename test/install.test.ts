@@ -411,7 +411,9 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   check('record: the commit an install finished at is written', readFileSync(join(dshHome, 'service', 'deepbot.commit'), 'utf8').trim() === mine)
   const afterServices = installer.indexOf('services_done || return 1\nrecord_install "$DEEPBOT_DIR"')
   check('record: only after every service is in, and when they are skipped', afterServices !== -1 && /record_install "\$DEEPBOT_DIR"\n  return 0\nfi/.test(installer))
-  check('the end says how to update: dsh update', /Update later: .*dsh update/.test(installer))
+  check('the end says how to update: dsh update where dsh is this project\'s on the PATH, the install line where not',
+    /^    Update later: \$update_with$/m.test(installer) && /^update_with='the same curl line again'$/m.test(installer) && /update_with="\$\{bold\}dsh update\$\{off\}"/.test(installer))
+  check('a linked worktree, whose .git is a file, is a checkout to update', /^if \[ -e "\$DEEPBOT_DIR\/\.git" \]; then$/m.test(installer))
   rmSync(root, { recursive: true, force: true })
 }
 

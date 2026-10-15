@@ -348,7 +348,8 @@ node_major="$(node -p 'process.versions.node.split(".")[0]')"
 note "node $(node -v) · git · dsh at $DSH_BIN"
 
 step "fetching deepbot into $DEEPBOT_DIR"
-if [ -d "$DEEPBOT_DIR/.git" ]; then
+# .git is a file in a linked worktree.
+if [ -e "$DEEPBOT_DIR/.git" ]; then
   fetch_checkout "$DEEPBOT_DIR" "$DEEPBOT_REF"
   note "updated to $(git -C "$DEEPBOT_DIR" rev-parse --short HEAD)"
 elif [ -e "$DEEPBOT_DIR" ]; then
@@ -424,9 +425,11 @@ else
 fi
 
 step "the terminal"
+# How to update, at the end: dsh update where dsh is this project's, the install line again where it is not.
+update_with='the same curl line again'
 if launcher="$(install_terminal "$DEEPBOT_DIR")"; then
   note "dsh: $launcher"
-  case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) note "add ~/.local/bin to your PATH to run it as dsh" ;; esac
+  case ":$PATH:" in *":$HOME/.local/bin:"*) update_with="${bold}dsh update${off}" ;; *) note "add ~/.local/bin to your PATH to run it as dsh" ;; esac
 else
   note "$launcher"
 fi
@@ -454,7 +457,7 @@ cat <<NEXT
     Talk to it here: ${bold}dsh${off}
     Connect Slack, Telegram or Discord: ${bold}dsh gateway setup${off}
     Your agent's persona is ${bold}$DEEPBOT_HOME/SOUL.md${off} — edit it, it is yours.
-    Update later: ${bold}dsh update${off}
+    Update later: $update_with
 NEXT
 }
 
