@@ -17,7 +17,7 @@ import './dist-fresh.ts'   // fails loudly on a stale dist
 import './scratch-dsh-home.ts'   // the recall index must not land in the real ~/.dsh
 
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, realpathSync, statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, basename, sep } from 'node:path'
 import { apply } from '../dist/index.js'
 import { recallIndexPath } from '../dist/recallContext.js'
@@ -382,14 +382,14 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   const home = process.cwd()
   check('a read inside the workspace is allowed', t.gate(exec('read', { file_path: join(home, 'README.md') })) === 'delegated')
   check('a relative read is resolved against the workspace', t.gate(exec('read', { file_path: 'index.ts' })) === 'delegated')
-  const denied = t.gate(exec('read', { file_path: `${process.env.HOME}/.other-bot/profiles/default/.env` }))
+  const denied = t.gate(exec('read', { file_path: `${homedir()}/.other-bot/profiles/default/.env` }))
   check('a read outside is denied', denied?.kind === 'deny', JSON.stringify(denied))
   check('and the denial says what to do instead', /put the file there|paste its contents/.test(String(denied?.reason)), String(denied?.reason).slice(0, 90))
   check('the denial is logged', t.logs.some((l) => /read outside the sandbox denied/.test(l)))
   check('a read in temp is allowed', t.gate(exec('read', { file_path: '/tmp/some-file.txt' })) === 'delegated')
   check('grep with an outside path is denied', t.gate(exec('grep', { pattern: 'token', path: '/etc' }))?.kind === 'deny')
   check('glob with an absolute outside pattern is denied', t.gate(exec('glob', { pattern: '/etc/**' }))?.kind === 'deny')
-  check('writes are not affected by the read scope', t.gate(exec('write', { file_path: `${process.env.HOME}/outside.txt`, content: 'x' })) === 'delegated')
+  check('writes are not affected by the read scope', t.gate(exec('write', { file_path: `${homedir()}/outside.txt`, content: 'x' })) === 'delegated')
   check('an unnamed tool is not covered', t.gate(exec('todo_write', { file_path: '/etc/hosts' })) === 'delegated')
   t.done()
 }
@@ -737,7 +737,7 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
   await sleep(400)
   const said = t.transport.posted.map((p) => p.text).join('\n')
   check('an unfinished turn is reported in Korean', /끝내지 못했어/.test(said), said.slice(0, 80))
-  check('without a host path in it', !said.includes(process.env.HOME ?? '/nonexistent') && !/\.log\b/.test(said), said.slice(0, 120))
+  check('without a host path in it', !said.includes(homedir()) && !/\.log\b/.test(said), said.slice(0, 120))
   t.done()
 }
 
