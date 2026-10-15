@@ -576,8 +576,9 @@ What appears besides the conversation:
   harness reads that file at launch); one entered in the app counts at once. A route that names no key is
   listed as it is, and the DeepSeek account, which signs in, lists its models once signed in. A
   conversation already on a route whose key is gone (chosen before, or the key removed since) fails its
-  turns until the key is set or another model is chosen. Reminders the harness delivers on its own
-  schedule are not known to follow a conversation's choice (unverified). The deployment's own
+  turns until the key is set or another model is chosen. A reminder the harness delivers on its own
+  schedule runs on the conversation's choice too, as it is when the reminder's request goes (see
+  Reminders below; `test/scenarios/reminder-model.json`). The deployment's own
   reasoning effort (`agent-default-model`) now reaches a turn too; it was dropped before. The status
   line shows the effort at its left, in sky blue, and the model at its right.
 - **`/interview <topic>`** runs a deep interview: one question per round, and a strip with the
@@ -609,6 +610,22 @@ instance (it boots `agent-test` with a `--patch` overlay that serves only the so
   schedule takes a turn in the session by itself. The adapter does not drive that turn — it
   delivers assistant messages for session ids it is not currently driving, which is
   `test/delivery.test.ts` 9/9 and `test/scenarios/reminder.json`.
+  The harness resumes the session with an agent of its own, routes it by the session's last request,
+  and keeps that agent for as long as the gateway runs, holding the session. Two things follow, both
+  handled by the adapter. That agent's requests go on the conversation's route as it is at each request
+  (`/model`, shift+tab, a tenant's model), from an `agent/request` listener the adapter adds as the
+  agent is created (or, for one made before the adapter loaded, as it starts) — outermost, as the
+  harness's own model selection is among its listeners. And the conversation's next turn, refused the
+  held session, runs in that agent instead of failing: it first waits for a turn of the harness's own
+  running there (whose answer is delivered as the agent's, and which a stop does not cancel), gets the
+  identity section a turn's own agent gets, keeps the route it started on through a `/model`, and does
+  not dispose the agent. Before, every message after a reminder failed with "could not take the
+  session". That agent's tools are the preset the harness composes from the session's record, which
+  can differ from what the adapter would mount now (a preset changed since, or none configured); the
+  tool gate and the sandbox apply either way. A reminder's turn gets no `[model changed: …]` notice of
+  its own; the adapter's line on the conversation's next turn names the model of the turns before the
+  switch. If the desktop app picked a model for such a session, that pick is overridden here, and the
+  harness may add its notice naming it.
 - **Watches** ("tell me when this changes") are `watch/watch.ts`, installed as a launchd job by
   `watch/install-watch.sh` (evaluated every 60 s by default). Watch definitions come from
   `~/.dsh/watches.json` and from `<agent home>/watches/*.json`, merged by id — the second location
@@ -762,6 +779,7 @@ step failed, 2 on setup problems. Flags: `--timeout <s>`, `--seed <file>`, `--du
 | `approval-gate.json` | the destructive-command gate — **left failing on step 3 as the record** of an open gap |
 | `interrupt.json` | a running turn stopped mid-flight ends as `cancelled` |
 | `reminder.json` | a reminder fires on the wall clock and wakes the agent by itself |
+| `reminder-model.json` | a reminder runs on the effort chosen after it was made, and the conversation's next turn still runs |
 
 Named shortcuts exist for the common ones (`pnpm test:doc`, `test:vision`, `test:isolation`,
 `test:approval-gate`, `test:interrupt`, `test:immediate`, ...; the full list is in

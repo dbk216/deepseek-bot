@@ -69,7 +69,7 @@ import type { InboundMessage, StreamFrame } from './types/transport.js'
 import type { Origin, TurnOutcome, TurnSummary } from './types/core.js'
 import type {
   AgentDefaultModelService, AgentsService, LlmService, AgentPresetsService, AttachmentsService,
-  CredentialsService, FileSystemService, PermissionPresetsService, SessionProjectionsService,
+  Agent, CredentialsService, FileSystemService, PermissionPresetsService, SessionProjectionsService,
   SessionQueryService, SessionsService, SettingsService, WorkspaceRegistryService,
 } from './types/dsh.js'
 
@@ -1839,6 +1839,14 @@ export function apply(ctx, config) {
 
   async function runRegisteredTurn(turn: { sessionId: string; turnKey: string; turnState: TurnState }, prompt: string, existingSessionId: string | undefined, origin: Origin | null = null, historyText = '', attachmentText = '', sessionKey: string | null = null, images: unknown[] = []): Promise<TurnOutcome> {
     const { sessionId, turnKey, turnState } = turn
+    // One deadline for the whole turn, a wait for a borrowed agent included: the queue's backstop is set from the same
+    // runTimeoutMs, and a turn past it would answer nobody.
+    const deadline = Date.now() + cfg.runTimeoutMs
+    // Settles when the turn is stopped (a stop, its timeout): a wait on an agent's turn that is not this one's ends there.
+    let stop: () => void = () => {}
+    const stopped = new Promise<void>((resolve) => { stop = resolve })
+    const record = turnState.cancel
+    turnState.cancel = (reason) => { record(reason); stop() }
     // Fetched material says what it is, where an instruction would appear. Applied here
     // rather than in handleEvent because this is where both paths converge: the scenario
     // harness calls runTurn directly, so a guard that only ran in production would be
@@ -1941,13 +1949,50 @@ export function apply(ctx, config) {
       let lastError
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          return existing
-            ? await agents.resume({ resumeSessionId: existing, agentOptions, setup })
-            : await agents.create({ sessionId, meta, agentOptions, setup })
+          adopting.add(sessionId)
+          let made
+          try {
+            made = existing
+              ? await agents.resume({ resumeSessionId: existing, agentOptions, setup })
+              : await agents.create({ sessionId, meta, agentOptions, setup })
+          } finally { adopting.delete(sessionId) }
+          if (made?.agent !== undefined) ownAgents.add(made.agent)
+          return made
         } catch (e) {
           lastError = e
           const message = String(e?.message ?? e)
           if (!/active write handle/i.test(message)) throw e
+          // The harness keeps the agent it resumed the session with for a reminder, and never lets it go: every
+          // later turn here was refused. The turn runs in that agent, which stays the harness's (not disposed).
+          // One of this adapter's own agents still going away (a turn past its backstop) is waited for, as before.
+          const held = existing ? agents.get?.(existing) : undefined
+          // Nor one another turn of this adapter is in (a turn past the queue's backstop): waited for, as before.
+          if (held !== undefined && !ownAgents.has(held) && !borrowedAgents.has(held) && typeof held.followup === 'function' && typeof held.whenIdle === 'function') {
+            borrowedAgents.add(held)
+            followConversationRoute(held)
+            if (!identifiedAgents.has(held)) {
+              identifiedAgents.add(held)
+              held.ctx?.systemPrompt?.section?.({ name: 'deepbot:identity', order: IDENTITY_ORDER, interpolate: false, text: identityText(sessionKey) })
+            }
+            log(`session ${sessionId} is held by an agent the harness keeps — this turn runs in it`)
+            // A turn the harness is running in it (a reminder's) is the harness's: its answer is delivered as the
+            // agent's own, so this turn waits for it outside the conversation's running turns — for as long as a
+            // turn may run: one that never ends (a question nobody answers) times this one out, not the queue.
+            activeTurns.delete(sessionId)
+            liveOrigins.delete(sessionId)
+            let limit: ReturnType<typeof setTimeout> | undefined
+            try {
+              await Promise.race([held.whenIdle(), stopped, new Promise<void>((resolve) => { limit = setTimeout(() => { turnState.cancel('timed out'); resolve() }, Math.max(0, deadline - Date.now())) })])
+            } catch (e) {
+              borrowedAgents.delete(held)
+              throw e
+            } finally {
+              clearTimeout(limit)
+              activeTurns.add(sessionId)
+              if (origin !== null) liveOrigins.set(sessionId, origin)
+            }
+            return { agent: held, borrowed: true }
+          }
           log(`session ${sessionId} is busy (another turn owns it) — retry ${attempt}/3 in 3s`)
           await new Promise((resolve) => setTimeout(resolve, 3000))
         }
@@ -2010,8 +2055,13 @@ export function apply(ctx, config) {
       // The agent exists now, so cancellation can reach it — and the turn may have been
       // stopped while the agent was being created, which is a stop a human asked for.
       turnState.prepared = true
+      // In a borrowed agent, until this turn's message is in, what runs is the harness's own turn, not this one: a
+      // stop is recorded, ends the wait for it, and is checked before the message goes.
+      let sent = false
       turnState.cancel = (reason) => {
         turnState.cause = reason
+        stop()
+        if (handle?.borrowed === true && !sent) return
         try { agent.cancel?.(reason) } catch (e) { log(`agent.cancel failed: ${String(e?.message ?? e)}`) }
       }
       // Its own turn, not whatever is registered under the key: once this turn's reply was out, a
@@ -2019,7 +2069,7 @@ export function apply(ctx, config) {
       const turnTimeout = setTimeout(() => {
         log(`cancelling the running turn in ${turnKey} (timed out)`)
         turnState.cancel('timed out')
-      }, cfg.runTimeoutMs)
+      }, Math.max(0, deadline - Date.now()))
 
     // Progress lives here, not in the Slack message handler, for the same reason the
     // recall refresh does: this is the one place every caller passes through. Armed
@@ -2047,7 +2097,7 @@ export function apply(ctx, config) {
         log(`turn in ${turnKey} was stopped before it started (${turnState.cause})`)
         return { text: '', reason: { kind: 'cancelled', cause: turnState.cause }, toolsUsed: [], sessionId }
       }
-      await agent.whenIdle()
+      await (handle?.borrowed === true ? Promise.race([agent.whenIdle(), stopped]) : agent.whenIdle())
       const firstSeq = agent.session.seq
       const { preamble } = await contextPreamble(origin ?? null, historyText, attachmentText, sessionKey, prompt, sessionId)
       // Whose message this is, in the platform's mention form: the persona names people that way
@@ -2064,6 +2114,13 @@ export function apply(ctx, config) {
       const switched = ranOn !== undefined && ranOn !== route ? `[model changed] The turns above were answered by ${defuse(ranOn)}; this one is answered by ${defuse(route)}.\n` : ''
       const body = preamble === '' && speaker === '' && switched === '' ? prompt : `${switched}${preamble}${speaker}[user message]\n${prompt}`
       const refs = await admitImages(images)
+      if (turnState.cause !== null) {
+        log(`turn in ${turnKey} was stopped before its message went (${turnState.cause})`)
+        return { text: '', reason: { kind: 'cancelled', cause: turnState.cause }, toolsUsed: [], sessionId }
+      }
+      // A borrowed agent follows the conversation's route per request; this turn keeps the route it started on.
+      if (handle?.borrowed === true) pinnedRoutes.set(agent, agentOptions)
+      sent = true
       agent.followup(userMessage(refs.length === 0
         ? body
         : [{ type: 'text', text: body }, ...refs.map((attachment) => ({ type: 'image', attachment }))]))
@@ -2120,6 +2177,7 @@ export function apply(ctx, config) {
       liveOrigins.delete(sessionId)
       // Whatever the turn was still waiting on in the conversation (an unanswered question) ends with it.
       if (origin !== null) { try { via(origin).turnEnded?.(origin) } catch { /* nothing waiting */ } }
+      if (handle?.agent !== undefined) { pinnedRoutes.delete(handle.agent); borrowedAgents.delete(handle.agent) }
       try { await handle.dispose?.() } catch (e) { log('dispose failed', String(e)) }
       try { await scope?.[Symbol.asyncDispose]?.() } catch (e) { log('preset scope dispose failed', String(e)) }
     }
@@ -2292,6 +2350,66 @@ export function apply(ctx, config) {
     const said = `${route.provider}/${route.model}:${route.reasoningEffort}`
     if (!effortRefusals.has(said)) { effortRefusals.add(said); log(`models: ${route.provider}/${route.model} takes no reasoning effort "${route.reasoningEffort}" — sent without one`) }
     return { provider: route.provider, model: route.model }
+  }
+
+  /** The conversation a session is mapped to, if any. */
+  const conversationOf = (sessionId: unknown) => (typeof sessionId === 'string' ? Object.keys(state.sessions).find((k) => state.sessions[k] === sessionId) : undefined)
+
+  /**
+   * An agent the harness made on a conversation's session sends each request on the conversation's route as it is
+   * then. The harness resumes a session for a reminder, keeps that agent, and routes it by the session's own record
+   * (its last request's route), which knows nothing of /model, shift+tab or a tenant's model. This listener is the
+   * outermost on the agent's requests, as the harness's own selection is among its listeners; an effort carried
+   * over is kept only on the same model, as the harness keeps it.
+   */
+  const routedAgents = new WeakSet<object>()
+  /** Agents the harness made that a turn of this adapter ran in, given the identity section a turn's own agent gets in its setup. */
+  const identifiedAgents = new WeakSet<object>()
+  /** The route a turn of this adapter keeps while it runs in an agent the harness made. */
+  const pinnedRoutes = new WeakMap<object, { provider: string; model: string; reasoningEffort?: string }>()
+  /** This adapter's own agents, and the sessions it is making one for now: an agent announced for one of those is its. */
+  const ownAgents = new WeakSet<object>()
+  const adopting = new Set<string>()
+  /** Agents the harness made that a turn of this adapter is in now. */
+  const borrowedAgents = new WeakSet<object>()
+  function followConversationRoute(agent: Agent): void {
+    if (routedAgents.has(agent) || typeof agent.ctx?.on !== 'function') return
+    routedAgents.add(agent)
+    agent.ctx.on('agent/request', async (_payload, next) => {
+      const resolved = await next()
+      const key = conversationOf(agent.id ?? agent.session?.header?.id)
+      if (key === undefined) return resolved
+      const route = pinnedRoutes.get(agent) ?? await turnModel(key)
+      const { reasoningEffort: carried, ...rest } = resolved
+      const effort = route.reasoningEffort ?? (resolved.provider === route.provider && resolved.model === route.model ? carried : undefined)
+      return { ...rest, provider: route.provider, model: route.model, ...(effort !== undefined ? { reasoningEffort: effort } : {}) }
+    }, { prepend: true })
+  }
+
+  /**
+   * Agents the harness makes on a conversation's session: a reminder's, or one for the session opened elsewhere.
+   * Each follows the conversation's route from its first request. This adapter's own agents (announced while it
+   * makes them) are made on it already, and a subagent's session is no conversation's.
+   */
+  let routeWatcher = null
+  function startRouteWatcher() {
+    if (routeWatcher !== null || typeof ctx.on !== 'function') return
+    routeWatcher = ctx.on('agent/created', (payload) => {
+      try {
+        const agent = payload?.agent as Agent | undefined
+        const id = agent?.id ?? agent?.session?.header?.id
+        const key = conversationOf(id)
+        if (agent === undefined || typeof id !== 'string' || adopting.has(id) || key === undefined) return
+        followConversationRoute(agent)
+        log(`models: ${key}: an agent the harness made on its session follows the conversation's route`)
+      } catch (e) { log(`models: an agent the harness made was not given the conversation's route: ${String((e as Error)?.message ?? e).slice(0, 120)}`) }
+    })
+    // Agents made before this listener was (a plugin reload; overdue reminders delivered as the harness starts).
+    try {
+      for (const agent of (ctx.get('agents') as AgentsService | undefined)?.list?.() ?? []) {
+        if (conversationOf(agent?.id ?? agent?.session?.header?.id) !== undefined) followConversationRoute(agent)
+      }
+    } catch (e) { log(`models: agents already made were not given the conversation's route: ${String((e as Error)?.message ?? e).slice(0, 120)}`) }
   }
 
   /**
@@ -2903,6 +3021,10 @@ export function apply(ctx, config) {
     const results = []
     let failed = 0
     log(`scenario start — ${steps.length} step(s) from ${scriptPath}`)
+    // A run starts on the deployment's model: a choice an earlier run made for its conversation (the state file
+    // outlives a run) made the next run's turns take it, and a check on the route passed for that reason.
+    for (const key of Object.keys(state.models ?? {})) if (key.startsWith('scenario:')) delete state.models[key]
+    for (const key of Object.keys(state.routes ?? {})) if (key.startsWith('scenario:')) delete state.routes[key]
 
     for (const [index, step] of steps.entries()) {
       const n = index + 1
@@ -2918,20 +3040,36 @@ export function apply(ctx, config) {
           if (!query || !sessionId) throw new Error('no session to inspect')
           const observation = await query.observeSession(sessionId)
           const events = observation?.events ?? []
-          const hit = events.some((e) => {
+          // `fromSchedule`: only the message the harness's scheduler delivered, not the request that asked for it
+          // (which says the same words). `effort`: the effort of the first request after that message.
+          const at = events.findIndex((e) => {
             if (e?.type !== 'user/message' && e?.type !== 'assistant/message') return false
+            if (target.fromSchedule === true && (e.data?.source ?? e.data?.message?.source)?.kind !== 'schedule') return false
             const text = (e.data?.message?.content ?? e.data?.content ?? [])
               .filter((b) => b?.type === 'text').map((b) => b.text).join('')
             return text.includes(target.contains)
           })
+          const header = at < 0 ? undefined : events.slice(at).find((e) => e?.type === 'request/header')
+          const ranWith = header?.data?.header?.config?.reasoningEffort ?? null
+          const hit = at >= 0 && (target.effort === undefined || ranWith === target.effort)
           if (!hit) failed++
-          results.push({ step: n, kind: 'expectSessionTurn', session: target.session, contains: target.contains, ok: hit, events: events.length })
-          log(`  step ${n}: session log contains ${JSON.stringify(target.contains)} — ${hit ? 'PASS' : 'FAIL'} (${events.length} events)`)
+          results.push({ step: n, kind: 'expectSessionTurn', session: target.session, contains: target.contains, ok: hit, events: events.length, ...(target.effort !== undefined ? { effort: ranWith } : {}) })
+          log(`  step ${n}: session log contains ${JSON.stringify(target.contains)}${target.fromSchedule === true ? ' from the scheduler' : ''}${target.effort !== undefined ? `, next request's effort ${ranWith} (want ${target.effort})` : ''} — ${hit ? 'PASS' : 'FAIL'} (${events.length} events)`)
         } catch (e) {
           failed++
           results.push({ step: n, kind: 'expectSessionTurn', ok: false, error: String(e?.message ?? e) })
           log(`  step ${n}: session inspection FAILED — ${String(e?.message ?? e)}`)
         }
+        continue
+      }
+      if (step.effort !== undefined) {
+        // The conversation's effort, as the terminal's shift+tab or /model sets it: its own model, this effort.
+        const key = `scenario:${step.effort.session ?? 'default'}`
+        const route = modelFor(key)
+        const problem = await setModel(key, { provider: route.provider, model: route.model, effort: step.effort.effort })
+        if (problem !== null) failed++
+        results.push({ step: n, kind: 'effort', ok: problem === null, ...(problem !== null ? { problem } : {}) })
+        log(`  step ${n}: ${key} effort ${step.effort.effort} — ${problem === null ? 'set' : `FAIL ${JSON.stringify(problem)}`}`)
         continue
       }
       if (step.expectMissingFile !== undefined) {
@@ -3251,6 +3389,7 @@ export function apply(ctx, config) {
     startWithRetry()
     startDeliveryWatcher()
     startStreamForwarder()
+    startRouteWatcher()
     startApprovalAnswerer()
     startQuestionAnswerer()
     startToolPolicy()

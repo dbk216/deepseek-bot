@@ -1,5 +1,5 @@
 {
-  "_comment": "Does a scheduled reminder actually fire and wake the agent on its own? The Turn is NOT driven by the adapter — the schedule owns the session while it delivers — so the assertion is against the session log. Slack delivery is covered by test/delivery.test.ts.",
+  "_comment": "Does a scheduled reminder actually fire and wake the agent on its own? The Turn is NOT driven by the adapter — the schedule owns the session while it delivers — so the assertion is against the session log, on the message the scheduler delivered: the request that asked for it says the same words. Slack delivery is covered by test/delivery.test.ts.",
   "steps": [
     {
       "session": "R",
@@ -16,7 +16,8 @@
     {
       "expectSessionTurn": {
         "session": "R",
-        "contains": "물 마실 시간"
+        "contains": "물 마실 시간",
+        "fromSchedule": true
       }
     }
   ]

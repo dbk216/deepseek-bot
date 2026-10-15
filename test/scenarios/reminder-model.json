@@ -1,0 +1,43 @@
+{
+  "_comment": "A reminder runs on the conversation's model and effort as they are when it fires, not as they were at its last turn. The harness resumes the session for it with no adapter turn, so the effort is changed after the reminder is made (as shift+tab or /model would) and read back from the request the reminder's own turn sent. The test profile runs at medium: the request that made the reminder is checked to be at medium first, so high afterwards can only come from the switch. The last step takes the session back after the harness's turn.",
+  "steps": [
+    {
+      "session": "R",
+      "say": "1분 뒤에 '물 마실 시간'이라고 알려줘. 리마인더를 만들어줘."
+    },
+    {
+      "session": "R",
+      "say": "만들어졌으면 '생성됨'이라고만 답해.",
+      "expectContains": "생성"
+    },
+    {
+      "expectSessionTurn": {
+        "session": "R",
+        "contains": "리마인더를 만들어줘",
+        "effort": "medium"
+      }
+    },
+    {
+      "effort": {
+        "session": "R",
+        "effort": "high"
+      }
+    },
+    {
+      "waitSeconds": 85
+    },
+    {
+      "expectSessionTurn": {
+        "session": "R",
+        "contains": "물 마실 시간",
+        "fromSchedule": true,
+        "effort": "high"
+      }
+    },
+    {
+      "session": "R",
+      "say": "알림을 받았으면 '확인'이라고만 답해.",
+      "expectContains": "확인"
+    }
+  ]
+}

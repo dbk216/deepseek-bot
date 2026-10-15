@@ -49,6 +49,16 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **After a reminder, every message in that conversation failed.** The harness resumes a session for a
+  reminder with an agent of its own and keeps it, holding the session, so the conversation's next turn
+  was refused ("could not take the session after retries") until the gateway restarted. That turn now
+  runs in the agent the harness keeps, with the identity section a turn's own agent gets.
+- **A reminder ran on the model a conversation had before `/model` or shift+tab.** The harness routes its
+  agent by the session's last request, which knows nothing of the adapter's choice. The adapter now adds
+  an `agent/request` listener to each agent the harness makes on a conversation's session, so its
+  requests go on the conversation's route as it is at each request. Scenario runs also start each
+  conversation on the deployment's model: a choice an earlier run left in the state file made the next
+  run's turns take it, and a check passed for that reason.
 - **`/model` listed routes with no key.** Every model a registered provider advertises was listed, and a
   conversation moved to a route whose key is set nowhere the harness looks failed every turn. Such a
   route is now left out, read the way the harness's own Models page reads it, and one asked for by name

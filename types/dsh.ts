@@ -51,8 +51,16 @@ export interface Agent {
   cancel?(cause?: string | { kind: string }, options?: { keepInbox?: boolean }): void
   /** Resolves when the agent has nothing left to do. */
   whenIdle(): Promise<void>
-  /** The agent's own Cordis context, when the composition exposes one. */
-  ctx?: unknown
+  /** The agent's id, which is its session's. */
+  id?: string
+  /**
+   * The agent's own Cordis context, when the composition exposes one: its listeners go with the agent (an
+   * `agent/request` waterfall, run outermost first, `prepend` first of all), and its system prompt's sections.
+   */
+  ctx?: {
+    on?(name: 'agent/request', listener: (payload: unknown, next: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>>, options?: { prepend?: boolean }): unknown
+    systemPrompt?: { section?(section: { name: string; order: number; interpolate: boolean; text: string }): unknown }
+  }
 }
 
 export interface AgentHandle {
@@ -72,6 +80,10 @@ export interface AgentsService {
     agentOptions?: unknown
     setup?: (ctx: unknown) => Promise<void> | void
   }): Promise<AgentHandle>
+  /** The live agent on a session, whoever made it. */
+  get?(id: string): Agent | undefined
+  /** Every live agent. */
+  list?(): Agent[]
 }
 
 export interface SessionsService {
