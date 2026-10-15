@@ -6,7 +6,7 @@
  * and VCS folders, and not through links; the listing is kept for a few seconds so typing stays
  * fast. It is synchronous, which the budget is there to make tolerable.
  */
-import { readdirSync, readFileSync, type Dirent } from 'node:fs'
+import { closeSync, constants, fstatSync, openSync, readdirSync, readSync, type Dirent } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 
 const SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.omc', '.cache', '__pycache__', '.venv', '.next', '.dsh'])
@@ -65,27 +65,48 @@ export function fileFinder(now: () => number = () => Date.now(), read: ReadDirec
 }
 
 /**
- * The branch a directory's work tree is on, read from its own `.git` (a worktree's `.git` file names
- * its gitdir): the branch's name, a detached head's short hash, or null outside a repository. Only
- * the directory itself is looked at, not its parents: the workspace is the agent's own.
+ * At most `limit` bytes of a regular file, or null: never a FIFO, a device or anything else that could
+ * block or not end. The workspace is the agent's to write, and what it leaves there is read here.
  */
-export function gitBranch(dir: string): string | null {
+function readSmall(path: string, limit = 512): string | null {
+  let fd: number
   try {
-    let gitdir = join(dir, '.git')
-    let head: string
-    try {
-      head = readFileSync(join(gitdir, 'HEAD'), 'utf8')
-    } catch {
-      const pointer = /^gitdir:\s*(.+)$/m.exec(readFileSync(gitdir, 'utf8'))
-      if (pointer === null) return null
-      gitdir = isAbsolute(pointer[1].trim()) ? pointer[1].trim() : resolve(dir, pointer[1].trim())
-      head = readFileSync(join(gitdir, 'HEAD'), 'utf8')
-    }
-    const ref = /^ref:\s*refs\/heads\/(.+)$/m.exec(head)
-    if (ref !== null) return ref[1].trim()
-    const hash = /^([0-9a-f]{7,64})\s*$/.exec(head.trim())
-    return hash === null ? null : hash[1].slice(0, 7)
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0))
   } catch {
     return null
   }
+  try {
+    if (!fstatSync(fd).isFile()) return null
+    const buffer = Buffer.alloc(limit)
+    const n = readSync(fd, buffer, 0, limit, 0)
+    return buffer.subarray(0, n).toString('utf8')
+  } catch {
+    return null
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/**
+ * The branch a directory's work tree is on, read from its own `.git` (a worktree's `.git` file names
+ * its gitdir): the branch's name, a detached head's short hash, or null outside a repository or for a
+ * reftable repository's placeholder. Only the directory itself is looked at, not its parents: the
+ * workspace is the agent's own.
+ */
+export function gitBranch(dir: string): string | null {
+  let gitdir = join(dir, '.git')
+  let head = readSmall(join(gitdir, 'HEAD'))
+  if (head === null) {
+    const pointer = /^gitdir:\s*(.+)$/.exec((readSmall(gitdir) ?? '').split(/\r?\n/)[0])
+    if (pointer === null) return null
+    gitdir = isAbsolute(pointer[1].trim()) ? pointer[1].trim() : resolve(dir, pointer[1].trim())
+    head = readSmall(join(gitdir, 'HEAD'))
+    if (head === null) return null
+  }
+  // git reads HEAD's first line.
+  const first = head.split(/\r?\n/)[0].trim()
+  const ref = /^ref:\s*refs\/heads\/(.+)$/.exec(first)
+  if (ref !== null) return ref[1] === '.invalid' ? null : ref[1]
+  const hash = /^([0-9a-f]{7,64})$/.exec(first)
+  return hash === null ? null : hash[1].slice(0, 7)
 }

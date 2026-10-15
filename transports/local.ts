@@ -51,7 +51,7 @@ interface LocalHost {
   services?: Services
   /** The root session of a conversation, from its first turn on. */
   sessionFor?: (key: string) => string | null
-  /** The model a conversation's next turn uses (with no key, the deployment's), for the terminal's info line. */
+  /** The model a conversation's next turn uses (with no key, the deployment's), for the terminal's welcome box and status line. */
   model?: (key?: string) => string
   /** A conversation's effort as it stands, without asking the provider (for `ready`). */
   effortOf?: (key: string) => string | null

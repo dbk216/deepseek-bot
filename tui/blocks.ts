@@ -339,7 +339,9 @@ export function welcomeBlock(info: () => Welcome, mode: ColorMode): Block & { re
         { text: '', style: '' },
         { text: t().welcomeKeys, style: sgr(theme.muted, mode) },
       ]
-      const box = Math.max(20, Math.min(width - 2, 84))
+      // Too narrow for a box: the words alone.
+      if (width < 22) return [blank(), ...words.filter((w) => w.text !== '').map((w) => ({ spans: [pad(' '), { text: fit(w.text, Math.max(1, width - 2)), style: w.style }], soft: false }))]
+      const box = Math.min(width - 2, 84)
       const inner = box - 4
       const withMark = inner >= MARK_WIDTH + 4 + 24
       const marks = withMark ? mark(mode) : []

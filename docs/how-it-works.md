@@ -519,12 +519,13 @@ alone until `dsh gateway setup` adds a messenger; from a clone, run `node dist/t
 
 **What it shows.** A conversation opens with a welcome box, as Claude Code's does: the mark (the README's
 whale), `deepseek-bot` and its version, the model, the workspace and session, and where to start (`/help`,
-`?`); a narrow screen gets the words without the mark. No header row sits over the conversation; one
+`?`); a narrow screen gets the words without the mark, and one too narrow for the box the words alone. No header row sits over the conversation; one
 appears only in a subagent's or a shell's view, saying where the pane is looking. The status line's right
 side is the context bar (yellow past 70%, red past 90%), the tokens sent `↑` and received `↓`, the share
 of what was sent that the provider's cache served, and the model. Under the box, at the hint line's
 right, are the workspace (with its git branch when it is a repository) and the conversation, as pi's
-footer has them. What the person said sits on a band across the pane; the answer starts at a white
+footer has them, in the conversation's own view. On a narrow line the status line's parts go whole from
+the right, the model first. What the person said sits on a band across the pane; the answer starts at a white
 `●`; a tool call's `●` blinks while it runs and turns green or red with its result (grey when the turn
 ended without one); thinking is in sky blue, its label swept by a light while it streams, and folds to
 one line when the answer starts. A blank line separates the steps of a turn; nothing rules one exchange

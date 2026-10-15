@@ -25,4 +25,3 @@ export function mark(mode: ColorMode): Array<{ text: string; style: string }> {
     style: sgr({ fg: mix(palette.light, palette.deep, i / (MARK.length - 1)) }, mode),
   }))
 }
-

@@ -195,6 +195,8 @@ export class App {
   /** Turns the conversation has running or waiting: each sends typing on, then off. */
   private busy = 0
   private dragging = false
+  /** The row of the drag's last report: the top row scrolls only when the drag comes into it. */
+  private dragRow = -1
   /** The input box's first visible row: kept until the cursor leaves the rows shown. */
   private editorScroll = 0
   /** Rows of the last frame, for mapping mouse coordinates. */
@@ -1097,13 +1099,17 @@ export class App {
       const line = pane.lineAt(m.y - transcriptTop) ?? Math.max(0, pane.size - 1)
       pane.beginSelection({ line, col: m.x })
       this.dragging = true
+      this.dragRow = m.y
       this.terminal.requestRender(true)
       return
     }
     if (m.action === 'drag' && this.dragging) {
       // Dragging past the edge scrolls, so a selection can be longer than the screen.
-      if (m.y < transcriptTop) pane.scroll(-1)
+      // Past the top: above the pane, or, when nothing is above it (the main view has no header), into its
+      // first row from below. Along that row the drag selects, as anywhere.
+      if (m.y < transcriptTop || (m.y === 0 && transcriptTop === 0 && this.dragRow > 0)) pane.scroll(-1)
       else if (m.y >= transcriptTop + transcriptHeight) pane.scroll(1)
+      this.dragRow = m.y
       const row = Math.max(0, Math.min(transcriptHeight - 1, m.y - transcriptTop))
       const line = pane.lineAt(row) ?? Math.max(0, pane.size - 1)
       pane.extendSelection({ line, col: m.x })
@@ -1301,7 +1307,8 @@ export class App {
             : t().hints.idle(allRows.length > 0)
     screen.put(1, editorTop + boxRows, hint, s(theme.dim))
     // At its right, as pi's footer has it: where the agent works (and on which branch), and the conversation.
-    if (this.status.workspace !== '') {
+    // Only in the conversation's own view: a subagent's or a shell's has a header that says where it looks.
+    if (this.status.workspace !== '' && this.view.kind === 'main') {
       const where = `${this.shownWorkspace()}${this.branch !== null ? ` (${this.branch})` : ''}${this.status.session ? ` · ${this.status.session.slice(0, 8)}…` : ''}`
       const x = cols - 1 - stringWidth(where)
       if (x >= 1 + stringWidth(hint) + 2) screen.put(x, editorTop + boxRows, where, s(theme.muted))
@@ -1493,14 +1500,21 @@ export class App {
       const filled = Math.round(Math.max(0, Math.min(100, this.status.contextPct)) / 12.5)
       parts.push(`ctx ${'▰'.repeat(filled)}${'▱'.repeat(8 - filled)} ${Math.round(this.status.contextPct)}%`)
     }
-    // Sent ↑ and received ↓, as pi shows them, when the gateway says them apart.
-    if (this.status.tokensIn !== null && this.status.tokensOut !== null) parts.push(`↑${formatTokens(this.status.tokensIn)} ↓${formatTokens(this.status.tokensOut)}`)
-    if (this.status.tokensCached !== null && this.status.tokensIn !== null && this.status.tokensIn > 0) parts.push(t().cacheShare(Math.round((this.status.tokensCached / this.status.tokensIn) * 100)))
-    else if (this.status.tokens > 0) parts.push(`${formatTokens(this.status.tokens)} tok`)
-    // The model last, at the edge: what /model changed, next to where it was asked. On a narrow line
-    // it is the first to go.
-    const withModel = [...parts, ...(this.status.connected && this.status.model !== '' ? [this.status.model] : [])].join(' · ')
-    const right = x + 2 + stringWidth(withModel) <= screen.cols - 1 ? withModel : parts.join(' · ')
+    // Sent ↑ and received ↓, as pi shows them, when the gateway says them apart (and something was), with the
+    // share the cache served; otherwise the total.
+    const { tokensIn, tokensOut, tokensCached } = this.status
+    if (tokensIn !== null && tokensOut !== null && tokensIn + tokensOut > 0) {
+      parts.push(`↑${formatTokens(tokensIn)} ↓${formatTokens(tokensOut)}`)
+      if (tokensCached !== null && tokensIn > 0) parts.push(t().cacheShare(Math.round((tokensCached / tokensIn) * 100)))
+    } else if (this.status.tokens > 0) parts.push(`${formatTokens(this.status.tokens)} tok`)
+    // The model last, at the edge: what /model changed, next to where it was asked. On a narrow line the
+    // parts go whole from the right, the model first: never half a figure.
+    const all = [...parts, ...(this.status.connected && this.status.model !== '' ? [this.status.model] : [])]
+    let right = ''
+    for (let n = all.length; n > 0; n--) {
+      const text = all.slice(0, n).join(' · ')
+      if (x + 2 + stringWidth(text) <= screen.cols - 1) { right = text; break }
+    }
     if (right === '') return
     const at = Math.max(x + 2, screen.cols - 1 - stringWidth(right))
     screen.put(at, y, right, s(theme.status))

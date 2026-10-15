@@ -18,7 +18,8 @@ import { fakeClock, fakeTerminal } from './tui-fakes.ts'
 import { commandInfo, COMMANDS, help } from '../dist/tui/cli.js'
 import { appendHistory, loadHistory, HISTORY_KEEP } from '../dist/tui/history.js'
 import { fileFinder, gitBranch } from '../dist/tui/files.js'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -878,7 +879,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const info = t.term.screen.find('session tui-3f2a')?.row ?? -1
   const welcomeEnd = t.term.screen.find('╰')?.row ?? -1
   check('layout: the input box keeps the last rows, and a short conversation sits right above it', box() === 40 - 4 && info >= 0 && welcomeEnd === box() - 3, `info ${info}, welcome ends ${welcomeEnd}, box ${box()}`)
-  check('layout: the empty rows are above the conversation, under the header, not between it and the box', t.term.screen.row(3).trim() === '', t.term.screen.row(3))
+  check('layout: the empty rows are above the conversation, not between it and the box', t.term.screen.row(3).trim() === '', t.term.screen.row(3))
   const status = t.term.screen.row(box() - 1)
   check('status: the effort, with the key that steps it, and no permission label', /▸▸ effort medium \(shift\+tab\)/.test(status) && !/\bask\b/.test(status), status)
   check('status: the model it runs on, at the right', /deepseek-v4\.1\s*$/.test(status), status)
@@ -1474,7 +1475,9 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('welcome: no block-letter banner', !first.includes('██████╗'))
   const narrow = setup({ cols: 50, rows: 24, extra: { version: '0.2.0' } })
   const small = narrow.term.screen.text()
-  check('welcome: on a narrow screen, the words without the mark', /deepseek-bot v0\.2\.0/.test(small) && !small.includes('▄▄████▄▄') && small.split('\n').every((l) => stringWidth(l) <= 50), small.split('\n').filter((r) => r.trim() !== '').slice(0, 6).join(' | '))
+  check('welcome: on a narrow screen, the words without the mark, the box closed', /deepseek-bot v0\.2\.0/.test(small) && !small.includes('▄▄████▄▄') && (small.split('\n').find((l) => l.includes('╭')) ?? '').includes('╮'), small.split('\n').filter((r) => r.trim() !== '').slice(0, 6).join(' | '))
+  const tiny = setup({ cols: 20, rows: 16, extra: { version: '0.2.0' } }).term.screen.text()
+  check('welcome: too narrow for a box, the words alone', /^ deepseek-bot/m.test(tiny) && !tiny.includes('│ deep'), tiny.split('\n').filter((r) => r.trim() !== '').slice(0, 5).join(' | '))
   const at = (needle) => { const p = t.term.screen.find(needle); return p === null ? '' : t.term.screen.grid[p.row * 100 + p.col].style }
   t.app.setStatus({ contextPct: 50, tokensIn: 12000, tokensOut: 3400 })
   t.clock.advance(20)
@@ -1492,10 +1495,48 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('footer: the share of what was sent that the cache served', /↑12(\.0)?k ↓3\.4k · cache 75%/.test(t.term.screen.text()), t.term.screen.text().split('\n').find((l) => l.includes('↑12')) ?? '(none)')
   t.app.setStatus({ tokensCached: null }); t.clock.advance(20)
   check('footer: and nothing about the cache when the harness does not say', !t.term.screen.text().includes('cache'))
+  t.app.setStatus({ tokens: 1050, tokensIn: 1000, tokensOut: 50 }); t.clock.advance(20)
+  check('footer: with the split, no total beside it', /↑1\.0k ↓50/.test(t.term.screen.text()) && !/ tok\b/.test(t.term.screen.text()), t.term.screen.text().split('\n').find((l) => l.includes('↑')) ?? '(none)')
+  t.app.setStatus({ tokens: 0, tokensIn: 0, tokensOut: 0 }); t.clock.advance(20)
+  check('footer: nothing sent yet, no ↑0 ↓0', !t.term.screen.text().includes('↑0'), t.term.screen.text().split('\n').find((l) => l.includes('ctx') || l.includes('↑')) ?? '(none)')
+  // 80 columns while a turn runs: what does not fit goes whole, from the right; nothing is cut mid-figure.
+  const tight = setup({ cols: 80, rows: 24 })
+  tight.app.turnStarted(); tight.app.thinking('생각'); tight.clock.advance(12000)
+  tight.app.setStatus({ contextPct: 52, tokensIn: 1_200_000, tokensOut: 34_600, tokensCached: 900_000 }); tight.clock.advance(20)
+  // The status line: the row over the input box's top border.
+  const busyLine = tight.term.screen.row((tight.term.screen.find('│ ›')?.row ?? 2) - 2)
+  check('footer: on a narrow line whole parts go, never half a figure', busyLine.includes('ctx ▰▰▰▰▱▱▱▱ 52%') && busyLine.includes('↑1.2M ↓34.6k') && (!busyLine.includes('cache') || busyLine.includes('cache 75%')), busyLine)
+  // Dragging to the top row selects past the screen's top, as it does under a header.
+  const tall = setup({ cols: 80, rows: 20 })
+  tall.app.final(Array.from({ length: 60 }, (_, i) => `L-${String(i + 1).padStart(2, '0')}`).join('\n\n')); tall.clock.advance(20)
+  const firstShown = Number(/L-(\d+)/.exec(tall.term.screen.text())?.[1] ?? 0)
+  const from = tall.term.screen.find('L-60')
+  tall.key(SGR(0, from.col, from.row))
+  // A terminal reports a cell once: up into the top row, down out of it, and up again.
+  for (let i = 0; i < 10; i++) { tall.key(SGR(32, 2, 1)); tall.key(SGR(32, 2, 0)) }
+  tall.key(SGR(0, 2, 0, true)); tall.clock.advance(20)
+  const above = `L-${String(firstShown - 2).padStart(2, '0')}`
+  check('drag: to the top row it scrolls up and selects what was above the screen', firstShown > 3 && (tall.copied.at(-1) ?? '').includes(above), `${above} in ${JSON.stringify((tall.copied.at(-1) ?? '').slice(0, 40))}`)
+  // Along the top row it selects the words under it, and scrolls nothing.
+  const row0 = setup({ cols: 80, rows: 20 })
+  for (let i = 1; i <= 60; i++) row0.app.notice(`alpha beta gamma delta ${i}`)
+  row0.clock.advance(20)
+  const top = row0.term.screen.row(0)
+  const col = top.indexOf('alpha')
+  row0.key(SGR(0, col, 0))
+  for (let x = col + 1; x <= col + 10; x++) row0.key(SGR(32, x, 0))
+  row0.key(SGR(0, col + 10, 0, true)); row0.clock.advance(20)
+  check('drag: along the top row, the words under it, nothing scrolled', col !== -1 && row0.copied.at(-1) === 'alpha beta', `${JSON.stringify(top.slice(0, 40))} → ${JSON.stringify(row0.copied.at(-1))}`)
   // Under the box, as pi has it: where the agent works, and the conversation; the branch when it is a repository.
   check('footer: under the box, the workspace and the conversation', /\? for shortcuts {2,}.*~\/dsh-agent · tui-3f2a…\s*$/.test(t.term.screen.row(29)), t.term.screen.row(29))
-  const git = setup({ cols: 100, rows: 30, extra: { branchOf: (dir) => dir === '~/dsh-agent' ? 'main' : null } })
-  check('footer: with the branch when the workspace is a repository', /~\/dsh-agent \(main\) · tui-3f2a…\s*$/.test(git.term.screen.row(29)), git.term.screen.row(29))
+  // The branch is read from the real path, not the one shown with ~.
+  const git = setup({ cols: 100, rows: 30, env: { COLORTERM: 'truecolor', HOME: '/home' }, extra: { branchOf: (dir) => dir === '/home/agent' ? 'main' : null } })
+  git.app.setStatus({ workspace: '/home/agent' }); git.clock.advance(20)
+  check('footer: with the branch when the workspace is a repository', /~\/agent \(main\) · tui-3f2a…\s*$/.test(git.term.screen.row(29)), git.term.screen.row(29))
+  // In a subagent's view the header says where the pane looks; the footer would say it again.
+  git.app.setPanel([{ id: 'child-1', label: 'research', mode: 'one-shot', status: 'running', since: null, settledMs: 0, tokens: 0 }], [])
+  git.key('\t'); git.key('\x1b[B'); git.key('\r'); git.clock.advance(20)
+  check('footer: only in the conversation\'s own view', git.app.view.kind === 'agent' && !git.term.screen.row(29).includes('(main)'), `${git.app.view.kind} ${git.term.screen.row(29)}`)
   const thin = setup({ cols: 40, rows: 20 })
   check('footer: left out where it does not fit beside the hint', /\? for shortcuts\s*$/.test(thin.term.screen.row(19)), thin.term.screen.row(19))
   // The status line's label: a tool step with no result to wait for is over once the answer streams.
@@ -1524,6 +1565,26 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
     check('branch: a detached head by its short hash', gitBranch(join(root, 'detached')) === '0123456', String(gitBranch(join(root, 'detached'))))
     check('branch: a worktree, through its gitdir', gitBranch(join(root, 'wt')) === 'wt-branch', String(gitBranch(join(root, 'wt'))))
     check('branch: none outside a repository, and none for a path that is not there', gitBranch(join(root, 'plain')) === null && gitBranch(join(root, 'absent')) === null)
+    // git reads the first line only; a reftable repository's HEAD names no branch (.invalid).
+    mkdirSync(join(root, 'odd', '.git'), { recursive: true })
+    writeFileSync(join(root, 'odd', '.git', 'HEAD'), 'garbage\nref: refs/heads/x\n')
+    mkdirSync(join(root, 'reftable', '.git'), { recursive: true })
+    writeFileSync(join(root, 'reftable', '.git', 'HEAD'), 'ref: refs/heads/.invalid\n')
+    mkdirSync(join(root, 'tail', '.git'), { recursive: true })
+    writeFileSync(join(root, 'tail', '.git', 'HEAD'), 'ref: refs/heads/main\nsomething after\n')
+    check('branch: only HEAD\'s first line counts, and a reftable placeholder is no branch', gitBranch(join(root, 'odd')) === null && gitBranch(join(root, 'tail')) === 'main' && gitBranch(join(root, 'reftable')) === null, String([gitBranch(join(root, 'odd')), gitBranch(join(root, 'tail')), gitBranch(join(root, 'reftable'))]))
+    // The workspace is the agent's to write: what it leaves in .git must not hang the terminal or fill memory.
+    if (process.platform !== 'win32') {
+      mkdirSync(join(root, 'fifo', '.git'), { recursive: true })
+      execFileSync('mkfifo', [join(root, 'fifo', '.git', 'HEAD')])
+      mkdirSync(join(root, 'fifo2'), { recursive: true })
+      execFileSync('mkfifo', [join(root, 'fifo2', '.git')])
+      mkdirSync(join(root, 'zero', '.git'), { recursive: true })
+      symlinkSync('/dev/zero', join(root, 'zero', '.git', 'HEAD'))
+      const started = Date.now()
+      const read = [gitBranch(join(root, 'fifo')), gitBranch(join(root, 'fifo2')), gitBranch(join(root, 'zero'))]
+      check('branch: a FIFO at HEAD or at .git, or HEAD linked to a device, is no branch, at once', read.every((b) => b === null) && Date.now() - started < 1000, JSON.stringify(read))
+    }
   } finally { rmSync(root, { recursive: true, force: true }) }
 }
 
