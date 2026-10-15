@@ -412,7 +412,8 @@ for (const installer of ['service/install-service.sh', 'service/install-health.s
   const afterServices = installer.indexOf('services_done || return 1\nrecord_install "$DEEPBOT_DIR"')
   check('record: only after every service is in, and when they are skipped', afterServices !== -1 && /record_install "\$DEEPBOT_DIR"\n  return 0\nfi/.test(installer))
   check('the end says how to update: dsh update where dsh is this project\'s on the PATH, the install line where not',
-    /^    Update later: \$update_with$/m.test(installer) && /^update_with='the same curl line again'$/m.test(installer) && /update_with="\$\{bold\}dsh update\$\{off\}"/.test(installer))
+    /^    Update later: \$update_with$/m.test(installer) && /^update_with='the same curl line again'$/m.test(installer)
+    && /^  \[ "\$\(command -v dsh 2>\/dev\/null \|\| true\)" = "\$launcher" \] && update_with="\$\{bold\}dsh update\$\{off\}"$/m.test(installer))
   check('a linked worktree, whose .git is a file, is a checkout to update', /^if \[ -e "\$DEEPBOT_DIR\/\.git" \]; then$/m.test(installer))
   rmSync(root, { recursive: true, force: true })
 }

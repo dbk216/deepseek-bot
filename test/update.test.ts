@@ -120,15 +120,20 @@ check('arguments: anything else is refused, and nothing runs', extra.code === 2 
   const r = attempt(shallow)
   check('shallow: the fetched installer runs', r.code === 0 && r.ran === `v2 ${shallow} master`, r.ran)
   check('shallow: it is still shallow, fetched at depth 1 (the tip only, not the two commits since)', git(shallow, 'rev-parse', '--is-shallow-repository') === 'true' && git(shallow, 'rev-list', '--count', 'FETCH_HEAD') === '1', git(shallow, 'rev-list', '--count', 'FETCH_HEAD'))
+  // The installer resets its shallow clone to the tip, so a local commit there is not what runs.
+  git(shallow, 'reset', '-q', '--hard', 'FETCH_HEAD')
+  commit(shallow, 'v4-local')
+  const local = attempt(shallow)
+  check('shallow: with a local commit on the tip, the tip\'s installer runs (the one the installer resets to)', local.ran === `v2 ${shallow} master`, local.ran)
 }
 
-// A linked worktree (its .git is a file) is a checkout: the installer takes it as one too.
+// A linked worktree (its .git is a file) is taken as a checkout here; install.sh's own test of it is install.test.ts's.
 {
   const linked = join(root, 'linked')
   git(full, 'worktree', 'add', '-q', '-b', 'linked', linked, 'master')
   git(work, 'push', '-q', origin, 'master:linked')
   const r = attempt(linked)
-  check('worktree: a linked worktree is updated like any checkout', r.code === 0 && r.ran === `v2 ${linked} linked`, `${r.ran} ${r.err}`)
+  check('worktree: dsh update takes a linked worktree as a checkout', r.code === 0 && r.ran === `v2 ${linked} linked`, `${r.ran} ${r.err}`)
   git(full, 'worktree', 'remove', '--force', linked)
 }
 
@@ -153,8 +158,11 @@ check('arguments: anything else is refused, and nothing runs', extra.code === 2 
 {
   const home = join(root, 'home-profile')
   mkdirSync(join(home, '.dsh', 'profiles', 'update'), { recursive: true })
+  check('profile: a directory with no package.json is no profile to the harness, and does not stop it', attempt(full, { home }).ran === `v2 ${full} master`)
+  writeFileSync(join(home, '.dsh', 'profiles', 'update', 'package.json'), '{}\n')
   const r = attempt(full, { home })
   check('profile: with a harness profile named update, nothing is fetched or run, and dsh --profile update is said', r.code === 1 && r.ran === '' && r.fetches.length === 0 && /dsh --profile update/.test(r.err), r.err)
+  check('profile: the install line it points to names this checkout', r.err.includes(`DEEPBOT_DIR=${full}`), r.err)
 }
 
 // The installer is macOS-only: elsewhere nothing is fetched first.

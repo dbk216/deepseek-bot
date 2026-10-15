@@ -45,8 +45,9 @@ export function update(argv: string[], io: UpdateIO): number {
   // Before this command existed, `dsh update` booted a harness profile named update. Whoever has one
   // meant that: it is not replaced by a rebuild and a restart.
   const dsh = io.env.DSH_HOME || join(io.home, '.dsh')
-  if (existsSync(join(dsh, 'profiles', 'update'))) {
-    io.err('a harness profile named update exists, so this does not run: boot it with dsh --profile update; to update deepseek-bot, run the install line again (README)')
+  // The harness counts a directory under profiles/ as a profile when it holds a package.json.
+  if (existsSync(join(dsh, 'profiles', 'update', 'package.json'))) {
+    io.err(`a harness profile named update exists, so this does not run: boot it with dsh --profile update; to update deepseek-bot, run the install line again with DEEPBOT_DIR=${io.checkout} (README)`)
     return 1
   }
   const git = (...args: string[]) => io.run('git', ['-C', io.checkout, ...args])

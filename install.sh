@@ -429,7 +429,9 @@ step "the terminal"
 update_with='the same curl line again'
 if launcher="$(install_terminal "$DEEPBOT_DIR")"; then
   note "dsh: $launcher"
-  case ":$PATH:" in *":$HOME/.local/bin:"*) update_with="${bold}dsh update${off}" ;; *) note "add ~/.local/bin to your PATH to run it as dsh" ;; esac
+  case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) note "add ~/.local/bin to your PATH to run it as dsh" ;; esac
+  # dsh is this launcher only when it is the first dsh on the PATH.
+  [ "$(command -v dsh 2>/dev/null || true)" = "$launcher" ] && update_with="${bold}dsh update${off}"
 else
   note "$launcher"
 fi
