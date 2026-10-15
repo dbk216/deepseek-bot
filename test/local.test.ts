@@ -377,7 +377,7 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
     ...config,
   })
   const askApproval = (sessionId) => listeners['approval/request'][0]({ agent: { session: { header: { id: sessionId } } }, reason: 'rm -rf build' })
-  return { slack, get local() { return local }, created, logs, stateDir, askApproval, done: async () => { await local?.close(); rmSync(stateDir, { recursive: true, force: true }) } }
+  return { slack, get local() { return local }, created, logs, listeners, stateDir, askApproval, done: async () => { await local?.close(); rmSync(stateDir, { recursive: true, force: true }) } }
 }
 
 {
@@ -619,6 +619,35 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
 }
 
 {
+  // The harness's own turn in the agent it kept never ends (a question nobody answers): a message waits for it no
+  // longer than a turn may run, says so, and leaves the harness's turn alone.
+  let followed = 0
+  let cancelled = 0
+  const stuck = {
+    id: 'sess-stuck', session: { header: { id: 'sess-stuck' }, seq: 0, eventAt: () => undefined },
+    ctx: { on: () => () => {}, systemPrompt: { section: () => {} } },
+    followup: () => { followed++ }, whenIdle: () => new Promise<void>(() => {}), cancel: () => { cancelled++ },
+  }
+  const held = async () => { throw new Error('session "sess-stuck" is already owned by an active write handle') }
+  const t = boot({ state: { sessions: { 'tui:conv-stuck': 'sess-stuck' } }, config: { runTimeoutMs: 400 }, services: { agents: { create: held, resume: held, get: (id) => (id === 'sess-stuck' ? stuck : undefined), list: () => [] } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-stuck' })
+  await c.waitFor((f) => f.type === 'ready')
+  c.send({ type: 'message', text: '안녕' })
+  const ended = await c.waitFor((f) => f.type === 'post', 3000)
+  check('reminder route: a message waiting on a harness turn that never ends times out like a turn, and the harness turn is left alone', /ran out of time/.test(ended?.text ?? '') && followed === 0 && cancelled === 0 && t.logs.some((l) => /held by an agent the harness keeps/.test(l)), JSON.stringify({ post: ended?.text?.slice(0, 60), followed, cancelled }))
+  // The turn itself ended (not only the queue's backstop moving on): the next message is let into the agent too.
+  const posts = c.frames.filter((f) => f.type === 'post').length
+  c.send({ type: 'message', text: '다시' })
+  for (let i = 0; i < 300 && c.frames.filter((f) => f.type === 'post').length === posts; i++) await sleep(10)
+  check('reminder route: and the turn that timed out lets go of the agent, so the next message gets the same answer, not a refusal', t.logs.filter((l) => /held by an agent the harness keeps/.test(l)).length === 2 && c.frames.filter((f) => f.type === 'post').length > posts, JSON.stringify(t.logs.filter((l) => /held by|busy/.test(l)).map((l) => l.slice(25, 90))))
+  await c.close()
+  await t.done()
+}
+
+{
   // The words the core answers without a turn reach the terminal, so it does not queue them behind one.
   const t = boot({ config: { cancelWords: ['그만', 'stop'], usageWords: ['사용량'], approveWords: ['허용'], denyWords: ['거부'] } })
   await sleep(100)
@@ -645,6 +674,156 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   c.send({ type: 'model', provider: 'og', model: 'm' })
   const kept = await c.waitFor((f) => f.type === 'model')
   check('model: on the same route with no effort named, it keeps the effort it runs with', kept?.current?.effort === 'high' && JSON.parse(readFileSync(join(t.stateDir, 'sessions.json'), 'utf8')).models?.[`tui:${ready.conversation}`]?.reasoningEffort === 'high', JSON.stringify(kept?.current))
+  await c.close()
+  await t.done()
+}
+
+{
+  // A reminder is a turn the harness starts by itself. It resumes the session with an agent of its own — announced to
+  // every `agent/created` listener — routes that agent by the session's last request, and keeps it: the session stays
+  // held. An agent's requests pass its `agent/request` listeners outermost first, the harness's own selection among
+  // them. All faked here as the harness does it.
+  const llm = { listProviders: () => [{ id: 'og' }], listModels: async (p) => [{ provider: p, id: 'm', name: 'M' }, { provider: p, id: 'm2', name: 'M2' }], resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }) }
+  const requests = []
+  const held = new Map()
+  const disposed = []
+  const lastRoute = (id) => { const r = requests.filter((q) => q.id === id).at(-1); return r === undefined ? deployment : { provider: r.provider, model: r.model, ...(r.reasoningEffort !== undefined ? { reasoningEffort: r.reasoningEffort } : {}) } }
+  const makeAgent = (id, base, by) => {
+    const listeners = []
+    const sections = []
+    let work = Promise.resolve()
+    const agent = {
+      id, by, sections, cancelled: 0, delay: 0, session: { header: { id }, seq: 0, eventAt: () => undefined },
+      ctx: { on: (name, fn, options?) => { if (name === 'agent/request') { if (options?.prepend) listeners.unshift(fn); else listeners.push(fn) } return () => {} }, systemPrompt: { section: (section) => { sections.push(section) } } },
+      followup: (m) => {
+        const text = (m?.content ?? []).map((b) => b?.text ?? '').join('')
+        const route = base()
+        const run = (i) => i < listeners.length ? listeners[i](undefined, () => run(i + 1)) : Promise.resolve({ ...route, maxTokens: 100 })
+        // `delay`: the turn's request goes that much later (a step or two in).
+        const wait = agent.delay
+        work = work.then(() => sleep(wait)).then(() => run(0)).then((config) => { requests.push({ id, by, text, ...config }) })
+      },
+      whenIdle: () => work,
+      cancel: () => { agent.cancelled++ },
+      // A turn of the harness's own (a reminder's), taking a while, its answer an event on the session.
+      runOwn: (text, reply, ms) => {
+        const run = (i) => i < listeners.length ? listeners[i](undefined, () => run(i + 1)) : Promise.resolve({ ...base(), maxTokens: 100 })
+        work = work.then(() => sleep(ms)).then(() => run(0)).then((config) => {
+          requests.push({ id, by, text, ...config })
+          for (const listener of t.listeners['session/event'] ?? []) listener(agent.session, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: reply }] } } })
+        })
+      },
+    }
+    return agent
+  }
+  // The harness's own agent: made on the deployment's provider and model, its selection the session's last request's
+  // route, which replaces an effort carried over as the harness's does.
+  const harnessAgent = (id) => {
+    const agent = makeAgent(id, () => ({ provider: deployment.provider, model: deployment.model }), 'harness')
+    const record = lastRoute(id)
+    agent.ctx.on('agent/request', async (_payload, next) => { const { reasoningEffort: _carried, ...rest } = await next(); return { ...rest, ...record } })
+    return agent
+  }
+  const busy = (id) => new Error(`session "${id}" is already owned by an active write handle`)
+  const adapterAgent = (o) => {
+    const id = o?.sessionId ?? o?.resumeSessionId
+    if (held.has(id)) throw busy(id)
+    return { agent: makeAgent(id, () => o.agentOptions, 'adapter'), dispose: async () => { disposed.push(id) } }
+  }
+  let deployment: { provider: string; model: string; reasoningEffort?: string } = { provider: 'og', model: 'm' }
+  // An agent the harness made before the adapter was loaded, on a conversation that chose m2 at high.
+  const before = harnessAgent('sess-before')
+  held.set('sess-before', before)
+  const services = {
+    llm,
+    agents: { create: async (o) => adapterAgent(o), resume: async (o) => adapterAgent(o), get: (id) => held.get(id), list: () => [...held.values()] },
+    agentDefaultModel: { currentSelection: () => deployment },
+  }
+  const t = boot({ services, state: { sessions: { 'tui:conv-before': 'sess-before' }, models: { 'tui:conv-before': { provider: 'og', model: 'm2', reasoningEffort: 'high', at: Date.now() } } } })
+  await sleep(100)
+  const c = client(join(t.stateDir, 'tui.sock'))
+  await c.opened
+  c.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-remind' })
+  await c.waitFor((f) => f.type === 'ready')
+  const route = (r) => r === undefined ? '(none)' : `${r.provider}/${r.model}${r.reasoningEffort !== undefined ? `:${r.reasoningEffort}` : ''}`
+  const turn = async (text) => { const n = c.frames.filter((f) => f.type === 'post').length; c.send({ type: 'message', text }); for (let i = 0; i < 400 && c.frames.filter((f) => f.type === 'post').length === n; i++) await sleep(10); await sleep(50); return requests.find((q) => q.text.includes(text)) }
+  const choose = async (provider, model?, effort?) => { const n = c.frames.filter((f) => f.type === 'model').length; c.send({ type: 'model', provider, model, effort }); for (let i = 0; i < 100 && c.frames.filter((f) => f.type === 'model').length === n; i++) await sleep(10) }
+  // A second terminal, on another conversation.
+  const c2 = client(join(t.stateDir, 'tui.sock'))
+  await c2.opened
+  c2.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: 'conv-early' })
+  await c2.waitFor((f) => f.type === 'ready')
+  const turn2 = async (_conversation, text) => { const n = c2.frames.filter((f) => f.type === 'post').length; c2.send({ type: 'message', text }); for (let i = 0; i < 400 && c2.frames.filter((f) => f.type === 'post').length === n; i++) await sleep(10); await sleep(50); return requests.find((q) => q.text.includes(text)) }
+  const choose2 = async (provider, model?, effort?) => { const n = c2.frames.filter((f) => f.type === 'model').length; c2.send({ type: 'model', provider, model, effort }); for (let i = 0; i < 100 && c2.frames.filter((f) => f.type === 'model').length === n; i++) await sleep(10) }
+  // The harness resuming a session for a reminder: its agent, announced, kept, and sent the reminder.
+  const remind = async (id, text) => {
+    let agent = held.get(id)
+    if (agent === undefined) {
+      agent = harnessAgent(id)
+      held.set(id, agent)
+      for (const listener of t.listeners['agent/created'] ?? []) await listener({ agent, source: 'resume' })
+    }
+    agent.followup({ content: [{ type: 'text', text }] })
+    await agent.whenIdle()
+    return requests.filter((q) => q.text === text).at(-1)
+  }
+  await choose('og', 'm2', 'low')
+  const first = await turn('하나')
+  const id = first?.id
+  const disposedBefore = disposed.length
+  await choose('og', 'm2', 'high')
+  const reminded = await remind(id, '[SCHEDULE REMINDER] 물 마실 시간')
+  check('reminder route: a reminder after /model runs on the conversation\'s route, not on the session\'s last request\'s', route(reminded) === 'og/m2:high', route(reminded))
+  const second = await turn('둘')
+  check('reminder route: the session the harness keeps after a reminder no longer refuses the next turn: it runs in that agent', second?.by === 'harness' && route(second) === 'og/m2:high' && c.frames.filter((f) => f.type === 'post').length >= 2, JSON.stringify({ by: second?.by, route: route(second) }))
+  check('reminder route: and that agent is not disposed: it is the harness\'s', disposed.length === disposedBefore, JSON.stringify(disposed))
+  const third = await turn('셋')
+  check('reminder route: the turn in it is told where it is, once, as a turn\'s own agent is', third?.by === 'harness' && held.get(id).sections.filter((s) => s.name === 'deepbot:identity').length === 1, String(held.get(id).sections.length))
+  // A reminder's turn still running in the kept agent when a message comes: its answer is delivered as its own, and
+  // the message goes in after it, on the route the turn started on.
+  const kept = held.get(id)
+  kept.runOwn('[SCHEDULE REMINDER] 스트레칭', '스트레칭할 시간이야', 300)
+  c.send({ type: 'message', text: '여섯' })
+  for (let i = 0; i < 300 && !requests.some((q) => q.text.includes('여섯')); i++) await sleep(10)
+  await sleep(100)
+  const order = requests.map((q) => q.text)
+  check('reminder route: a reminder\'s turn running in the kept agent is answered as its own, and the message goes in after it', c.frames.some((f) => f.type === 'post' && f.text.includes('스트레칭할 시간이야')) && order.indexOf('[SCHEDULE REMINDER] 스트레칭') < order.findIndex((x) => x.includes('여섯')), JSON.stringify(order.slice(-2)))
+  // A /model while a turn runs in the kept agent: the turn's later requests keep the route it started on.
+  kept.delay = 300
+  c.send({ type: 'message', text: '여덟' })
+  await sleep(100)
+  await choose('og', 'm', 'low')
+  for (let i = 0; i < 300 && !requests.some((q) => q.text.includes('여덟')); i++) await sleep(10)
+  kept.delay = 0
+  await sleep(100)
+  check('reminder route: a turn running in the kept agent keeps the route it started on through a /model', route(requests.find((q) => q.text.includes('여덟'))) === 'og/m2:high', route(requests.find((q) => q.text.includes('여덟'))))
+  await choose('og', 'm2', 'high')
+  // A stop while the message waits for the reminder's turn stops the message, not the reminder.
+  kept.runOwn('[SCHEDULE REMINDER] 물', '물 마셔', 400)
+  c.send({ type: 'message', text: '일곱' })
+  await sleep(100)
+  c.send({ type: 'cancel' })
+  await sleep(600)
+  check('reminder route: a stop while waiting for the harness\'s turn stops this message only: it is not sent, and the harness\'s turn is not cancelled', !requests.some((q) => q.text.includes('일곱')) && kept.cancelled === 0 && c.frames.some((f) => f.type === 'post' && f.text.includes('물 마셔')), JSON.stringify({ sent: requests.some((q) => q.text.includes('일곱')), cancelled: kept.cancelled }))
+  // Back to the deployment's model, whose effort the model does not take: a later reminder in the kept agent runs on
+  // the route a turn would send — that model, without the effort — and not with the effort of the model before.
+  await choose(null)
+  deployment = { provider: 'og', model: 'm', reasoningEffort: 'max' }
+  const later = await remind(id, '[SCHEDULE REMINDER] 다시')
+  check('reminder route: a later reminder in the agent the harness kept follows the conversation\'s route as it is then', route(later) === 'og/m', route(later))
+  // An agent the harness kept from before this adapter was watching (it was not announced to it): a turn that runs
+  // in it still runs on the conversation's route.
+  const other = await turn2('conv-early', '넷')
+  held.set(other.id, harnessAgent(other.id))
+  await choose2('og', 'm2', 'high')
+  const early = await turn2('conv-early', '다섯')
+  check('reminder route: a turn in an agent the harness kept from before still runs on the conversation\'s route', early?.by === 'harness' && route(early) === 'og/m2:high', JSON.stringify({ by: early?.by, route: route(early) }))
+  const beforeLoad = await remind('sess-before', '[SCHEDULE REMINDER] 먼저')
+  check('reminder route: an agent the harness made before the adapter was loaded follows the conversation\'s route too', route(beforeLoad) === 'og/m2:high', route(beforeLoad))
+  // An agent the harness makes on a session that is no conversation's (a subagent's) keeps the harness's routing.
+  const sub = await remind('subagent-1', '[SCHEDULE REMINDER] 하위')
+  check('reminder route: an agent on a session that is no conversation\'s keeps the harness\'s route', route(sub) === 'og/m:max', route(sub))
+  await c2.close()
   await c.close()
   await t.done()
 }
