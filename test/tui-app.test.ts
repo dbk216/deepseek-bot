@@ -2066,6 +2066,149 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('fold: lines that arrived before a ctrl+o elsewhere are still new', e.app.view.kind === 'main' && /↓ \d+ new/.test(e.term.screen.text()), e.term.screen.text().split('\n').find((l) => / new /.test(l)) ?? e.app.view.kind)
 }
 
+// 83. A stop withdraws everything waiting in the conversation, another terminal's too, and the gateway tells every
+// terminal which (a stop's withdrawn). Each takes its own back and counts those ends from the answer, which replaces
+// the guess the terminal that stopped made at esc.
+{
+  // The terminal that did not stop.
+  const b = setup({ cols: 80, rows: 30 })
+  b.app.turnStarted(); b.clock.advance(3000)
+  b.key('b-msg\r'); b.app.turnStarted(); b.clock.advance(20)
+  const idB = b.sentIds.at(-1)
+  b.app.withdrawn([idB], [], true); b.app.turnEnded(); b.clock.advance(1000)
+  const bLine = b.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('stop elsewhere: what this terminal queued comes back, and the stopped turn\'s time goes on', b.app.editor.text === 'b-msg' && !/^› b-msg/m.test(b.term.screen.text()) && /\(4s/.test(bLine), `${JSON.stringify(b.app.editor.text)} | ${bLine}`)
+  b.app.turnEnded()
+  // The terminal that stopped: its own were back at once; the stop's answer changes nothing more.
+  const a = setup({ cols: 80, rows: 30 })
+  a.app.turnStarted(); a.key('a-wait\r'); a.app.turnStarted(); a.clock.advance(20)
+  const idA = a.sentIds.at(-1)
+  a.key('\x1b'); a.clock.advance(60)
+  a.app.withdrawn([idA], [], true); a.clock.advance(20)
+  const once = a.app.editor.text
+  a.app.turnEnded()                 // the withdrawn message's end
+  a.app.turnStarted()               // another terminal sends something after the stop
+  a.clock.advance(5000)
+  a.app.turnEnded()                 // the stopped turn's end: the next one starts
+  a.clock.advance(1200)
+  const aLine = a.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('stop here: the stop\'s answer brings nothing back twice and counts nothing twice', once === 'a-wait' && /\(1s/.test(aLine), `${JSON.stringify(once)} | ${aLine}`)
+  a.app.turnEnded()
+  // A stop whose answer never came (an older gateway, a dropped link): another terminal's stop later is handled
+  // as any stop's answer.
+  const c = setup({ cols: 80, rows: 30 })
+  c.app.turnStarted(); c.key('\x1b'); c.clock.advance(60); c.app.turnEnded(); c.clock.advance(20)
+  c.app.editor.set('')
+  c.app.turnStarted(); c.key('c-msg\r'); c.app.turnStarted(); c.clock.advance(20)
+  c.app.withdrawn([c.sentIds.at(-1)], [], true); c.clock.advance(20)
+  check('stop elsewhere, after a stop here that was never answered: still taken back', c.app.editor.text === 'c-msg', JSON.stringify(c.app.editor.text))
+  c.app.turnEnded(); c.app.turnEnded()
+
+  // The stop's answer is the exact count, whoever stopped: the guess made at esc is replaced.
+  // (a) This terminal's own message shown as started (its turn's start was read) but still waiting for a slot:
+  // it leaves the transcript with the Interrupted mark esc put under it, and comes back.
+  const d = setup({ cols: 80, rows: 30 })
+  d.app.turnStarted(); d.key('second\r'); d.app.turnStarted(); d.clock.advance(20)
+  const idSecond = d.sentIds.at(-1)
+  d.app.turnEnded(); d.clock.advance(20)
+  const shownStarted = /^› second/m.test(d.term.screen.text())
+  d.key('\x1b'); d.clock.advance(60)
+  d.app.withdrawn([idSecond], [], true); d.app.turnEnded(); d.clock.advance(20)
+  check('stop here: its own message shown as started but still waiting comes back, mark and all', shownStarted && d.app.editor.text === 'second' && !/^› second/m.test(d.term.screen.text()) && !d.term.screen.text().includes('Interrupted'), `${shownStarted} ${JSON.stringify(d.app.editor.text)} ${d.term.screen.text().includes('Interrupted')}`)
+  // (b) A message whose typing-on was read after esc counted: its end is not a turn's, and esc again marks nothing twice.
+  const e = setup({ cols: 80, rows: 30 })
+  e.app.turnStarted(); e.clock.advance(4000)
+  e.key('late\r'); e.clock.advance(20)
+  const idLate = e.sentIds.at(-1)
+  e.key('\x1b'); e.clock.advance(60)
+  e.app.turnStarted()               // its typing-on, sent before the stop reached the gateway
+  e.app.withdrawn([idLate], [], true); e.app.turnEnded(); e.clock.advance(1000)
+  e.key('\x1b'); e.clock.advance(60)
+  const eLine = e.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('stop here: a message whose typing began after esc counted is still the stop\'s, not a turn', /\(5s/.test(eLine) && e.term.screen.text().split('Interrupted').length - 1 === 1, `${eLine} marks=${e.term.screen.text().split('Interrupted').length - 1}`)
+  e.app.turnEnded()
+  // (c) An ↑ answered between esc and the stop's answer: counted once, and the next turn starts on time.
+  const f = setup({ cols: 80, rows: 30 })
+  f.app.turnStarted(); f.key('q-msg\r'); f.app.turnStarted(); f.clock.advance(20)
+  const idQ = f.sentIds.at(-1)
+  f.key('\x1b[A'); f.key('\x1b'); f.clock.advance(60)
+  f.app.withdrawn([idQ], [idQ]); f.app.turnEnded()        // the ↑'s answer, and that message's end
+  f.clock.advance(20)
+  const toastAfterUp = f.term.screen.text().includes('already started')
+  f.app.withdrawn([], [], true)                            // the stop's answer: nothing left waiting
+  f.app.turnStarted(); f.clock.advance(4000)                // another terminal sends something
+  f.app.turnEnded(); f.clock.advance(1200)                  // the stopped turn ends: the next one starts
+  const fLine = f.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('stop here: an ↑ answered in between is counted once; the next turn starts on time', /\(1s/.test(fLine) && f.app.editor.text === 'q-msg' && !toastAfterUp, `${fLine} ${JSON.stringify(f.app.editor.text)} toast=${toastAfterUp}`)
+  f.app.turnEnded()
+  // (d) A stop word typed while a message waits: the same.
+  const g = setup({ cols: 80, rows: 30 })
+  g.app.setAnsweredAtOnce(['stop'], [])
+  g.app.turnStarted(); g.key('w-msg\r'); g.app.turnStarted(); g.clock.advance(20)
+  const idW = g.sentIds.at(-1)
+  g.key('stop\r'); g.clock.advance(20)
+  g.app.withdrawn([idW], [], true); g.app.turnEnded()
+  g.app.turnStarted(); g.clock.advance(4000); g.app.turnEnded(); g.clock.advance(1200)
+  const gLine = g.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('stop word: counted once; the next turn starts on time', /\(1s/.test(gLine) && g.app.editor.text === 'w-msg', `${gLine} ${JSON.stringify(g.app.editor.text)}`)
+  g.app.turnEnded()
+  // M1. Another terminal's stop withdraws a message this terminal sent while idle (shown at once) that still
+  // waited for a slot: it leaves the transcript and comes back.
+  const h = setup({ cols: 80, rows: 30 })
+  h.key('idle-sent\r'); h.app.turnStarted(); h.clock.advance(20)
+  const idIdle = h.sentIds.at(-1)
+  h.app.withdrawn([idIdle], [], true); h.app.turnEnded(); h.clock.advance(20)
+  check('stop elsewhere: a message sent while idle, still waiting, comes back', h.app.editor.text === 'idle-sent' && !/^› idle-sent/m.test(h.term.screen.text()), JSON.stringify(h.app.editor.text))
+  const marks = (x) => x.term.screen.text().split('Interrupted').length - 1
+  // N1. The stop also stopped a running turn (another terminal's message ran, though this one showed its own as
+  // next): its mark stays, though its own message comes back.
+  const i = setup({ cols: 80, rows: 30 })
+  i.app.turnStarted(); i.app.turnStarted()                    // T0 runs; another terminal's message waits
+  i.key('from a\r'); i.app.turnStarted(); i.clock.advance(20)
+  const idFromA = i.sentIds.at(-1)
+  i.app.turnEnded(); i.clock.advance(20)                       // T0 ends: this terminal shows 'from a' as next
+  i.key('\x1b'); i.clock.advance(60)
+  i.app.withdrawn([idFromA], [], true); i.app.turnEnded(); i.clock.advance(20)
+  check('stop here: a running turn was stopped too, so its mark stays; its own waiting message comes back', marks(i) === 1 && i.app.editor.text === 'from a', `marks=${marks(i)} ${JSON.stringify(i.app.editor.text)}`)
+  i.app.turnEnded()
+  // N5. This terminal stops a message it sent while idle that still waits: nothing ran, so no mark.
+  const j = setup({ cols: 80, rows: 30 })
+  j.key('idle one\r'); j.app.turnStarted(); j.clock.advance(20)
+  j.key('\x1b'); j.clock.advance(60)
+  j.app.withdrawn([j.sentIds.at(-1)], [], true); j.app.turnEnded(); j.clock.advance(20)
+  check('stop here: its own message sent while idle that still waited comes back, with no mark', marks(j) === 0 && j.app.editor.text === 'idle one', `marks=${marks(j)} ${JSON.stringify(j.app.editor.text)}`)
+  // R1. A stopped turn's mark, then (nothing running) a message sent while idle withdrawn by another terminal's stop:
+  // that turn's mark is not the earlier one.
+  const k = setup({ cols: 80, rows: 30 })
+  k.app.turnStarted(); k.key('\x1b'); k.clock.advance(60); k.app.withdrawn([], [], true); k.app.turnEnded(); k.clock.advance(20)
+  k.key('later\r'); k.app.turnStarted(); k.clock.advance(20)
+  k.app.withdrawn([k.sentIds.at(-1)], [], true); k.app.turnEnded(); k.clock.advance(20)
+  check('stop elsewhere: an earlier stopped turn\'s mark stays when a later message is taken back', marks(k) === 1 && k.app.editor.text === 'later', `marks=${marks(k)} ${JSON.stringify(k.app.editor.text)}`)
+  // R2. The same where the later turn started behind another (its start read at a turn's end, not from idle).
+  const m = setup({ cols: 80, rows: 30 })
+  m.app.turnStarted(); m.key('\x1b'); m.clock.advance(60); m.app.withdrawn([], [], true)
+  m.app.turnStarted()                                          // another terminal's message, after the stop
+  m.app.turnEnded(); m.clock.advance(20)                       // the stopped turn ends; that one runs
+  m.key('mine\r'); m.app.turnStarted(); m.clock.advance(20)   // queued behind it
+  m.app.turnEnded(); m.clock.advance(20)                       // it ends; 'mine' is shown as running
+  m.app.withdrawn([m.sentIds.at(-1)], [], true); m.app.turnEnded(); m.clock.advance(20)
+  check('stop elsewhere: a stopped turn\'s mark stays when a later queued message is taken back', marks(m) === 1 && m.app.editor.text === 'mine', `marks=${marks(m)} ${JSON.stringify(m.app.editor.text)}`)
+  // N2. Queued just before the last turn's end was read (its own typing not begun): moved into the transcript when
+  // nothing runs, it is still this terminal's started message when a stop names it.
+  const n2 = setup({ cols: 80, rows: 30 })
+  n2.app.turnStarted(); n2.key('race\r'); n2.clock.advance(20)
+  n2.app.turnEnded(); n2.app.turnStarted(); n2.clock.advance(20)
+  n2.app.withdrawn([n2.sentIds.at(-1)], [], true); n2.app.turnEnded(); n2.clock.advance(20)
+  check('stop elsewhere: a message moved in when nothing ran, still waiting, comes back', n2.app.editor.text === 'race' && !/^› race/m.test(n2.term.screen.text()), JSON.stringify(n2.app.editor.text))
+  // N5. A word answered at once, sent while idle right after a message, is not the turn's message.
+  const n5 = setup({ cols: 80, rows: 30 })
+  n5.app.setAnsweredAtOnce([], ['usage'])
+  n5.key('first\r'); const idFirst = n5.sentIds.at(-1); n5.key('usage\r'); n5.app.turnStarted(); n5.clock.advance(20)
+  n5.key('\x1b'); n5.clock.advance(60)
+  n5.app.withdrawn([idFirst], [], true); n5.app.turnEnded(); n5.clock.advance(20)
+  check('stop here: a word answered at once does not take the turn\'s place; nothing ran, no mark', marks(n5) === 0 && n5.app.editor.text === 'first', `marks=${marks(n5)} ${JSON.stringify(n5.app.editor.text)}`)
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 process.exit(failed.length === 0 ? 0 : 1)

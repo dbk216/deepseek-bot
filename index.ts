@@ -65,7 +65,7 @@ import { createRecallContext, recallIndexPath } from './recallContext.js'
 import { analyzeNotes } from './notes.js'
 import { guardFetchedText } from './injection.js'
 import type { SlackHistoryResponse } from './types/slack.js'
-import type { InboundMessage, StreamFrame } from './types/transport.js'
+import type { InboundMessage, StreamFrame, Target } from './types/transport.js'
 import type { Origin, TurnOutcome, TurnSummary } from './types/core.js'
 import type {
   AgentDefaultModelService, AgentsService, LlmService, AgentPresetsService, AttachmentsService,
@@ -2593,8 +2593,13 @@ export function apply(ctx, config) {
    */
   type Ticket = { withdrawn: boolean; stopWorking: () => void; clientId?: string }
   const waiting = new Map<string, Set<Ticket>>()
-  function withdrawWaiting(key: string): number {
+  function withdrawWaiting(key: string, target: Target): number {
     const tickets = waiting.get(key)
+    // Told first, even when nothing waits (an empty list answers the stop): what waits there and in every
+    // other terminal on the conversation is taken back, and its typing's end is not a turn's.
+    // An id no terminal can give (`#N`) for a message sent without one. A failure to tell must not keep the stop
+    // from withdrawing.
+    try { via(target).withdrawn?.(target, [...(tickets ?? [])].map((ticket, i) => ticket.clientId ?? `#${i + 1}`)) } catch (e) { log(`withdrawn not told in ${key}: ${String((e as Error)?.message ?? e)}`) }
     if (tickets === undefined) return 0
     // Typing stops now, not when the withdrawn job would have reached a slot — which, behind another
     // conversation's turn, could be minutes of "typing…" under "중단했어".
@@ -2675,7 +2680,7 @@ export function apply(ctx, config) {
     // stop, which is better than starting a turn to say so.
     if (isCancelRequest(prompt)) {
       // What is waiting goes too: a stop that left it queued would start on it right after.
-      const withdrawn = withdrawWaiting(key)
+      const withdrawn = withdrawWaiting(key, { channel, threadTs })
       const stopped = cancelRunning(key, 'user')
       log(`cancel requested in ${key} — ${stopped === 'none' ? 'nothing was running' : `stopped a ${stopped} turn`}${withdrawn > 0 ? `, withdrew ${withdrawn} waiting message(s)` : ''}`)
       // Only waiting messages: no turn holds the working message they put up, so the report takes

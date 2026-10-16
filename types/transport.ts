@@ -160,6 +160,13 @@ export interface Transport {
    */
   startTyping?(target: Target, onUnavailable?: () => void): () => void
 
+  /**
+   * A stop withdrew the conversation's waiting messages, these (by the ids their senders gave them; one
+   * without gets one of its own). Called before their typing stops, so a platform that shows each
+   * waiting message (the terminal) can take it back, and not count its end as a turn's.
+   */
+  withdrawn?(target: Target, ids: string[]): void
+
   /** True once the transport knows its indicator will be refused, so the core stops asking. */
   readonly typingUnavailable?: boolean
 

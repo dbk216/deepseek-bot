@@ -547,8 +547,56 @@ function boot({ state = {}, config = {}, services = {} }: { state?: Record<strin
   await t.done()
 }
 {
-  // Only waiting (every slot taken by another conversation): a stop withdraws it, the terminal marks it and takes
-  // the text back into its box, so the gateway says nothing there either.
+  // A stop in one terminal withdraws what waits in the conversation, another terminal's included: every
+  // terminal is told which (as a stop's), before their typing stops, so each takes its own back and none
+  // counts those ends as turns. With nothing waiting it is told too (an empty list).
+  let release = () => {}
+  let started = 0
+  const agents = {
+    create: async (o) => ({ agent: { session: { header: { id: o.sessionId }, seq: 0, eventAt: () => undefined }, followup: () => { started++ }, whenIdle: () => new Promise((r) => { release = () => r(undefined) }), cancel: () => { release() } }, dispose: async () => {} }),
+    resume: async (o) => ({ agent: { session: { header: { id: o.resumeSessionId }, seq: 0, eventAt: () => undefined }, followup: () => { started++ }, whenIdle: () => new Promise((r) => { release = () => r(undefined) }), cancel: () => { release() } }, dispose: async () => {} }),
+  }
+  const t = boot({ services: { agents } })
+  await sleep(100)
+  const a = client(listenPath(t.stateDir))
+  await a.opened
+  a.send({ type: 'hello', version: PROTOCOL_VERSION })
+  const ready = await a.waitFor((f) => f.type === 'ready')
+  const b = client(listenPath(t.stateDir))
+  await b.opened
+  b.send({ type: 'hello', version: PROTOCOL_VERSION, conversation: ready.conversation })
+  await b.waitFor((f) => f.type === 'ready')
+  a.send({ type: 'message', text: '첫 일', id: 'a-1' })
+  for (let i = 0; i < 100 && started === 0; i++) await sleep(10)
+  b.send({ type: 'message', text: '다른 터미널의 일', id: 'b-1' })
+  // One sent without an id (an older terminal): named by an id no terminal can give.
+  b.send({ type: 'message', text: 'id 없는 일' })
+  await sleep(100)
+  const fromB = b.frames.length
+  a.send({ type: 'cancel' })
+  const told = await b.waitFor((f) => f.type === 'withdrawn' && f.stop === true)
+  await a.waitFor((f) => f.type === 'withdrawn' && f.stop === true)
+  await sleep(100)
+  const seenB = b.frames.slice(fromB).map((f) => f.type === 'typing' ? `typing:${f.on}` : f.type)
+  check('stop: every terminal is told which waiting messages a stop withdrew', JSON.stringify(told?.ids) === '["b-1","#2"]' && JSON.stringify(a.frames.find((f) => f.type === 'withdrawn' && f.stop === true)?.ids) === '["b-1","#2"]', JSON.stringify(told))
+  check('stop: told before their typing stops', seenB.indexOf('withdrawn') !== -1 && seenB.indexOf('withdrawn') < seenB.indexOf('typing:false'), JSON.stringify(seenB))
+  // Nothing waiting: the stop is still told, with nothing in it.
+  await sleep(200)
+  a.send({ type: 'message', text: '두 번째', id: 'a-2' })
+  for (let i = 0; i < 100 && started < 2; i++) await sleep(10)
+  const toldBefore = a.frames.filter((f) => f.type === 'withdrawn').length
+  a.send({ type: 'cancel' })
+  await a.waitFor((f) => f.type === 'withdrawn' && a.frames.filter((g) => g.type === 'withdrawn').length > toldBefore)
+  check('stop: with nothing waiting, an empty list is told', JSON.stringify(a.frames.filter((f) => f.type === 'withdrawn').at(-1)?.ids) === '[]')
+  release()
+  await a.close()
+  await b.close()
+  await t.done()
+}
+{
+  // Only waiting (every slot taken by another conversation): a stop withdraws it, the terminal takes the text back
+  // into its box (and the Interrupted mark esc put under it goes too: nothing ran), so the gateway says nothing there
+  // either.
   const agents = {
     create: async (o) => ({ agent: { session: { header: { id: o.sessionId }, seq: 0, eventAt: () => undefined }, followup: () => {}, whenIdle: () => new Promise(() => {}), cancel: () => {} }, dispose: async () => {} }),
     resume: async () => { throw new Error('no') },

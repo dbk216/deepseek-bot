@@ -201,6 +201,9 @@ export class App {
   private takenBack: string[] = []
   /** The ids this terminal asked for back, until the gateway's answer to that ask comes. */
   private asking: string[] | null = null
+  /** The message of this terminal shown as the running turn's, and the Interrupted mark esc put under that turn. */
+  private turnMessage: string | null = null
+  private mark: string | null = null
   /** The keys on show (? on an empty box), in the input box's place. */
   private shortcuts = false
   /** Messages sent while a turn runs: shown above the input until their turn starts. */
@@ -294,6 +297,7 @@ export class App {
     if (this.busy++ === 0) {
       this.turnBlock = null
       this.interrupted = false
+      this.mark = null
       this.status.running = true
       this.status.startedAt = this.clock.now()
       this.startSpinner()
@@ -420,7 +424,8 @@ export class App {
       this.status.running = false
       this.stopSpinner()
       // Nothing is waiting any more: whatever is still shown above the input was answered with it.
-      for (const waiting of this.pending.splice(0)) this.shown(waiting.text)
+      // Into the transcript as started: one may still be waiting for its typing to begin, and a stop name it.
+      for (const waiting of this.pending.splice(0)) this.startedHere(waiting.id, waiting.text)
       this.withdrawing = 0
     } else if (this.withdrawing > 0) {
       // A waiting turn a stop or a withdraw took back ended: the turn running is still the same one.
@@ -429,13 +434,11 @@ export class App {
       // The next turn starts now (this terminal's waiting message, or one another terminal sent): its time and
       // its stop mark are its own, apart from the one that ended.
       this.interrupted = false
+      this.mark = null
       this.status.startedAt = this.clock.now()
-      if (this.pending.length > 0) {
-        // Kept a while: an ↑ sent before this end was read may be answered with this message withdrawn.
-        const next = this.pending.shift()!
-        this.started.set(next.id, { text: next.text, blocks: this.shown(next.text) })
-        if (this.started.size > 8) this.started.delete(this.started.keys().next().value!)
-      }
+      const next = this.pending.shift()
+      this.turnMessage = next?.id ?? null
+      if (next !== undefined) this.startedHere(next.id, next.text)
     }
     this.transcript.touch()
     this.terminal.requestRender()
@@ -494,26 +497,34 @@ export class App {
    * The gateway withdrew these waiting messages (sent to every terminal on the conversation, before their
    * typing stops): each one's end is not a next turn's start, and those this terminal sent go back to the box.
    */
-  withdrawn(ids: string[], asked: string[] = []): void {
-    this.withdrawing += ids.length
-    // One shown as started (its typing-off was read before this answer) was still waiting there: it leaves
-    // the transcript. Then the ones still queued here.
+  withdrawn(ids: string[], asked: string[] = [], stop = false): void {
+    // A stop's answer is the exact count of what is still to end: every earlier answer's ends came right
+    // behind it. It replaces the guess the terminal that stopped made at esc; elsewhere it adds to nothing.
+    this.withdrawing = stop ? ids.length : this.withdrawing + ids.length
+    // One shown as started (its typing-off was read before this answer, or it was sent while idle) was still
+    // waiting there: it leaves the transcript, with the Interrupted mark esc put under it. Then the ones still
+    // queued here.
     const back: string[] = []
     for (const id of ids) {
       const shown = this.started.get(id)
       if (shown === undefined) continue
       this.started.delete(id)
       for (const block of shown.blocks) this.transcript.remove(block)
+      // The mark goes too only when nothing else ran: a stop that also stopped a running turn keeps it.
+      if (id === this.turnMessage && this.mark !== null && this.busy === ids.length) { this.transcript.remove(this.mark); this.mark = null }
       back.push(shown.text)
     }
     const mine = this.pending.filter((p) => ids.includes(p.id))
     this.pending = this.pending.filter((p) => !ids.includes(p.id))
     back.push(...mine.map((p) => p.text))
-    // The answer to this terminal's own ask (another terminal's may come first): nothing back says so.
-    if (this.asking !== null && asked.some((id) => this.asking!.includes(id))) {
-      if (back.length === 0) this.showToast(t().nothingTakenBack)
+    // The answer to this terminal's own ask (another terminal's may come first): nothing back says so, unless
+    // another answer (a stop's) already gave those back.
+    const ownAnswer = this.asking !== null && asked.some((id) => this.asking!.includes(id))
+    if (this.asking !== null) this.asking = this.asking.filter((id) => !ids.includes(id))
+    if (ownAnswer) {
+      if (back.length === 0 && this.asking!.length > 0) this.showToast(t().nothingTakenBack)
       this.asking = null
-    }
+    } else if (this.asking !== null && this.asking.length === 0) this.asking = null
     this.takenBack.push(...back)
     this.restoreTakenBack()
     this.terminal.requestRender(true)
@@ -546,7 +557,17 @@ export class App {
       if (atOnce === 'stop') this.markInterrupted()
       return
     }
-    this.shown(text)
+    // Shown at once, as the turn it starts; the gateway may still have it waiting for a slot. A word answered at
+    // once (a stop, usage) starts no turn.
+    if (this.answeredAtOnce(text) !== null) { this.shown(text); return }
+    this.startedHere(id, text)
+    this.turnMessage = id
+  }
+
+  /** A message of this terminal shown as started, kept a while: a stop or an ↑ may name it still waiting. */
+  private startedHere(id: string, text: string): void {
+    this.started.set(id, { text, blocks: this.shown(text) })
+    if (this.started.size > 8) this.started.delete(this.started.keys().next().value!)
   }
 
   /** What the gateway says it answers at once, without a turn. */
@@ -671,6 +692,8 @@ export class App {
     this.takenBack = []
     this.asking = null
     this.started.clear()
+    this.turnMessage = null
+    this.mark = null
     this.busy = 0
     this.status.running = false
     this.stopSpinner()
@@ -1174,7 +1197,9 @@ export class App {
   private markInterrupted(): void {
     if (!this.status.running || this.interrupted) return
     this.interrupted = true
-    this.transcript.push(interruptedBlock(this.mode))
+    const block = interruptedBlock(this.mode)
+    this.mark = block.id
+    this.transcript.push(block)
     this.transcript.toBottom()
   }
 

@@ -538,11 +538,15 @@ and joins the transcript when its turn starts. `↑` on an empty box asks the ga
 by the ids the terminal gave them: the ones it had not started come back into the box to edit once it says
 so, and the turn goes on. A message the terminal shows as running stays (it may still be waiting for a
 slot), and so does what another terminal on the conversation queued; every terminal is told which were
-taken back. The empty box says what it is for (`Message deepseek-bot · / commands · @ files`); past its
-six rows it counts the ones it cannot show in its border (`↑ 2 more`, `↓ 1 more`), as pi does. A paste of
-more than ten lines (CR or LF) is a chip, `[paste #1 +40 lines]`, until it is sent as the text it stands
-for; the cursor goes over a chip whole, and backspace, delete and ctrl+w take it whole. The hint line under the input box is `? for shortcuts`; `?` on an empty
-box shows the keys below in its place, in as many columns as fit. An approval shows the request's first
+taken back. A stop (`esc`, or a stop word) takes back everything waiting in the conversation, and every
+terminal on it is told which, before those messages' typing stops: each puts its own back in its box,
+including one it already showed as started (sent while idle, or whose turn's start it had read) that was
+still waiting for a slot. The empty box says what it is for (`Message deepseek-bot · / commands ·
+@ files`); past its six rows it counts the ones it cannot show in its border (`↑ 2 more`, `↓ 1 more`), as
+pi does. A paste of more than ten lines (CR or LF) is a chip, `[paste #1 +40 lines]`, until it is sent as
+the text it stands for; the cursor goes over a chip whole, and backspace, delete and ctrl+w take it whole.
+The hint line under the input box is `? for shortcuts`; `?` on an empty box shows the keys below in its
+place, in as many columns as fit. An approval shows the request's first
 line and its options numbered: `↑↓`, a digit or a click and `↵` answer it, `esc` answers no (with text
 selected, esc clears the selection first). A question or a list opened over an approval has the keys
 until it closes. Under `NO_COLOR` there is no band and nothing sweeps. On a light background the colours

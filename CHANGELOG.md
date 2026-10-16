@@ -95,6 +95,13 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **A stop in one terminal left another terminal's queued message hanging.** A stop withdraws every
+  message waiting in the conversation, and the terminal that stopped put its own back in its box; a
+  second terminal on the same conversation was not told. Its message stayed shown as queued, never to
+  run, and the withdrawn message's end was read as a turn's (its timer restarted). The gateway now tells
+  every terminal which waiting messages a stop withdrew (`withdrawn` with `stop`), before their typing
+  stops: each takes its own back, a message it already showed as started but still waiting included, and
+  counts those ends from the answer, which replaces the guess the terminal that stopped made at esc.
 - **After a reminder, every message in that conversation failed.** The harness resumes a session for a
   reminder with an agent of its own and keeps it, holding the session, so the conversation's next turn
   was refused ("could not take the session after retries") until the gateway restarted. That turn now

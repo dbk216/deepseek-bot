@@ -126,6 +126,11 @@ async function until(predicate, ms = 3000) {
   bind(modelApp, { type: 'model', current: { ...current, effort: 'low' }, cause: 'effort' }, cmds)
   check('effort: a step shows in the status line only, not as a line in the transcript', notices.length === quiet && statusSeen.at(-1)?.effort === 'low', JSON.stringify(notices.slice(quiet)))
   check('effort: and the app is told it was a step (said while a turn runs), a /model answer not', JSON.stringify(stepped) === '["low"]', JSON.stringify(stepped))
+  // What a stop or a withdraw took back reaches the app with what was asked and whether it was a stop's.
+  const told = []
+  bind({ withdrawn: (...a) => told.push(a) }, { type: 'withdrawn', ids: ['b-1'], asked: [], stop: true })
+  bind({ withdrawn: (...a) => told.push(a) }, { type: 'withdrawn', ids: ['a-2'], asked: ['a-2'] })
+  check('withdrawn: the app is told the ids, what was asked, and a stop\'s from a withdraw\'s', JSON.stringify(told) === JSON.stringify([[['b-1'], [], true], [['a-2'], ['a-2'], false]]), JSON.stringify(told))
   cmds.stepEffort()
   check('effort: shift+tab asks the gateway for the next effort', JSON.stringify(sent.at(-1)) === JSON.stringify({ type: 'effort', step: 1 }), JSON.stringify(sent.at(-1)))
   // A model picker open when the model or effort changes under it (another terminal, a click on the
