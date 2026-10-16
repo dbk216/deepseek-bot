@@ -1499,6 +1499,18 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   low.term.resize(80, 40); low.clock.advance(20)
   const grown = low.term.screen.text().split('\n')
   check('welcome: made taller, the letters come back, from the top', grown[1].includes('██████╗') && grown.some((r) => r.includes('╭')), grown.slice(0, 2).join(' | '))
+  // Scrolled up in a long conversation, the letters that a taller screen adds are not new lines, and the view
+  // keeps the line it showed at its top.
+  const up = setup({ cols: 80, rows: 24 })
+  up.key('the ask\r'); up.app.turnStarted()
+  up.app.final(Array.from({ length: 60 }, (_, i) => `after ${i + 1}`).join('\n\n')); up.app.turnEnded(); up.clock.advance(20)
+  for (let i = 0; i < 6; i++) up.key(SGR(64, 10, 10))
+  up.clock.advance(20)
+  const shownFirst = () => up.term.screen.text().split('\n').find((r) => /after \d+/.test(r))?.trim()
+  const firstBefore = shownFirst()
+  up.term.resize(80, 40); up.clock.advance(20)
+  check('welcome: letters a taller screen adds above a scrolled-up view are not new lines, and the view stays put', firstBefore !== undefined && shownFirst() === firstBefore && !/↓ \d+ new/.test(up.term.screen.text()),
+    `${firstBefore} → ${shownFirst()} ${up.term.screen.text().split('\n').find((r) => / new /.test(r)) ?? ''}`)
   const at = (needle) => { const p = t.term.screen.find(needle); return p === null ? '' : t.term.screen.grid[p.row * 100 + p.col].style }
   t.app.setStatus({ contextPct: 50, tokensIn: 12000, tokensOut: 3400 })
   t.clock.advance(20)

@@ -1311,7 +1311,13 @@ export class App {
   private render(screen: Screen): void {
     const { cols, rows } = screen
     // A screen of another height may fit the welcome letters where this one did not, or the other way round.
-    if (rows !== this.welcomeRows) { this.welcomeRows = rows; this.banner.refresh(); this.transcript.touch() }
+    // Letters coming or going are not lines that arrived, and a view scrolled up stays on what it showed.
+    if (rows !== this.welcomeRows) {
+      this.welcomeRows = rows
+      const before = this.transcript.layout(cols).length
+      this.transcript.refold(cols, () => this.banner.refresh())
+      if (!this.transcript.follow) this.transcript.top = Math.max(0, this.transcript.top + this.transcript.layout(cols).length - before)
+    }
     // Whatever closed the question or the search, text the gateway gave back meanwhile comes to the box now.
     this.restoreTakenBack()
     setFrame(Math.floor(this.clock.now() / 80))
