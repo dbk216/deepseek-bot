@@ -93,6 +93,7 @@ export interface LocalTransport extends Transport {
   ready(): boolean
   hasSocket(): boolean
   startTyping(target: Target): () => void
+  withdrawn(target: Target, ids: string[]): void
   remove(target: Target, ts: string): Promise<boolean>
   stream(target: Target, frame: StreamFrame): void
   turnEnded(target: Target): void
@@ -585,6 +586,12 @@ export function createLocalTransport(host: LocalHost): LocalTransport {
       deliver(conversation, { type: 'typing', on: true })
       let stopped = false
       return () => { if (!stopped) { stopped = true; deliver(conversation, { type: 'typing', on: false }) } }
+    },
+
+    // Every terminal on the conversation, before the typing of what was withdrawn stops: each takes its own
+    // back, and the one that stopped knows the answer for its own.
+    withdrawn(target: Target, ids: string[]) {
+      if (target.threadTs !== null) toConversation(target.threadTs, { type: 'withdrawn', ids, asked: [], stop: true })
     },
 
     ask(target: Target, items: QuestionItem[], signal?: AbortSignal) {

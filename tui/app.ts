@@ -7,9 +7,9 @@
  * be tested against a fake terminal and a fake backend.
  *
  * Layout, top to bottom: the transcript (under a header only in a subagent's or a shell's view), a
- * divider, the status line, the input box, and a hint line. Nothing frames the whole screen. The input box keeps the last rows and the
- * transcript sits right above the divider, a short one with the empty rows over it, so what is new is
- * always next to where one types. A choice (a picker, a question's options, an approval) takes the box's
+ * divider, the status line, the input box, and a hint line. Nothing frames the whole screen. The input box keeps the last rows; the
+ * transcript fills the rows over it from the top, a short one with the empty rows under it, and once it is
+ * longer than they are it follows its newest line. A choice (a picker, a question's options, an approval) takes the box's
  * place while nothing is typed; the completion list opens just above the box.
  */
 import { answerBlock, interruptedBlock, welcomeBlock, noticeBlock, spacerBlock, thinkingBlock, toolBlock, toolCallBlock, userBlock, type AnswerBlock, type Detail, type NoticeKind, type ThinkingBlock, type ToolCallBlock, type ToolStep } from './blocks.js'
@@ -113,6 +113,8 @@ export interface AppOptions {
 }
 
 const EDITOR_MAX_ROWS = 6
+/** The rows under the transcript with nothing open: the divider, the status line, a one-line box and the hint. */
+const PLAIN_BOTTOM_ROWS = 6
 /** A paste of more lines than this is a chip in the box until it is sent. */
 const PASTE_CHIP_LINES = 10
 const TOAST_MS = 1500
@@ -143,6 +145,8 @@ export class App {
   private readonly o: AppOptions
   private readonly clock: Clock
   private readonly banner
+  /** The screen's rows the welcome block was laid out for: whether its letters fit depends on them. */
+  private welcomeRows = 0
   private answer: AnswerBlock | null = null
   private readonly posted = new Map<string, AnswerBlock>()
   /** The last answer block this turn streamed into: where the turn's reply belongs. */
@@ -197,6 +201,9 @@ export class App {
   private takenBack: string[] = []
   /** The ids this terminal asked for back, until the gateway's answer to that ask comes. */
   private asking: string[] | null = null
+  /** The message of this terminal shown as the running turn's, and the Interrupted mark esc put under that turn. */
+  private turnMessage: string | null = null
+  private mark: string | null = null
   /** The keys on show (? on an empty box), in the input box's place. */
   private shortcuts = false
   /** Messages sent while a turn runs: shown above the input until their turn starts. */
@@ -255,7 +262,7 @@ export class App {
       onEvent: (event) => this.onEvent(event),
       ...(options.clock ? { now: options.clock.now, setTimer: options.clock.setTimer, clearTimer: options.clock.clearTimer } : {}),
     })
-    this.banner = welcomeBlock(() => ({ version: this.o.version ?? '', model: this.status.model, workspace: this.shownWorkspace(), session: this.status.session ?? '' }), this.mode)
+    this.banner = welcomeBlock(() => ({ version: this.o.version ?? '', model: this.status.model, workspace: this.shownWorkspace(), session: this.status.session ?? '', room: this.welcomeRows - PLAIN_BOTTOM_ROWS }), this.mode)
     this.transcript.push(this.banner)
     // A paste chip is one thing to the cursor and to deleting.
     this.editor.atoms = () => [...this.pastes.keys()]
@@ -290,6 +297,7 @@ export class App {
     if (this.busy++ === 0) {
       this.turnBlock = null
       this.interrupted = false
+      this.mark = null
       this.status.running = true
       this.status.startedAt = this.clock.now()
       this.startSpinner()
@@ -416,7 +424,8 @@ export class App {
       this.status.running = false
       this.stopSpinner()
       // Nothing is waiting any more: whatever is still shown above the input was answered with it.
-      for (const waiting of this.pending.splice(0)) this.shown(waiting.text)
+      // Into the transcript as started: one may still be waiting for its typing to begin, and a stop name it.
+      for (const waiting of this.pending.splice(0)) this.startedHere(waiting.id, waiting.text)
       this.withdrawing = 0
     } else if (this.withdrawing > 0) {
       // A waiting turn a stop or a withdraw took back ended: the turn running is still the same one.
@@ -425,13 +434,11 @@ export class App {
       // The next turn starts now (this terminal's waiting message, or one another terminal sent): its time and
       // its stop mark are its own, apart from the one that ended.
       this.interrupted = false
+      this.mark = null
       this.status.startedAt = this.clock.now()
-      if (this.pending.length > 0) {
-        // Kept a while: an ↑ sent before this end was read may be answered with this message withdrawn.
-        const next = this.pending.shift()!
-        this.started.set(next.id, { text: next.text, blocks: this.shown(next.text) })
-        if (this.started.size > 8) this.started.delete(this.started.keys().next().value!)
-      }
+      const next = this.pending.shift()
+      this.turnMessage = next?.id ?? null
+      if (next !== undefined) this.startedHere(next.id, next.text)
     }
     this.transcript.touch()
     this.terminal.requestRender()
@@ -490,26 +497,34 @@ export class App {
    * The gateway withdrew these waiting messages (sent to every terminal on the conversation, before their
    * typing stops): each one's end is not a next turn's start, and those this terminal sent go back to the box.
    */
-  withdrawn(ids: string[], asked: string[] = []): void {
-    this.withdrawing += ids.length
-    // One shown as started (its typing-off was read before this answer) was still waiting there: it leaves
-    // the transcript. Then the ones still queued here.
+  withdrawn(ids: string[], asked: string[] = [], stop = false): void {
+    // A stop's answer is the exact count of what is still to end: every earlier answer's ends came right
+    // behind it. It replaces the guess the terminal that stopped made at esc; elsewhere it adds to nothing.
+    this.withdrawing = stop ? ids.length : this.withdrawing + ids.length
+    // One shown as started (its typing-off was read before this answer, or it was sent while idle) was still
+    // waiting there: it leaves the transcript, with the Interrupted mark esc put under it. Then the ones still
+    // queued here.
     const back: string[] = []
     for (const id of ids) {
       const shown = this.started.get(id)
       if (shown === undefined) continue
       this.started.delete(id)
       for (const block of shown.blocks) this.transcript.remove(block)
+      // The mark goes too only when nothing else ran: a stop that also stopped a running turn keeps it.
+      if (id === this.turnMessage && this.mark !== null && this.busy === ids.length) { this.transcript.remove(this.mark); this.mark = null }
       back.push(shown.text)
     }
     const mine = this.pending.filter((p) => ids.includes(p.id))
     this.pending = this.pending.filter((p) => !ids.includes(p.id))
     back.push(...mine.map((p) => p.text))
-    // The answer to this terminal's own ask (another terminal's may come first): nothing back says so.
-    if (this.asking !== null && asked.some((id) => this.asking!.includes(id))) {
-      if (back.length === 0) this.showToast(t().nothingTakenBack)
+    // The answer to this terminal's own ask (another terminal's may come first): nothing back says so, unless
+    // another answer (a stop's) already gave those back.
+    const ownAnswer = this.asking !== null && asked.some((id) => this.asking!.includes(id))
+    if (this.asking !== null) this.asking = this.asking.filter((id) => !ids.includes(id))
+    if (ownAnswer) {
+      if (back.length === 0 && this.asking!.length > 0) this.showToast(t().nothingTakenBack)
       this.asking = null
-    }
+    } else if (this.asking !== null && this.asking.length === 0) this.asking = null
     this.takenBack.push(...back)
     this.restoreTakenBack()
     this.terminal.requestRender(true)
@@ -542,7 +557,17 @@ export class App {
       if (atOnce === 'stop') this.markInterrupted()
       return
     }
-    this.shown(text)
+    // Shown at once, as the turn it starts; the gateway may still have it waiting for a slot. A word answered at
+    // once (a stop, usage) starts no turn.
+    if (this.answeredAtOnce(text) !== null) { this.shown(text); return }
+    this.startedHere(id, text)
+    this.turnMessage = id
+  }
+
+  /** A message of this terminal shown as started, kept a while: a stop or an ↑ may name it still waiting. */
+  private startedHere(id: string, text: string): void {
+    this.started.set(id, { text, blocks: this.shown(text) })
+    if (this.started.size > 8) this.started.delete(this.started.keys().next().value!)
   }
 
   /** What the gateway says it answers at once, without a turn. */
@@ -667,6 +692,8 @@ export class App {
     this.takenBack = []
     this.asking = null
     this.started.clear()
+    this.turnMessage = null
+    this.mark = null
     this.busy = 0
     this.status.running = false
     this.stopSpinner()
@@ -1170,7 +1197,9 @@ export class App {
   private markInterrupted(): void {
     if (!this.status.running || this.interrupted) return
     this.interrupted = true
-    this.transcript.push(interruptedBlock(this.mode))
+    const block = interruptedBlock(this.mode)
+    this.mark = block.id
+    this.transcript.push(block)
     this.transcript.toBottom()
   }
 
@@ -1306,6 +1335,14 @@ export class App {
 
   private render(screen: Screen): void {
     const { cols, rows } = screen
+    // A screen of another height may fit the welcome letters where this one did not, or the other way round.
+    // Letters coming or going are not lines that arrived, and a view scrolled up stays on what it showed.
+    if (rows !== this.welcomeRows) {
+      this.welcomeRows = rows
+      const before = this.transcript.layout(cols).length
+      this.transcript.refold(cols, () => this.banner.refresh())
+      if (!this.transcript.follow) this.transcript.top = Math.max(0, this.transcript.top + this.transcript.layout(cols).length - before)
+    }
     // Whatever closed the question or the search, text the gateway gave back meanwhile comes to the box now.
     this.restoreTakenBack()
     setFrame(Math.floor(this.clock.now() / 80))
@@ -1339,12 +1376,13 @@ export class App {
     // The picker gets what is left after a row of transcript: on a small screen it shrinks; the hint line stays.
     const pickerLines = this.question === null && this.picker !== null ? this.pickerLines(cols, rows - (headerRows + stripRows) - 1 - fixed) : []
     const bottom = fixed + pickerLines.length
-    // Every row left is the transcript's; one shorter than that is drawn at its foot, against the divider.
+    // Every row left is the transcript's. One shorter than that is drawn from the top, as a page reads, and the
+    // rows under it stay empty: the input box keeps the bottom rows either way.
     const area = Math.max(1, rows - (headerRows + stripRows) - bottom)
     const transcriptHeight = Math.max(1, Math.min(area, this.pane.layout(cols).length))
-    const transcriptTop = headerRows + stripRows + (area - transcriptHeight)
+    const transcriptTop = headerRows + stripRows
     if (stripRows > 0) this.drawInterview(screen, headerRows, cols)
-    const pendingTop = transcriptTop + transcriptHeight
+    const pendingTop = headerRows + stripRows + area
     const dividerRow = pendingTop + pendingRows
     const statusRow = dividerRow + 1
     const panelTop = panelShown === 0 ? -1 : statusRow + 1
@@ -1425,7 +1463,8 @@ export class App {
       screen.put(0, transcriptTop, fit(`› ${held.replace(/\s+/g, ' ').trim()}`, cols - 1), s(theme.dim))
     }
 
-    // What waits behind the running turn, each on the band it will have in the transcript.
+    // What waits behind the running turn, over the divider (as Claude Code queues it), each on the band it will
+    // have in the transcript.
     if (pendingRows > 0) {
       const banded = this.mode !== 'none'
       const body = s(banded ? theme.userBand : theme.muted)

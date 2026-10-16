@@ -19,7 +19,8 @@ import { Terminal, ENTER, RESTORE, restoreOnExit } from '../dist/tui/render/term
 import { wrapPlain, layout, extract } from '../dist/tui/render/text.js'
 import { Transcript } from '../dist/tui/render/transcript.js'
 import { Editor } from '../dist/tui/render/editor.js'
-import { mark, MARK_WIDTH } from '../dist/tui/render/banner.js'
+import { banner, BANNER_WIDTHS } from '../dist/tui/render/banner.js'
+import { welcomeBlock } from '../dist/tui/blocks.js'
 import { copy, osc52 } from '../dist/tui/render/clipboard.js'
 import { emulator, fakeTerminal, fakeClock } from './tui-fakes.ts'
 import { sgr, detectColorMode, rgbTo256, backgroundOf, useBackground, theme, palette } from '../dist/tui/render/style.js'
@@ -264,13 +265,27 @@ const randomText = (n) => Array.from({ length: n }, () => ALPHABET[rand(ALPHABET
   check('restore: the hooks can be removed', proc.listenerCount('uncaughtException') === 0)
 }
 
-// 9. The mark, colour, clipboard.
+// 9. The banner, colour, clipboard.
 {
-  const rows = mark('none')
-  check('mark: the README\'s whale, six rows, padded to one width', rows.length === 6 && rows.every((r) => stringWidth(r.text) === MARK_WIDTH) && rows[0].text.includes('▄▄████▄▄'), JSON.stringify(rows.map((r) => r.text)))
-  check('mark: no colour codes under NO_COLOR', rows.every((r) => r.style === ''))
-  const shaded = mark('truecolor')
-  check('mark: light at the top, deep at the bottom', shaded[0].style !== shaded[5].style && shaded[0].style.includes('38;2;'))
+  const rowText = (l) => l.spans.map((sp) => sp.text).join('')
+  check('banner: one line needs 93 columns, two lines 68', BANNER_WIDTHS.one === 93 && BANNER_WIDTHS.two === 68, JSON.stringify(BANNER_WIDTHS))
+  check('banner: it says DEEPSEEK BOT', rowText(banner(140, 'none')[0]) === '  ██████╗ ███████╗███████╗██████╗ ███████╗███████╗███████╗██╗  ██╗   ██████╗  ██████╗ ████████╗', rowText(banner(140, 'none')[0]))
+  check('banner: on two lines, BOT sits below the end of DEEPSEEK', rowText(banner(80, 'none')[6]) === `${' '.repeat(2 + 42)}██████╗  ██████╗ ████████╗`, JSON.stringify(rowText(banner(80, 'none')[6])))
+  check('banner: the narrow wordmark says deepseek-bot', rowText(banner(60, 'none')[0]) === '  ◆ deepseek-bot', rowText(banner(60, 'none')[0]))
+  check('banner: 80 columns get the two-line mark, 140 the one-line, 60 the wordmark', banner(80, 'truecolor').length === 12 && banner(140, 'truecolor').length === 6 && banner(60, 'truecolor').length === 1)
+  check('banner: no colour codes under NO_COLOR', banner(80, 'none').every((l) => l.spans.every((s) => s.style === '')))
+  const top = banner(80, 'truecolor')[0].spans[1].style, bottom = banner(80, 'truecolor')[11].spans[1].style
+  check('banner: a gradient from light to deep blue', top.includes('38;2;91;155;255') && bottom.includes('38;2;11;63;168'), `${JSON.stringify(top)} → ${JSON.stringify(bottom)}`)
+  // The welcome block's letters, at the widths the docs give: none under 70, two lines from 70, one from 95.
+  const welcome = (width, room = 100) => welcomeBlock(() => ({ version: '0.2.0', model: 'm', workspace: '~/w', session: 's', room }), 'none').lines(width).map(rowText)
+  // A row of the letters has a block or a double line in it; the box's lines are single.
+  const lettered = (rows) => rows.filter((r) => /[█╗╝║═]/.test(r)).length
+  check('welcome: letters by width — 69 none, 70 and 94 two lines, 95 one line', lettered(welcome(69)) === 0 && lettered(welcome(70)) === 12 && lettered(welcome(94)) === 12 && lettered(welcome(95)) === 6,
+    [69, 70, 94, 95].map((w) => lettered(welcome(w))).join(' '))
+  const one = welcome(95)
+  check('welcome: under one line of letters the box is as wide as they are', one.find((r) => r.includes('╭'))?.trimEnd().length === one.find((r) => r.includes('████████╗'))?.trimEnd().length, `${one.find((r) => r.includes('╭'))?.trimEnd().length} ${one.find((r) => r.includes('████████╗'))?.trimEnd().length}`)
+  check('welcome: letters only when they and the box fit the rows: 15 for one line, 21 for two', lettered(welcome(95, 15)) === 6 && lettered(welcome(95, 14)) === 0 && lettered(welcome(80, 21)) === 12 && lettered(welcome(80, 20)) === 0,
+    [lettered(welcome(95, 15)), lettered(welcome(95, 14)), lettered(welcome(80, 21)), lettered(welcome(80, 20))].join(' '))
   check('fit: text that fits is left alone; longer text is cut with …', fit('deepseek', 10) === 'deepseek' && fit('deepseek-bot', 8) === 'deepsee…' && stringWidth(fit('한국어 텍스트', 6)) <= 6, fit('한국어 텍스트', 6))
   check('colour: NO_COLOR wins, COLORTERM=truecolor is 24-bit, otherwise 256', detectColorMode({ NO_COLOR: '1', COLORTERM: 'truecolor' }) === 'none' && detectColorMode({ COLORTERM: 'truecolor' }) === 'truecolor' && detectColorMode({}) === '256')
   check('colour: the logo blue maps into the 256 cube', rgbTo256([0x2e, 0x7b, 0xff]) === 33, String(rgbTo256([0x2e, 0x7b, 0xff])))

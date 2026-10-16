@@ -5,7 +5,7 @@
  * what changed. The answer being streamed is the one mutable block: deltas append to it, a failed
  * attempt is dropped from it, and the end replaces it with the committed text.
  */
-import { mark, MARK_WIDTH } from './render/banner.js'
+import { banner, BANNER_WIDTHS } from './render/banner.js'
 import { t } from './strings.js'
 import { palette, sgr, theme, type ColorMode } from './render/style.js'
 import { blink, currentFrame, shimmer } from './render/motion.js'
@@ -321,13 +321,17 @@ export function noticeBlock(text: string, kind: NoticeKind, mode: ColorMode): Bl
   return { id: nextId('notice'), version: 0, lines: (width) => layout(text, width, style, { first: pad(mark, style), rest: pad('  ') }) }
 }
 
-/** What the welcome box says. */
-export interface Welcome { version: string; model: string; workspace: string; session: string }
+/**
+ * What the welcome box says, and `room`: the rows the transcript has on this screen with nothing open over
+ * the input box.
+ */
+export interface Welcome { version: string; model: string; workspace: string; session: string; room: number }
 
 /**
- * The welcome box at the top of a conversation, as Claude Code opens with its own: the mark, the name and
- * version, the model, where it works, and the keys to start with. A screen too narrow for the mark gets the
- * words alone.
+ * The top of a conversation: DEEPSEEK BOT in block letters, and under it a box with the name and version, the
+ * model, where it works, and the keys to start with. A screen too narrow or too short for the letters gets the
+ * box alone, which names the project (a first screen whose letters scroll off its top is worse); one too
+ * narrow for a box, the words alone.
  */
 export function welcomeBlock(info: () => Welcome, mode: ColorMode): Block & { refresh(): void } {
   const border = sgr(theme.border, mode)
@@ -346,26 +350,23 @@ export function welcomeBlock(info: () => Welcome, mode: ColorMode): Block & { re
       ]
       // Too narrow for a box: the words alone.
       if (width < 22) return [blank(), ...words.filter((w) => w.text !== '').map((w) => ({ spans: [pad(' '), { text: fit(w.text, Math.max(1, width - 2)), style: w.style }], soft: false }))]
-      const box = Math.min(width - 2, 84)
-      const inner = box - 4
-      const withMark = inner >= MARK_WIDTH + 4 + 24
-      const marks = withMark ? mark(mode) : []
-      const rows = withMark ? marks.length : words.length
-      const offset = withMark ? marks.length - words.length : 0
-      const content: Line[] = []
-      for (let r = 0; r < rows; r++) {
-        const left = withMark ? marks[r] : null
-        const word = words[r - offset]
-        const room = inner - (left !== null ? MARK_WIDTH + 4 : 0)
-        const said = word === undefined ? '' : fit(word.text, room)
+      // The letters where they fit across (indent 1 on both sides) and down: a blank row, the letters, a blank
+      // row and the box (the words and two borders) within the transcript's rows.
+      const art = width >= BANNER_WIDTHS.two + 2 ? banner(width, mode, 1) : []
+      const letters = art.length > 0 && 1 + art.length + 1 + words.length + 2 <= i.room ? [...art, blank()] : []
+      // Under one line of letters the box is as wide as they are.
+      const box = Math.min(width - 2, letters.length > 0 && width >= BANNER_WIDTHS.one + 2 ? BANNER_WIDTHS.one : 84)
+      const room = box - 4
+      const content: Line[] = words.map((word) => {
+        const said = fit(word.text, room)
         const spans = [pad(' '), pad('│ ', border)]
-        if (left !== null) spans.push(pad(left.text, left.style), pad('    '))
-        if (said !== '') spans.push({ text: said, style: word!.style })
+        if (said !== '') spans.push({ text: said, style: word.style })
         spans.push(pad(' '.repeat(Math.max(0, room - stringWidth(said)))), pad(' │', border))
-        content.push({ spans, soft: false })
-      }
+        return { spans, soft: false }
+      })
       return [
         blank(),
+        ...letters,
         { spans: [pad(' '), pad(`╭${'─'.repeat(box - 2)}╮`, border)], soft: false },
         ...content,
         { spans: [pad(' '), pad(`╰${'─'.repeat(box - 2)}╯`, border)], soft: false },

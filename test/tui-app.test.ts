@@ -143,7 +143,8 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   const done = t.term.screen.text()
   check('stream: a tool step appears between the two parts', done.includes('● Recall(2 passages)'))
   check('stream: the final text replaces the streamed text', done.includes('staging 먼저, 그다음 production.') && !done.includes('staging 먼저.▍'))
-  check('stream: no working indicator after the turn', !done.includes('esc to interrupt'))
+  // The working indicator, not the welcome box's keys line, which names esc too.
+  check('stream: no working indicator after the turn', !/✻ .*esc to interrupt/.test(done))
 }
 
 // 3b. The turn's reply takes the place of what was streamed — and only the reply does.
@@ -416,7 +417,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   const plain = setup({ env: { NO_COLOR: '1' } })
   check('colour: NO_COLOR writes no colour codes', !plain.term.out.join('').match(/\x1b\[[\d;]*(38|48);[25];/))
   const narrow = setup({ cols: 50 })
-  check('narrow: a 50-column terminal gets the welcome words, not the mark cut', narrow.term.screen.text().includes('deepseek-bot') && !narrow.term.screen.text().includes('▄▄████▄▄'))
+  check('narrow: a 50-column terminal gets the welcome words, not the letters cut', narrow.term.screen.text().includes('deepseek-bot') && !narrow.term.screen.text().includes('██'))
 }
 
 // 8b. Running state: counted across queued turns, synced on (re)connect, reset for another conversation.
@@ -799,7 +800,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const label = t.term.screen.find('✻ Thinking…')
   const styles = label === null ? new Set() : new Set(Array.from({ length: 9 }, (_, i) => cell(label.row, label.col + 2 + i).style))
   check('thinking: in sky blue, with a light passing over its label', label !== null && styles.size > 1 && [...styles].some((s) => String(s).includes(SKY)), [...styles].join(' | ').slice(0, 120))
-  check('status: says it is thinking', /✻ Thinking… \(\d+s · esc to interrupt\)/.test(t.term.screen.row(t.term.screen.find('esc to interrupt')?.row ?? 0)))
+  check('status: says it is thinking', t.term.screen.text().split('\n').some((row) => /✻ Thinking… \(\d+s · esc to interrupt\)/.test(row)))
   t.app.delta('The answer.')
   t.app.final('The answer.')
   t.app.turnEnded()
@@ -877,9 +878,9 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.turnEnded()
 }
 
-// 70. The bottom of the screen. The input box keeps the last rows and a short conversation sits right above
-// it, so nothing opens in the middle of an empty screen (it once followed the conversation down from the
-// top, with the rest of the screen empty under it); /model and /sessions are pickers in the box's place;
+// 70. The bottom of the screen. The input box keeps the last rows, and a short conversation is drawn from the
+// top with the empty rows under it (drawn against the box instead, it left the top of a new screen empty);
+// /model and /sessions are pickers in the box's place;
 // shift+tab steps the effort, shown where a permission label the gateway never sent ("▸▸ ask") used to
 // be; and the mouse works on what the keys work on.
 {
@@ -888,8 +889,9 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const box = () => { const prompt = t.term.screen.find('│ ›'); return prompt === null ? -1 : prompt.row - 1 }
   const info = t.term.screen.find('session tui-3f2a')?.row ?? -1
   const welcomeEnd = t.term.screen.find('╰')?.row ?? -1
-  check('layout: the input box keeps the last rows, and a short conversation sits right above it', box() === 40 - 4 && info >= 0 && welcomeEnd === box() - 3, `info ${info}, welcome ends ${welcomeEnd}, box ${box()}`)
-  check('layout: the empty rows are above the conversation, not between it and the box', t.term.screen.row(3).trim() === '', t.term.screen.row(3))
+  const lettersAt = t.term.screen.find('██████╗')?.row ?? -1
+  check('layout: the input box keeps the last rows, and a short conversation starts at the top', box() === 40 - 4 && lettersAt === 1 && info > lettersAt && welcomeEnd > info && welcomeEnd < box() - 3, `letters ${lettersAt}, info ${info}, welcome ends ${welcomeEnd}, box ${box()}`)
+  check('layout: the empty rows are between the conversation and the box, not above it', t.term.screen.row(box() - 3).trim() === '' && t.term.screen.row(1).trim() !== '', `${JSON.stringify(t.term.screen.row(1).slice(0, 20))} / ${JSON.stringify(t.term.screen.row(box() - 3))}`)
   const status = t.term.screen.row(box() - 1)
   check('status: the effort, with the key that steps it, and no permission label', /▸▸ effort medium \(shift\+tab\)/.test(status) && !/\bask\b/.test(status), status)
   check('status: the model it runs on, at the right', /deepseek-v4\.1\s*$/.test(status), status)
@@ -1474,21 +1476,41 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('shortcuts: with room for one line, the title alone, and the hint stays', /esc close/.test(tiny.term.screen.row(4)) && tiny.term.screen.text().includes('Shortcuts') && !/\+\d+ more/.test(tiny.term.screen.text()), tiny.term.screen.text().split('\n').join(' | '))
 }
 
-// 78. The first screen and the footer after Claude Code and pi. No header row over the conversation: a welcome box
-// says what this is (the mark, the version), what it runs on, where, and the keys to start with. The context bar
+// 78. The first screen and the footer after Claude Code and pi. No header row over the conversation: DEEPSEEK BOT
+// in block letters, and a box under it that says the version, what it runs on, where, and the keys to start with. The context bar
 // turns yellow past 70% and red past 90%; tokens read as sent ↑ and received ↓.
 {
   const t = setup({ cols: 100, rows: 30, extra: { version: '0.2.0' } })
   const first = t.term.screen.text()
   const rows = first.split('\n')
   check('welcome: no header row over the conversation', !/^ deepseek-bot\s{4,}/.test(rows[0]) && !rows[0].includes('tui-3f2a9c1e'), rows[0])
-  check('welcome: a box with the mark, the name and version, the model, the workspace and where to start', first.includes('╭') && first.includes('▄▄████▄▄') && /deepseek-bot v0\.2\.0/.test(first) && first.includes('deepseek-v4.1') && first.includes('~/dsh-agent') && /\/help/.test(first) && /\? for shortcuts/.test(first), rows.filter((r) => r.trim() !== '').slice(0, 9).join(' | '))
-  check('welcome: no block-letter banner', !first.includes('██████╗'))
+  check('welcome: DEEPSEEK BOT in block letters on one line, over a box with the version, the model, the workspace and where to start', rows.some((r) => r.includes('██████╗ ███████╗') && r.includes('████████╗')) && first.includes('╭') &&/deepseek-bot v0\.2\.0/.test(first) && first.includes('deepseek-v4.1') && first.includes('~/dsh-agent') && /\/help/.test(first) && /\? for shortcuts/.test(first), rows.filter((r) => r.trim() !== '').slice(0, 9).join(' | '))
+  check('welcome: no whale', !first.includes('▄▄████▄▄'))
   const narrow = setup({ cols: 50, rows: 24, extra: { version: '0.2.0' } })
   const small = narrow.term.screen.text()
-  check('welcome: on a narrow screen, the words without the mark, the box closed', /deepseek-bot v0\.2\.0/.test(small) && !small.includes('▄▄████▄▄') && (small.split('\n').find((l) => l.includes('╭')) ?? '').includes('╮'), small.split('\n').filter((r) => r.trim() !== '').slice(0, 6).join(' | '))
+  check('welcome: on a narrow screen, the box without the letters, closed', /deepseek-bot v0\.2\.0/.test(small) && !small.includes('██') &&(small.split('\n').find((l) => l.includes('╭')) ?? '').includes('╮'), small.split('\n').filter((r) => r.trim() !== '').slice(0, 6).join(' | '))
   const tiny = setup({ cols: 20, rows: 16, extra: { version: '0.2.0' } }).term.screen.text()
   check('welcome: too narrow for a box, the words alone', /^ deepseek-bot/m.test(tiny) && !tiny.includes('│ deep'), tiny.split('\n').filter((r) => r.trim() !== '').slice(0, 5).join(' | '))
+  // 80x24, Terminal.app's default: two lines of letters and the box are taller than the transcript's 18 rows,
+  // and a first screen opening on the letters cut at the top is worse than the box alone.
+  const low = setup({ cols: 80, rows: 24, extra: { version: '0.2.0' } })
+  const lowRows = low.term.screen.text().split('\n')
+  check('welcome: on a short screen, the box alone, whole, at the top', !lowRows.join('\n').includes('██') && lowRows[1].includes('╭') && lowRows.some((r) => r.includes('╰')), lowRows.slice(0, 3).join(' | '))
+  low.term.resize(80, 40); low.clock.advance(20)
+  const grown = low.term.screen.text().split('\n')
+  check('welcome: made taller, the letters come back, from the top', grown[1].includes('██████╗') && grown.some((r) => r.includes('╭')), grown.slice(0, 2).join(' | '))
+  // Scrolled up in a long conversation, the letters that a taller screen adds are not new lines, and the view
+  // keeps the line it showed at its top.
+  const up = setup({ cols: 80, rows: 24 })
+  up.key('the ask\r'); up.app.turnStarted()
+  up.app.final(Array.from({ length: 60 }, (_, i) => `after ${i + 1}`).join('\n\n')); up.app.turnEnded(); up.clock.advance(20)
+  for (let i = 0; i < 6; i++) up.key(SGR(64, 10, 10))
+  up.clock.advance(20)
+  const shownFirst = () => up.term.screen.text().split('\n').find((r) => /after \d+/.test(r))?.trim()
+  const firstBefore = shownFirst()
+  up.term.resize(80, 40); up.clock.advance(20)
+  check('welcome: letters a taller screen adds above a scrolled-up view are not new lines, and the view stays put', firstBefore !== undefined && shownFirst() === firstBefore && !/↓ \d+ new/.test(up.term.screen.text()),
+    `${firstBefore} → ${shownFirst()} ${up.term.screen.text().split('\n').find((r) => / new /.test(r)) ?? ''}`)
   const at = (needle) => { const p = t.term.screen.find(needle); return p === null ? '' : t.term.screen.grid[p.row * 100 + p.col].style }
   t.app.setStatus({ contextPct: 50, tokensIn: 12000, tokensOut: 3400 })
   t.clock.advance(20)
@@ -1966,8 +1988,9 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   tiny.app.openPicker({ title: 'Model', rows, onPick: () => {} }); tiny.key('z'); tiny.key('z'); tiny.clock.advance(20)
   check('picker: on a short screen a filter with no match still says so', tiny.term.screen.text().includes('no match'), tiny.term.screen.text().split('\n').join(' | '))
   // Scrolled up, a result unfolded by a click or by ctrl+o grew in place: those are not new lines. And scrolled
-  // into a long unfolded result, its head above the view, a click folds it and it stays in sight.
-  const f = setup({ cols: 80, rows: 30 })
+  // into a long unfolded result, its head above the view, a click folds it and it stays in sight. Too narrow for
+  // the block letters, so the welcome box alone sits over the turn and the tool line is in view at the top.
+  const f = setup({ cols: 60, rows: 30 })
   f.key('the ask\r')
   f.app.turnStarted()
   f.app.toolCall({ name: 'bash', callId: 'b1', title: 'big' }); f.app.toolResult('b1', true, Array.from({ length: 40 }, (_, i) => `b out ${i + 1}`).join('\n'))
@@ -2041,6 +2064,149 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   e.key('\x0f'); e.clock.advance(20)
   e.key('\x1b'); e.clock.advance(60)
   check('fold: lines that arrived before a ctrl+o elsewhere are still new', e.app.view.kind === 'main' && /↓ \d+ new/.test(e.term.screen.text()), e.term.screen.text().split('\n').find((l) => / new /.test(l)) ?? e.app.view.kind)
+}
+
+// 83. A stop withdraws everything waiting in the conversation, another terminal's too, and the gateway tells every
+// terminal which (a stop's withdrawn). Each takes its own back and counts those ends from the answer, which replaces
+// the guess the terminal that stopped made at esc.
+{
+  // The terminal that did not stop.
+  const b = setup({ cols: 80, rows: 30 })
+  b.app.turnStarted(); b.clock.advance(3000)
+  b.key('b-msg\r'); b.app.turnStarted(); b.clock.advance(20)
+  const idB = b.sentIds.at(-1)
+  b.app.withdrawn([idB], [], true); b.app.turnEnded(); b.clock.advance(1000)
+  const bLine = b.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('stop elsewhere: what this terminal queued comes back, and the stopped turn\'s time goes on', b.app.editor.text === 'b-msg' && !/^› b-msg/m.test(b.term.screen.text()) && /\(4s/.test(bLine), `${JSON.stringify(b.app.editor.text)} | ${bLine}`)
+  b.app.turnEnded()
+  // The terminal that stopped: its own were back at once; the stop's answer changes nothing more.
+  const a = setup({ cols: 80, rows: 30 })
+  a.app.turnStarted(); a.key('a-wait\r'); a.app.turnStarted(); a.clock.advance(20)
+  const idA = a.sentIds.at(-1)
+  a.key('\x1b'); a.clock.advance(60)
+  a.app.withdrawn([idA], [], true); a.clock.advance(20)
+  const once = a.app.editor.text
+  a.app.turnEnded()                 // the withdrawn message's end
+  a.app.turnStarted()               // another terminal sends something after the stop
+  a.clock.advance(5000)
+  a.app.turnEnded()                 // the stopped turn's end: the next one starts
+  a.clock.advance(1200)
+  const aLine = a.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('stop here: the stop\'s answer brings nothing back twice and counts nothing twice', once === 'a-wait' && /\(1s/.test(aLine), `${JSON.stringify(once)} | ${aLine}`)
+  a.app.turnEnded()
+  // A stop whose answer never came (an older gateway, a dropped link): another terminal's stop later is handled
+  // as any stop's answer.
+  const c = setup({ cols: 80, rows: 30 })
+  c.app.turnStarted(); c.key('\x1b'); c.clock.advance(60); c.app.turnEnded(); c.clock.advance(20)
+  c.app.editor.set('')
+  c.app.turnStarted(); c.key('c-msg\r'); c.app.turnStarted(); c.clock.advance(20)
+  c.app.withdrawn([c.sentIds.at(-1)], [], true); c.clock.advance(20)
+  check('stop elsewhere, after a stop here that was never answered: still taken back', c.app.editor.text === 'c-msg', JSON.stringify(c.app.editor.text))
+  c.app.turnEnded(); c.app.turnEnded()
+
+  // The stop's answer is the exact count, whoever stopped: the guess made at esc is replaced.
+  // (a) This terminal's own message shown as started (its turn's start was read) but still waiting for a slot:
+  // it leaves the transcript with the Interrupted mark esc put under it, and comes back.
+  const d = setup({ cols: 80, rows: 30 })
+  d.app.turnStarted(); d.key('second\r'); d.app.turnStarted(); d.clock.advance(20)
+  const idSecond = d.sentIds.at(-1)
+  d.app.turnEnded(); d.clock.advance(20)
+  const shownStarted = /^› second/m.test(d.term.screen.text())
+  d.key('\x1b'); d.clock.advance(60)
+  d.app.withdrawn([idSecond], [], true); d.app.turnEnded(); d.clock.advance(20)
+  check('stop here: its own message shown as started but still waiting comes back, mark and all', shownStarted && d.app.editor.text === 'second' && !/^› second/m.test(d.term.screen.text()) && !d.term.screen.text().includes('Interrupted'), `${shownStarted} ${JSON.stringify(d.app.editor.text)} ${d.term.screen.text().includes('Interrupted')}`)
+  // (b) A message whose typing-on was read after esc counted: its end is not a turn's, and esc again marks nothing twice.
+  const e = setup({ cols: 80, rows: 30 })
+  e.app.turnStarted(); e.clock.advance(4000)
+  e.key('late\r'); e.clock.advance(20)
+  const idLate = e.sentIds.at(-1)
+  e.key('\x1b'); e.clock.advance(60)
+  e.app.turnStarted()               // its typing-on, sent before the stop reached the gateway
+  e.app.withdrawn([idLate], [], true); e.app.turnEnded(); e.clock.advance(1000)
+  e.key('\x1b'); e.clock.advance(60)
+  const eLine = e.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('stop here: a message whose typing began after esc counted is still the stop\'s, not a turn', /\(5s/.test(eLine) && e.term.screen.text().split('Interrupted').length - 1 === 1, `${eLine} marks=${e.term.screen.text().split('Interrupted').length - 1}`)
+  e.app.turnEnded()
+  // (c) An ↑ answered between esc and the stop's answer: counted once, and the next turn starts on time.
+  const f = setup({ cols: 80, rows: 30 })
+  f.app.turnStarted(); f.key('q-msg\r'); f.app.turnStarted(); f.clock.advance(20)
+  const idQ = f.sentIds.at(-1)
+  f.key('\x1b[A'); f.key('\x1b'); f.clock.advance(60)
+  f.app.withdrawn([idQ], [idQ]); f.app.turnEnded()        // the ↑'s answer, and that message's end
+  f.clock.advance(20)
+  const toastAfterUp = f.term.screen.text().includes('already started')
+  f.app.withdrawn([], [], true)                            // the stop's answer: nothing left waiting
+  f.app.turnStarted(); f.clock.advance(4000)                // another terminal sends something
+  f.app.turnEnded(); f.clock.advance(1200)                  // the stopped turn ends: the next one starts
+  const fLine = f.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('stop here: an ↑ answered in between is counted once; the next turn starts on time', /\(1s/.test(fLine) && f.app.editor.text === 'q-msg' && !toastAfterUp, `${fLine} ${JSON.stringify(f.app.editor.text)} toast=${toastAfterUp}`)
+  f.app.turnEnded()
+  // (d) A stop word typed while a message waits: the same.
+  const g = setup({ cols: 80, rows: 30 })
+  g.app.setAnsweredAtOnce(['stop'], [])
+  g.app.turnStarted(); g.key('w-msg\r'); g.app.turnStarted(); g.clock.advance(20)
+  const idW = g.sentIds.at(-1)
+  g.key('stop\r'); g.clock.advance(20)
+  g.app.withdrawn([idW], [], true); g.app.turnEnded()
+  g.app.turnStarted(); g.clock.advance(4000); g.app.turnEnded(); g.clock.advance(1200)
+  const gLine = g.term.screen.text().split('\n').find((l) => l.includes('✻')) ?? '(none)'
+  check('stop word: counted once; the next turn starts on time', /\(1s/.test(gLine) && g.app.editor.text === 'w-msg', `${gLine} ${JSON.stringify(g.app.editor.text)}`)
+  g.app.turnEnded()
+  // M1. Another terminal's stop withdraws a message this terminal sent while idle (shown at once) that still
+  // waited for a slot: it leaves the transcript and comes back.
+  const h = setup({ cols: 80, rows: 30 })
+  h.key('idle-sent\r'); h.app.turnStarted(); h.clock.advance(20)
+  const idIdle = h.sentIds.at(-1)
+  h.app.withdrawn([idIdle], [], true); h.app.turnEnded(); h.clock.advance(20)
+  check('stop elsewhere: a message sent while idle, still waiting, comes back', h.app.editor.text === 'idle-sent' && !/^› idle-sent/m.test(h.term.screen.text()), JSON.stringify(h.app.editor.text))
+  const marks = (x) => x.term.screen.text().split('Interrupted').length - 1
+  // N1. The stop also stopped a running turn (another terminal's message ran, though this one showed its own as
+  // next): its mark stays, though its own message comes back.
+  const i = setup({ cols: 80, rows: 30 })
+  i.app.turnStarted(); i.app.turnStarted()                    // T0 runs; another terminal's message waits
+  i.key('from a\r'); i.app.turnStarted(); i.clock.advance(20)
+  const idFromA = i.sentIds.at(-1)
+  i.app.turnEnded(); i.clock.advance(20)                       // T0 ends: this terminal shows 'from a' as next
+  i.key('\x1b'); i.clock.advance(60)
+  i.app.withdrawn([idFromA], [], true); i.app.turnEnded(); i.clock.advance(20)
+  check('stop here: a running turn was stopped too, so its mark stays; its own waiting message comes back', marks(i) === 1 && i.app.editor.text === 'from a', `marks=${marks(i)} ${JSON.stringify(i.app.editor.text)}`)
+  i.app.turnEnded()
+  // N5. This terminal stops a message it sent while idle that still waits: nothing ran, so no mark.
+  const j = setup({ cols: 80, rows: 30 })
+  j.key('idle one\r'); j.app.turnStarted(); j.clock.advance(20)
+  j.key('\x1b'); j.clock.advance(60)
+  j.app.withdrawn([j.sentIds.at(-1)], [], true); j.app.turnEnded(); j.clock.advance(20)
+  check('stop here: its own message sent while idle that still waited comes back, with no mark', marks(j) === 0 && j.app.editor.text === 'idle one', `marks=${marks(j)} ${JSON.stringify(j.app.editor.text)}`)
+  // R1. A stopped turn's mark, then (nothing running) a message sent while idle withdrawn by another terminal's stop:
+  // that turn's mark is not the earlier one.
+  const k = setup({ cols: 80, rows: 30 })
+  k.app.turnStarted(); k.key('\x1b'); k.clock.advance(60); k.app.withdrawn([], [], true); k.app.turnEnded(); k.clock.advance(20)
+  k.key('later\r'); k.app.turnStarted(); k.clock.advance(20)
+  k.app.withdrawn([k.sentIds.at(-1)], [], true); k.app.turnEnded(); k.clock.advance(20)
+  check('stop elsewhere: an earlier stopped turn\'s mark stays when a later message is taken back', marks(k) === 1 && k.app.editor.text === 'later', `marks=${marks(k)} ${JSON.stringify(k.app.editor.text)}`)
+  // R2. The same where the later turn started behind another (its start read at a turn's end, not from idle).
+  const m = setup({ cols: 80, rows: 30 })
+  m.app.turnStarted(); m.key('\x1b'); m.clock.advance(60); m.app.withdrawn([], [], true)
+  m.app.turnStarted()                                          // another terminal's message, after the stop
+  m.app.turnEnded(); m.clock.advance(20)                       // the stopped turn ends; that one runs
+  m.key('mine\r'); m.app.turnStarted(); m.clock.advance(20)   // queued behind it
+  m.app.turnEnded(); m.clock.advance(20)                       // it ends; 'mine' is shown as running
+  m.app.withdrawn([m.sentIds.at(-1)], [], true); m.app.turnEnded(); m.clock.advance(20)
+  check('stop elsewhere: a stopped turn\'s mark stays when a later queued message is taken back', marks(m) === 1 && m.app.editor.text === 'mine', `marks=${marks(m)} ${JSON.stringify(m.app.editor.text)}`)
+  // N2. Queued just before the last turn's end was read (its own typing not begun): moved into the transcript when
+  // nothing runs, it is still this terminal's started message when a stop names it.
+  const n2 = setup({ cols: 80, rows: 30 })
+  n2.app.turnStarted(); n2.key('race\r'); n2.clock.advance(20)
+  n2.app.turnEnded(); n2.app.turnStarted(); n2.clock.advance(20)
+  n2.app.withdrawn([n2.sentIds.at(-1)], [], true); n2.app.turnEnded(); n2.clock.advance(20)
+  check('stop elsewhere: a message moved in when nothing ran, still waiting, comes back', n2.app.editor.text === 'race' && !/^› race/m.test(n2.term.screen.text()), JSON.stringify(n2.app.editor.text))
+  // N5. A word answered at once, sent while idle right after a message, is not the turn's message.
+  const n5 = setup({ cols: 80, rows: 30 })
+  n5.app.setAnsweredAtOnce([], ['usage'])
+  n5.key('first\r'); const idFirst = n5.sentIds.at(-1); n5.key('usage\r'); n5.app.turnStarted(); n5.clock.advance(20)
+  n5.key('\x1b'); n5.clock.advance(60)
+  n5.app.withdrawn([idFirst], [], true); n5.app.turnEnded(); n5.clock.advance(20)
+  check('stop here: a word answered at once does not take the turn\'s place; nothing ran, no mark', marks(n5) === 0 && n5.app.editor.text === 'first', `marks=${marks(n5)} ${JSON.stringify(n5.app.editor.text)}`)
 }
 
 const failed = results.filter((r) => !r.ok)

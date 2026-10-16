@@ -57,10 +57,11 @@ the caveat about version numbers is at the bottom.
   has not started and tells every terminal on the conversation which (`withdrawn`) before their typing
   stops, and only then do they come back to the box. The running turn goes on, and a message still
   waiting for a slot that the terminal shows as running, or another terminal's, stays.
-- **The terminal opens with a welcome box, and its footer says more.** In place of six rows of block
-  letters and a header row: a box with the mark (the README's whale), `deepseek-bot` and its version, the
-  model, the workspace and session, and where to start; a narrow screen gets the words alone, and a
-  header row shows only in a subagent's or a shell's view. The context bar turns yellow past 70% and red
+- **The terminal opens with DEEPSEEK BOT over a welcome box, and its footer says more.** The block
+  letters, sized to the screen as before, and under them a box with `deepseek-bot` and its version, the
+  model, the workspace and session, and where to start; a screen too narrow for the letters gets the box
+  alone, one too narrow for a box the words alone, and a header row shows only in a subagent's or a
+  shell's view. The context bar turns yellow past 70% and red
   past 90%; tokens read as sent `↑` and received `↓`, with the share the provider's cache served; and the
   hint line under the box ends with the workspace, its git branch when it is a repository, and the
   conversation. While the answer streams, the status line says `Working…`, not the last tool's name.
@@ -80,8 +81,8 @@ the caveat about version numbers is at the bottom.
   rule between exchanges, no caret on streaming text, and a turn the person stops is marked `⎿ Interrupted`,
   once, in place of the gateway's "Stopped." (a timeout is still said).
 - **The terminal uses its bottom as Claude Code does.** The input box, the status line and the hint
-  line keep the last rows, and the conversation sits right above them, a short one with the empty rows
-  over it. `/model` and `/sessions` open a picker in the box's place (`↑↓`, a digit, `↵` or a click;
+  line keep the last rows, and the conversation fills the rows over them from the top: a short one leaves
+  the rows under it empty. `/model` and `/sessions` open a picker in the box's place (`↑↓`, a digit, `↵` or a click;
   `←→` sets the highlighted model's effort) instead of printing a list into the transcript, and a
   question's options and an approval take the box's place too while nothing is typed; typing or
   pasting brings the box back.
@@ -94,6 +95,13 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **A stop in one terminal left another terminal's queued message hanging.** A stop withdraws every
+  message waiting in the conversation, and the terminal that stopped put its own back in its box; a
+  second terminal on the same conversation was not told. Its message stayed shown as queued, never to
+  run, and the withdrawn message's end was read as a turn's (its timer restarted). The gateway now tells
+  every terminal which waiting messages a stop withdrew (`withdrawn` with `stop`), before their typing
+  stops: each takes its own back, a message it already showed as started but still waiting included, and
+  counts those ends from the answer, which replaces the guess the terminal that stopped made at esc.
 - **After a reminder, every message in that conversation failed.** The harness resumes a session for a
   reminder with an agent of its own and keeps it, holding the session, so the conversation's next turn
   was refused ("could not take the session after retries") until the gateway restarted. That turn now

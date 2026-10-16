@@ -517,9 +517,10 @@ alone until `dsh gateway setup` adds a messenger; from a clone, run `node dist/t
 (needs `tenantIsolation`; without it a new conversation goes where the configuration sends any other,
 `tenantDefault` or the home), `--resume <id>` continues a conversation (the id is printed on exit).
 
-**What it shows.** A conversation opens with a welcome box, as Claude Code's does: the mark (the README's
-whale), `deepseek-bot` and its version, the model, the workspace and session, and where to start (`/help`,
-`?`); a narrow screen gets the words without the mark, and one too narrow for the box the words alone. No header row sits over the conversation; one
+**What it shows.** A conversation opens with DEEPSEEK BOT in block letters (one line from 95 columns, two
+from 70) and a welcome box under them: `deepseek-bot` and its version, the model, the workspace and session,
+and where to start (`/help`, `?`); a narrower screen gets the box alone, and one too narrow for the box the
+words alone. No header row sits over the conversation; one
 appears only in a subagent's or a shell's view, saying where the pane is looking. The status line's right
 side is the context bar (yellow past 70%, red past 90%), the tokens sent `↑` and received `↓`, the share
 of what was sent that the provider's cache served, and the model. Under the box, at the hint line's
@@ -537,11 +538,15 @@ and joins the transcript when its turn starts. `↑` on an empty box asks the ga
 by the ids the terminal gave them: the ones it had not started come back into the box to edit once it says
 so, and the turn goes on. A message the terminal shows as running stays (it may still be waiting for a
 slot), and so does what another terminal on the conversation queued; every terminal is told which were
-taken back. The empty box says what it is for (`Message deepseek-bot · / commands · @ files`); past its
-six rows it counts the ones it cannot show in its border (`↑ 2 more`, `↓ 1 more`), as pi does. A paste of
-more than ten lines (CR or LF) is a chip, `[paste #1 +40 lines]`, until it is sent as the text it stands
-for; the cursor goes over a chip whole, and backspace, delete and ctrl+w take it whole. The hint line under the input box is `? for shortcuts`; `?` on an empty
-box shows the keys below in its place, in as many columns as fit. An approval shows the request's first
+taken back. A stop (`esc`, or a stop word) takes back everything waiting in the conversation, and every
+terminal on it is told which, before those messages' typing stops: each puts its own back in its box,
+including one it already showed as started (sent while idle, or whose turn's start it had read) that was
+still waiting for a slot. The empty box says what it is for (`Message deepseek-bot · / commands ·
+@ files`); past its six rows it counts the ones it cannot show in its border (`↑ 2 more`, `↓ 1 more`), as
+pi does. A paste of more than ten lines (CR or LF) is a chip, `[paste #1 +40 lines]`, until it is sent as
+the text it stands for; the cursor goes over a chip whole, and backspace, delete and ctrl+w take it whole.
+The hint line under the input box is `? for shortcuts`; `?` on an empty box shows the keys below in its
+place, in as many columns as fit. An approval shows the request's first
 line and its options numbered: `↑↓`, a digit or a click and `↵` answer it, `esc` answers no (with text
 selected, esc clears the selection first). A question or a list opened over an approval has the keys
 until it closes. Under `NO_COLOR` there is no band and nothing sweeps. On a light background the colours
@@ -586,8 +591,8 @@ What appears besides the conversation:
 - **Thinking** is shown apart from the answer and folds once the answer starts to `∴ Thought for Ns`,
   opened with `ctrl+t` (apart from the tool output's `ctrl+o`, as pi has it), when the model streams its
   reasoning (`reasoning-delta`); the route this deployment uses sends none.
-- **The input box keeps the bottom rows.** The conversation sits right above it, a short one with the
-  empty rows over it, so what is new and what a command shows are where one types. A choice — `/model`'s
+- **The input box keeps the bottom rows.** The conversation fills the rows over it from the top, a short one
+  with the empty rows under it; once it is longer than its rows, its newest line is the lowest one it has. A choice — `/model`'s
   or `/sessions`' list, a question's options, an approval — takes the box's place while nothing is typed,
   as in Claude Code; a keystroke of text brings the box back, and so does "type your own…".
 - **Approvals** and **a turn's questions** (`ask_user_question`, a plan review) open in the input box's
