@@ -7,9 +7,9 @@
  * be tested against a fake terminal and a fake backend.
  *
  * Layout, top to bottom: the transcript (under a header only in a subagent's or a shell's view), a
- * divider, the status line, the input box, and a hint line. Nothing frames the whole screen. The input box keeps the last rows and the
- * transcript sits right above the divider, a short one with the empty rows over it, so what is new is
- * always next to where one types. A choice (a picker, a question's options, an approval) takes the box's
+ * divider, the status line, the input box, and a hint line. Nothing frames the whole screen. The input box keeps the last rows; the
+ * transcript fills the rows over it from the top, a short one with the empty rows under it, and once it is
+ * longer than they are it follows its newest line. A choice (a picker, a question's options, an approval) takes the box's
  * place while nothing is typed; the completion list opens just above the box.
  */
 import { answerBlock, interruptedBlock, welcomeBlock, noticeBlock, spacerBlock, thinkingBlock, toolBlock, toolCallBlock, userBlock, type AnswerBlock, type Detail, type NoticeKind, type ThinkingBlock, type ToolCallBlock, type ToolStep } from './blocks.js'
@@ -113,6 +113,8 @@ export interface AppOptions {
 }
 
 const EDITOR_MAX_ROWS = 6
+/** The rows under the transcript with nothing open: the divider, the status line, a one-line box and the hint. */
+const PLAIN_BOTTOM_ROWS = 6
 /** A paste of more lines than this is a chip in the box until it is sent. */
 const PASTE_CHIP_LINES = 10
 const TOAST_MS = 1500
@@ -143,6 +145,8 @@ export class App {
   private readonly o: AppOptions
   private readonly clock: Clock
   private readonly banner
+  /** The screen's rows the welcome block was laid out for: whether its letters fit depends on them. */
+  private welcomeRows = 0
   private answer: AnswerBlock | null = null
   private readonly posted = new Map<string, AnswerBlock>()
   /** The last answer block this turn streamed into: where the turn's reply belongs. */
@@ -255,7 +259,7 @@ export class App {
       onEvent: (event) => this.onEvent(event),
       ...(options.clock ? { now: options.clock.now, setTimer: options.clock.setTimer, clearTimer: options.clock.clearTimer } : {}),
     })
-    this.banner = welcomeBlock(() => ({ version: this.o.version ?? '', model: this.status.model, workspace: this.shownWorkspace(), session: this.status.session ?? '' }), this.mode)
+    this.banner = welcomeBlock(() => ({ version: this.o.version ?? '', model: this.status.model, workspace: this.shownWorkspace(), session: this.status.session ?? '', room: this.welcomeRows - PLAIN_BOTTOM_ROWS }), this.mode)
     this.transcript.push(this.banner)
     // A paste chip is one thing to the cursor and to deleting.
     this.editor.atoms = () => [...this.pastes.keys()]
@@ -1306,6 +1310,8 @@ export class App {
 
   private render(screen: Screen): void {
     const { cols, rows } = screen
+    // A screen of another height may fit the welcome letters where this one did not, or the other way round.
+    if (rows !== this.welcomeRows) { this.welcomeRows = rows; this.banner.refresh(); this.transcript.touch() }
     // Whatever closed the question or the search, text the gateway gave back meanwhile comes to the box now.
     this.restoreTakenBack()
     setFrame(Math.floor(this.clock.now() / 80))
@@ -1426,7 +1432,8 @@ export class App {
       screen.put(0, transcriptTop, fit(`› ${held.replace(/\s+/g, ' ').trim()}`, cols - 1), s(theme.dim))
     }
 
-    // What waits behind the running turn, each on the band it will have in the transcript.
+    // What waits behind the running turn, over the divider (as Claude Code queues it), each on the band it will
+    // have in the transcript.
     if (pendingRows > 0) {
       const banded = this.mode !== 'none'
       const body = s(banded ? theme.userBand : theme.muted)

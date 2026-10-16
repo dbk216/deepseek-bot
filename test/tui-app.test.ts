@@ -1491,6 +1491,14 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('welcome: on a narrow screen, the box without the letters, closed', /deepseek-bot v0\.2\.0/.test(small) && !small.includes('██') &&(small.split('\n').find((l) => l.includes('╭')) ?? '').includes('╮'), small.split('\n').filter((r) => r.trim() !== '').slice(0, 6).join(' | '))
   const tiny = setup({ cols: 20, rows: 16, extra: { version: '0.2.0' } }).term.screen.text()
   check('welcome: too narrow for a box, the words alone', /^ deepseek-bot/m.test(tiny) && !tiny.includes('│ deep'), tiny.split('\n').filter((r) => r.trim() !== '').slice(0, 5).join(' | '))
+  // 80x24, Terminal.app's default: two lines of letters and the box are taller than the transcript's 18 rows,
+  // and a first screen opening on the letters cut at the top is worse than the box alone.
+  const low = setup({ cols: 80, rows: 24, extra: { version: '0.2.0' } })
+  const lowRows = low.term.screen.text().split('\n')
+  check('welcome: on a short screen, the box alone, whole, at the top', !lowRows.join('\n').includes('██') && lowRows[1].includes('╭') && lowRows.some((r) => r.includes('╰')), lowRows.slice(0, 3).join(' | '))
+  low.term.resize(80, 40); low.clock.advance(20)
+  const grown = low.term.screen.text().split('\n')
+  check('welcome: made taller, the letters come back, from the top', grown[1].includes('██████╗') && grown.some((r) => r.includes('╭')), grown.slice(0, 2).join(' | '))
   const at = (needle) => { const p = t.term.screen.find(needle); return p === null ? '' : t.term.screen.grid[p.row * 100 + p.col].style }
   t.app.setStatus({ contextPct: 50, tokensIn: 12000, tokensOut: 3400 })
   t.clock.advance(20)

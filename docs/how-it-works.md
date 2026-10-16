@@ -588,7 +588,7 @@ What appears besides the conversation:
   opened with `ctrl+t` (apart from the tool output's `ctrl+o`, as pi has it), when the model streams its
   reasoning (`reasoning-delta`); the route this deployment uses sends none.
 - **The input box keeps the bottom rows.** The conversation fills the rows over it from the top, a short one
-  with the empty rows under it; once it is longer than the screen its newest line is right above the box. A choice — `/model`'s
+  with the empty rows under it; once it is longer than its rows, its newest line is the lowest one it has. A choice — `/model`'s
   or `/sessions`' list, a question's options, an approval — takes the box's place while nothing is typed,
   as in Claude Code; a keystroke of text brings the box back, and so does "type your own…".
 - **Approvals** and **a turn's questions** (`ask_user_question`, a plan review) open in the input box's
