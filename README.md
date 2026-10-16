@@ -114,7 +114,9 @@ and by scenarios run against a real model.
 - macOS only: the services are launchd jobs and the sandbox is Seatbelt. On Windows it builds, the
   terminal's local transport listens on a named pipe, `dsh` forwards to the harness CLI named by
   `DSH_BIN` or else to npm's, found beside its `dsh.cmd` on PATH, and the suites in CI's Windows job
-  pass; the installer, services, sandbox and watches are not ported there. With no sandbox the tool
+  pass; the installer, services, sandbox and watches are not ported there. The gateway can be run by
+  hand with the terminal only, and refuses every command for want of a sandbox
+  ([Windows, by hand](docs/setup.md#windows-by-hand-the-terminal-only)). With no sandbox the tool
   gate is no boundary on Windows: it checks file tools, and only the sandbox holds commands off. Its `.env`
   check follows Windows' own walk there (`..` cancelled before links, drive-relative paths, NTFS
   streams, 8.3 short names), checked against real writes on NTFS.

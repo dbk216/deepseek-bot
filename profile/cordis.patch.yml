@@ -105,7 +105,9 @@
         # Node executable is named: (isSea() || process.versions.electron) is true
         # here. Without it the row fails to activate and the bot silently loses
         # the document workflows, the structural checks, and the LibreOffice paths.
-        node: !!js process.env.DEEPBOT_NODE ?? dshHomePath('dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node')
+        # On Windows the harness is an npm install run by a standalone node, which is that executable.
+        # Quoted: unquoted, the ternary's " : " made YAML read the value as a mapping.
+        node: !!js "process.env.DEEPBOT_NODE ?? (process.platform === 'win32' ? process.execPath : dshHomePath('dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node'))"
 
     - id: tool-workspace-dependencies
       name: '@deepseek-ai/dsh-tool-workspace-dependencies'

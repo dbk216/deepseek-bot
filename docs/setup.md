@@ -189,3 +189,43 @@ set `DEEPBOT_DENY_READ` (colon-separated paths) before installing the services.
 the bot was invited to; **the plugin refuses to start with an empty list**. `replyMode: mention`
 answers @-mentions in channels (DMs always); `'all'` answers every human message in them.
 `allowedUsers` narrows who, as above.
+
+## Windows, by hand (the terminal only)
+
+There is no installer and there are no services on Windows yet, and no sandbox the profile can use
+([#41](https://github.com/rlaope/deepseek-bot/issues/41)). The gateway can still be run by hand, in
+PowerShell, with the terminal as its only platform. Checked on Windows 11 with Node 24 and
+`@deepseek-ai/dsh` 0.2.0-rc.2 from npm; 0.1.0-rc.6 is too old (a turn fails with
+`session.eventAt is not a function`).
+
+```powershell
+npm i -g @deepseek-ai/dsh@0.2.0-rc.2
+git clone https://github.com/rlaope/deepseek-bot; cd deepseek-bot; pnpm install; pnpm run build
+$repo = (Get-Location).Path
+$env:DSH_HOME = "$HOME\.dsh"                     # or a separate directory, to try it apart from another setup
+$agent = "$HOME\dsh-agent"                       # the agent's home: its persona, memory and files
+New-Item -ItemType Directory -Force "$agent\memory", "$agent\state", "$env:DSH_HOME\profiles" | Out-Null
+Copy-Item "$repo\agent\*.md" $agent
+Copy-Item -Recurse "$repo\profile" "$env:DSH_HOME\profiles\agent"
+# The terminal only. WriteAllText leaves out the BOM that PowerShell 5.1's Set-Content would add.
+$p = "$env:DSH_HOME\profiles\agent\cordis.patch.yml"
+[IO.File]::WriteAllText($p, ([IO.File]::ReadAllText($p) -replace '(?m)^    platform: slack$', "    platform: ['local']"))
+dsh plugin --profile agent add $repo
+Set-Location $agent; dsh --profile agent --host 127.0.0.1 --port 19500
+```
+
+Give it the model's key in the web UI the last line opens (Settings → Models). Then, in another
+PowerShell window, with the same `DSH_HOME`:
+
+```powershell
+node <repo>\dist\tui\main.js
+```
+
+What to expect there:
+
+- **Commands are refused.** The profile names `service/confined-runner.sh` as the sandbox runner,
+  which does not exist on Windows, and the harness refuses to run a command unconfined rather than
+  run it: `no sandbox backend is usable on this host; refusing to run the command unconfined`.
+  Reading, writing and editing files in the agent's home work; a file-tool read outside it is
+  refused.
+- No watches or health probe run, and nothing restarts the gateway if it exits.
