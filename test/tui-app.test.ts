@@ -143,7 +143,8 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   const done = t.term.screen.text()
   check('stream: a tool step appears between the two parts', done.includes('● Recall(2 passages)'))
   check('stream: the final text replaces the streamed text', done.includes('staging 먼저, 그다음 production.') && !done.includes('staging 먼저.▍'))
-  check('stream: no working indicator after the turn', !done.includes('esc to interrupt'))
+  // The working indicator, not the welcome box's keys line, which names esc too.
+  check('stream: no working indicator after the turn', !/✻ .*esc to interrupt/.test(done))
 }
 
 // 3b. The turn's reply takes the place of what was streamed — and only the reply does.
@@ -416,7 +417,7 @@ const inverted = (cell) => cell.style === '\x1b[0;7m' || cell.style.endsWith('\x
   const plain = setup({ env: { NO_COLOR: '1' } })
   check('colour: NO_COLOR writes no colour codes', !plain.term.out.join('').match(/\x1b\[[\d;]*(38|48);[25];/))
   const narrow = setup({ cols: 50 })
-  check('narrow: a 50-column terminal gets the welcome words, not the mark cut', narrow.term.screen.text().includes('deepseek-bot') && !narrow.term.screen.text().includes('▄▄████▄▄'))
+  check('narrow: a 50-column terminal gets the welcome words, not the letters cut', narrow.term.screen.text().includes('deepseek-bot') && !narrow.term.screen.text().includes('██'))
 }
 
 // 8b. Running state: counted across queued turns, synced on (re)connect, reset for another conversation.
@@ -799,7 +800,7 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const label = t.term.screen.find('✻ Thinking…')
   const styles = label === null ? new Set() : new Set(Array.from({ length: 9 }, (_, i) => cell(label.row, label.col + 2 + i).style))
   check('thinking: in sky blue, with a light passing over its label', label !== null && styles.size > 1 && [...styles].some((s) => String(s).includes(SKY)), [...styles].join(' | ').slice(0, 120))
-  check('status: says it is thinking', /✻ Thinking… \(\d+s · esc to interrupt\)/.test(t.term.screen.row(t.term.screen.find('esc to interrupt')?.row ?? 0)))
+  check('status: says it is thinking', t.term.screen.text().split('\n').some((row) => /✻ Thinking… \(\d+s · esc to interrupt\)/.test(row)))
   t.app.delta('The answer.')
   t.app.final('The answer.')
   t.app.turnEnded()
@@ -877,9 +878,9 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   t.app.turnEnded()
 }
 
-// 70. The bottom of the screen. The input box keeps the last rows and a short conversation sits right above
-// it, so nothing opens in the middle of an empty screen (it once followed the conversation down from the
-// top, with the rest of the screen empty under it); /model and /sessions are pickers in the box's place;
+// 70. The bottom of the screen. The input box keeps the last rows, and a short conversation is drawn from the
+// top with the empty rows under it (drawn against the box instead, it left the top of a new screen empty);
+// /model and /sessions are pickers in the box's place;
 // shift+tab steps the effort, shown where a permission label the gateway never sent ("▸▸ ask") used to
 // be; and the mouse works on what the keys work on.
 {
@@ -888,8 +889,9 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   const box = () => { const prompt = t.term.screen.find('│ ›'); return prompt === null ? -1 : prompt.row - 1 }
   const info = t.term.screen.find('session tui-3f2a')?.row ?? -1
   const welcomeEnd = t.term.screen.find('╰')?.row ?? -1
-  check('layout: the input box keeps the last rows, and a short conversation sits right above it', box() === 40 - 4 && info >= 0 && welcomeEnd === box() - 3, `info ${info}, welcome ends ${welcomeEnd}, box ${box()}`)
-  check('layout: the empty rows are above the conversation, not between it and the box', t.term.screen.row(3).trim() === '', t.term.screen.row(3))
+  const lettersAt = t.term.screen.find('██████╗')?.row ?? -1
+  check('layout: the input box keeps the last rows, and a short conversation starts at the top', box() === 40 - 4 && lettersAt === 1 && info > lettersAt && welcomeEnd > info && welcomeEnd < box() - 3, `letters ${lettersAt}, info ${info}, welcome ends ${welcomeEnd}, box ${box()}`)
+  check('layout: the empty rows are between the conversation and the box, not above it', t.term.screen.row(box() - 3).trim() === '' && t.term.screen.row(1).trim() !== '', `${JSON.stringify(t.term.screen.row(1).slice(0, 20))} / ${JSON.stringify(t.term.screen.row(box() - 3))}`)
   const status = t.term.screen.row(box() - 1)
   check('status: the effort, with the key that steps it, and no permission label', /▸▸ effort medium \(shift\+tab\)/.test(status) && !/\bask\b/.test(status), status)
   check('status: the model it runs on, at the right', /deepseek-v4\.1\s*$/.test(status), status)
@@ -1474,19 +1476,19 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   check('shortcuts: with room for one line, the title alone, and the hint stays', /esc close/.test(tiny.term.screen.row(4)) && tiny.term.screen.text().includes('Shortcuts') && !/\+\d+ more/.test(tiny.term.screen.text()), tiny.term.screen.text().split('\n').join(' | '))
 }
 
-// 78. The first screen and the footer after Claude Code and pi. No header row over the conversation: a welcome box
-// says what this is (the mark, the version), what it runs on, where, and the keys to start with. The context bar
+// 78. The first screen and the footer after Claude Code and pi. No header row over the conversation: DEEPSEEK BOT
+// in block letters, and a box under it that says the version, what it runs on, where, and the keys to start with. The context bar
 // turns yellow past 70% and red past 90%; tokens read as sent ↑ and received ↓.
 {
   const t = setup({ cols: 100, rows: 30, extra: { version: '0.2.0' } })
   const first = t.term.screen.text()
   const rows = first.split('\n')
   check('welcome: no header row over the conversation', !/^ deepseek-bot\s{4,}/.test(rows[0]) && !rows[0].includes('tui-3f2a9c1e'), rows[0])
-  check('welcome: a box with the mark, the name and version, the model, the workspace and where to start', first.includes('╭') && first.includes('▄▄████▄▄') && /deepseek-bot v0\.2\.0/.test(first) && first.includes('deepseek-v4.1') && first.includes('~/dsh-agent') && /\/help/.test(first) && /\? for shortcuts/.test(first), rows.filter((r) => r.trim() !== '').slice(0, 9).join(' | '))
-  check('welcome: no block-letter banner', !first.includes('██████╗'))
+  check('welcome: DEEPSEEK BOT in block letters on one line, over a box with the version, the model, the workspace and where to start', rows.some((r) => r.includes('██████╗ ███████╗') && r.includes('████████╗')) && first.includes('╭') &&/deepseek-bot v0\.2\.0/.test(first) && first.includes('deepseek-v4.1') && first.includes('~/dsh-agent') && /\/help/.test(first) && /\? for shortcuts/.test(first), rows.filter((r) => r.trim() !== '').slice(0, 9).join(' | '))
+  check('welcome: no whale', !first.includes('▄▄████▄▄'))
   const narrow = setup({ cols: 50, rows: 24, extra: { version: '0.2.0' } })
   const small = narrow.term.screen.text()
-  check('welcome: on a narrow screen, the words without the mark, the box closed', /deepseek-bot v0\.2\.0/.test(small) && !small.includes('▄▄████▄▄') && (small.split('\n').find((l) => l.includes('╭')) ?? '').includes('╮'), small.split('\n').filter((r) => r.trim() !== '').slice(0, 6).join(' | '))
+  check('welcome: on a narrow screen, the box without the letters, closed', /deepseek-bot v0\.2\.0/.test(small) && !small.includes('██') &&(small.split('\n').find((l) => l.includes('╭')) ?? '').includes('╮'), small.split('\n').filter((r) => r.trim() !== '').slice(0, 6).join(' | '))
   const tiny = setup({ cols: 20, rows: 16, extra: { version: '0.2.0' } }).term.screen.text()
   check('welcome: too narrow for a box, the words alone', /^ deepseek-bot/m.test(tiny) && !tiny.includes('│ deep'), tiny.split('\n').filter((r) => r.trim() !== '').slice(0, 5).join(' | '))
   const at = (needle) => { const p = t.term.screen.find(needle); return p === null ? '' : t.term.screen.grid[p.row * 100 + p.col].style }
@@ -1966,8 +1968,9 @@ for (const [cols, rows] of [[40, 14], [24, 9], [12, 6]]) {
   tiny.app.openPicker({ title: 'Model', rows, onPick: () => {} }); tiny.key('z'); tiny.key('z'); tiny.clock.advance(20)
   check('picker: on a short screen a filter with no match still says so', tiny.term.screen.text().includes('no match'), tiny.term.screen.text().split('\n').join(' | '))
   // Scrolled up, a result unfolded by a click or by ctrl+o grew in place: those are not new lines. And scrolled
-  // into a long unfolded result, its head above the view, a click folds it and it stays in sight.
-  const f = setup({ cols: 80, rows: 30 })
+  // into a long unfolded result, its head above the view, a click folds it and it stays in sight. Too narrow for
+  // the block letters, so the welcome box alone sits over the turn and the tool line is in view at the top.
+  const f = setup({ cols: 60, rows: 30 })
   f.key('the ask\r')
   f.app.turnStarted()
   f.app.toolCall({ name: 'bash', callId: 'b1', title: 'big' }); f.app.toolResult('b1', true, Array.from({ length: 40 }, (_, i) => `b out ${i + 1}`).join('\n'))

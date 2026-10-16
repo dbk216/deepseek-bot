@@ -1339,12 +1339,13 @@ export class App {
     // The picker gets what is left after a row of transcript: on a small screen it shrinks; the hint line stays.
     const pickerLines = this.question === null && this.picker !== null ? this.pickerLines(cols, rows - (headerRows + stripRows) - 1 - fixed) : []
     const bottom = fixed + pickerLines.length
-    // Every row left is the transcript's; one shorter than that is drawn at its foot, against the divider.
+    // Every row left is the transcript's. One shorter than that is drawn from the top, as a page reads, and the
+    // rows under it stay empty: the input box keeps the bottom rows either way.
     const area = Math.max(1, rows - (headerRows + stripRows) - bottom)
     const transcriptHeight = Math.max(1, Math.min(area, this.pane.layout(cols).length))
-    const transcriptTop = headerRows + stripRows + (area - transcriptHeight)
+    const transcriptTop = headerRows + stripRows
     if (stripRows > 0) this.drawInterview(screen, headerRows, cols)
-    const pendingTop = transcriptTop + transcriptHeight
+    const pendingTop = headerRows + stripRows + area
     const dividerRow = pendingTop + pendingRows
     const statusRow = dividerRow + 1
     const panelTop = panelShown === 0 ? -1 : statusRow + 1
