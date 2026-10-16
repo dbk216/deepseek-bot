@@ -221,6 +221,9 @@ function boot({ state = {}, config = {} }: { state?: Record<string, unknown>; co
     // grep's pattern is a regular expression, not a path: \bword\b is rooted only to Windows' isAbsolute.
     const regex = gate('grep', { pattern: '\\bnotes\\b', path: root })
     check('a grep pattern is not taken for a path', regex === 'delegated', JSON.stringify(regex))
+    // On every platform: a regex starting with "/" (an API route, a path in a log) was refused as a read outside.
+    const slashed = gate('grep', { pattern: '/etc/hosts', path: root })
+    check('a grep pattern that starts with "/" searches the workspace, and is not refused', slashed === 'delegated', JSON.stringify(slashed))
   } else {
     check('symlinks could be created for this check', false, linked)
   }

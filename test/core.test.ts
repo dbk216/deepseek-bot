@@ -473,7 +473,10 @@ const textOf = (message) => (message?.content ?? []).map((block) => block?.text 
 // 17c. Windows: an existing .env also answers to its 8.3 short name (ENV~1 on a volume that makes them),
 // and a write by that name writes .env.
 if (process.platform === 'win32') {
-  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  // The home in a directory of its own: writes that land above the home (dl\..\..\.env) land there, not in %TEMP%.
+  const parent = mkdtempSync(join(tmpdir(), 'deepbot-win-'))
+  const home = join(parent, 'home')
+  mkdirSync(home)
   writeFileSync(join(home, '.env'), 'A=1\n')
   const t = boot({ home, state: { sessions: { 'C_ALLOWED:t1': 'slack-abc' } } })
   await sleep(80)
@@ -510,7 +513,7 @@ if (process.platform === 'win32') {
     if (denied !== landed && !(denied && byName)) wrong.push(`${p.slice(home.length) || p}: gate ${denied ? 'denies' : 'allows'}, the write ${landed ? 'reaches' : 'misses'} .env`)
   }
   check('windows: the gate denies the writes that reach .env, and only those besides the names it refuses', wrong.length === 0, wrong.join('; '))
-  rmSync(home, { recursive: true, force: true })
+  rmSync(parent, { recursive: true, force: true })
   t.done()
 }
 

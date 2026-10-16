@@ -95,6 +95,14 @@ the caveat about version numbers is at the bottom.
 
 ### Fixed
 
+- **A grep for a pattern starting with `/` was refused as a read outside the workspace.** The read scope
+  took any tool's absolute `pattern` for a path, but grep's is a regular expression (the harness gives it
+  to ripgrep as `--regexp`), so `/api/v1` was refused. Now only glob's pattern is checked, and grep
+  leaves the workspace only by its `path`, which is checked as before. On Windows, where `\bword\b`
+  read as a path too, the `.env` check also walks paths as Windows does: `..` cancelled as text
+  first, drive-relative paths, stream names (`.env::$DATA`), and 8.3 short names (`ENV~1`). There is
+  still no sandbox there. With no `DSH_BIN`, `dsh` finds an npm-installed harness beside a `dsh.cmd` on
+  PATH.
 - **A stop in one terminal left another terminal's queued message hanging.** A stop withdraws every
   message waiting in the conversation, and the terminal that stopped put its own back in its box; a
   second terminal on the same conversation was not told. Its message stayed shown as queued, never to

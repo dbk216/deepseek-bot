@@ -62,8 +62,10 @@ export const HARNESS_CLI = '/Applications/DeepSeek Harness.app/Contents/Resource
 export function harnessCli(env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): string {
   if (platform !== 'win32') return HARNESS_CLI
   const entry = (dir: string) => win32.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-  // A relative PATH entry is wherever dsh was started, which is not npm's directory.
-  const found = (env.PATH ?? env.Path ?? '').split(';').find((dir) => win32.isAbsolute(dir) && existsSync(win32.join(dir, 'dsh.cmd')) && existsSync(entry(dir)))
+  // A relative PATH entry is wherever dsh was started, which is not npm's directory. An entry may be quoted
+  // ("C:\Program Files\nodejs"), as cmd itself accepts.
+  const found = (env.PATH ?? env.Path ?? '').split(';').map((dir) => dir.replace(/^"(.*)"$/, '$1'))
+    .find((dir) => win32.isAbsolute(dir) && existsSync(win32.join(dir, 'dsh.cmd')) && existsSync(entry(dir)))
   return entry(found ?? win32.join(env.APPDATA ?? '', 'npm'))
 }
 

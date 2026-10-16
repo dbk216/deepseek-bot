@@ -1757,8 +1757,10 @@ export function apply(ctx, config) {
     const args = exec?.arguments ?? {}
     const candidates: string[] = [args.file_path, args.path, args.dir]
       .filter((value: unknown): value is string => typeof value === 'string' && value !== '')
-    // glob and grep default to the workspace; an absolute glob pattern is the way out of it. grep's pattern
-    // is a regular expression, which Windows' isAbsolute took for a path (\bword\b): grep leaves by path.
+    // glob and grep search the workspace or their `path`, which is checked above. The harness gives ripgrep
+    // glob's pattern as a filter inside that root (rg --files --glob=), so an absolute one cannot leave it;
+    // it is refused anyway, as a defence. grep's pattern is a regular expression (rg --regexp=), never a
+    // path, though Windows' isAbsolute takes \bword\b for one: grep leaves only by its path.
     if (name === 'glob' && typeof args.pattern === 'string' && isAbsolute(args.pattern)) candidates.push(args.pattern)
     if (candidates.length === 0) return null
     // With isolation on, the readable roots are the *speaking conversation's* directory:
